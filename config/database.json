@@ -1,0 +1,7 @@
+{
+  "path": "data/signals.db",
+  "wal_mode": true,
+  "backup_before_run": true,
+  "backup_dir": "data/backups",
+  "vacuum_frequency_days": 7
+}

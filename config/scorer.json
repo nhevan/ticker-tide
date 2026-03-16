@@ -1,0 +1,58 @@
+{
+  "regime_detection": {
+    "adx_trending_threshold": 25,
+    "adx_ranging_threshold": 20,
+    "atr_volatile_multiplier": 1.5,
+    "atr_volatile_lookback": 20,
+    "vix_volatile_threshold": 25
+  },
+  "adaptive_weights": {
+    "trending": {
+      "trend": 0.30, "momentum": 0.15, "volume": 0.10, "volatility": 0.05,
+      "candlestick": 0.05, "structural": 0.15, "sentiment": 0.10,
+      "fundamental": 0.05, "macro": 0.05
+    },
+    "ranging": {
+      "trend": 0.10, "momentum": 0.25, "volume": 0.10, "volatility": 0.10,
+      "candlestick": 0.10, "structural": 0.15, "sentiment": 0.10,
+      "fundamental": 0.05, "macro": 0.05
+    },
+    "volatile": {
+      "trend": 0.20, "momentum": 0.15, "volume": 0.10, "volatility": 0.15,
+      "candlestick": 0.10, "structural": 0.10, "sentiment": 0.10,
+      "fundamental": 0.05, "macro": 0.05
+    }
+  },
+  "sector_adjustment": {
+    "bullish_sector_threshold": 30,
+    "bearish_sector_threshold": -30,
+    "max_adjustment": 10
+  },
+  "timeframe_weights": {
+    "daily": 0.6,
+    "weekly": 0.4
+  },
+  "signal_thresholds": {
+    "bullish": 30,
+    "bearish": -30
+  },
+  "confidence_modifiers": {
+    "timeframe_agree": 10,
+    "timeframe_disagree": -15,
+    "volume_confirms": 10,
+    "volume_diverges": -10,
+    "indicator_consensus": 5,
+    "indicator_mixed": -10,
+    "earnings_within_days": 7,
+    "earnings_penalty": -15,
+    "vix_extreme_threshold": 30,
+    "vix_extreme_penalty": -10,
+    "atr_expanding_penalty": -5,
+    "missing_news_penalty": -5,
+    "missing_fundamentals_penalty": -3
+  },
+  "historical_scoring": {
+    "daily_lookback_months": 12,
+    "weekly_lookback_months": 60
+  }
+}

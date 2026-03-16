@@ -1,0 +1,25 @@
+{
+  "tickers": [
+    {"symbol": "AAPL", "sector": "Technology", "sector_etf": "XLK", "added": "2026-03-16", "active": true},
+    {"symbol": "MSFT", "sector": "Technology", "sector_etf": "XLK", "added": "2026-03-16", "active": true},
+    {"symbol": "NVDA", "sector": "Technology", "sector_etf": "XLK", "added": "2026-03-16", "active": true},
+    {"symbol": "AMZN", "sector": "Consumer Discretionary", "sector_etf": "XLY", "added": "2026-03-16", "active": true},
+    {"symbol": "TSLA", "sector": "Consumer Discretionary", "sector_etf": "XLY", "added": "2026-03-16", "active": true},
+    {"symbol": "JPM", "sector": "Financials", "sector_etf": "XLF", "added": "2026-03-16", "active": true},
+    {"symbol": "GS", "sector": "Financials", "sector_etf": "XLF", "added": "2026-03-16", "active": true},
+    {"symbol": "JNJ", "sector": "Healthcare", "sector_etf": "XLV", "added": "2026-03-16", "active": true},
+    {"symbol": "UNH", "sector": "Healthcare", "sector_etf": "XLV", "added": "2026-03-16", "active": true},
+    {"symbol": "XOM", "sector": "Energy", "sector_etf": "XLE", "added": "2026-03-16", "active": true},
+    {"symbol": "CVX", "sector": "Energy", "sector_etf": "XLE", "added": "2026-03-16", "active": true},
+    {"symbol": "CAT", "sector": "Industrials", "sector_etf": "XLI", "added": "2026-03-16", "active": true},
+    {"symbol": "PG", "sector": "Consumer Staples", "sector_etf": "XLP", "added": "2026-03-16", "active": true},
+    {"symbol": "NEE", "sector": "Utilities", "sector_etf": "XLU", "added": "2026-03-16", "active": true},
+    {"symbol": "AMT", "sector": "Real Estate", "sector_etf": "XLRE", "added": "2026-03-16", "active": true}
+  ],
+  "sector_etfs": ["XLK", "XLF", "XLV", "XLE", "XLY", "XLI", "XLP", "XLU", "XLB", "XLRE", "XLC"],
+  "market_benchmarks": {
+    "spy": "SPY",
+    "qqq": "QQQ",
+    "vix": "^VIX"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schedule": {
+    "daily_run_utc": "00:00",
+    "skip_market_holidays": true,
+    "skip_weekends": true
+  },
+  "polling_intervals": {
+    "fundamentals_days": 14,
+    "earnings_calendar_days": 7,
+    "short_interest_days": 15
+  },
+  "rate_limit": {
+    "polygon_rate_limited": false,
+    "finnhub_calls_per_minute": 60,
+    "finnhub_delay_seconds": 1.0
+  }
+}

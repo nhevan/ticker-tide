@@ -1,0 +1,28 @@
+{
+  "ohlcv": {
+    "lookback_years": 5,
+    "adjusted": true,
+    "batch_size": 50000
+  },
+  "news": {
+    "lookback_months": 3,
+    "polygon_limit_per_request": 1000,
+    "finnhub_lookback_months": 1
+  },
+  "fundamentals": {
+    "lookback_years": 5,
+    "periods": ["quarterly", "annual"]
+  },
+  "filings": {
+    "form_types": ["8-K"],
+    "lookback_months": 6
+  },
+  "macro": {
+    "treasury_lookback_years": 5
+  },
+  "rate_limit": {
+    "polygon_rate_limited": false,
+    "finnhub_calls_per_minute": 60,
+    "finnhub_delay_seconds": 1.0
+  }
+}
