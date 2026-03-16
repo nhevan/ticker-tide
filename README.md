@@ -46,6 +46,32 @@ ticker-tide/
 └── DESIGN.md           # Architecture and schema reference
 ```
 
+## Deployment
+
+### First time setup (EC2)
+```bash
+git clone https://github.com/your-repo/stock-signal-engine.git
+cd stock-signal-engine
+chmod +x deploy.sh
+./deploy.sh
+```
+
+### Subsequent deploys
+```bash
+./deploy.sh
+```
+
+### What deploy.sh does
+1. Pulls latest code from main
+2. Verifies Python 3.10+
+3. Creates/activates virtual environment
+4. Installs dependencies
+5. Validates .env configuration
+6. Creates data directories
+7. Initializes database schema
+8. Runs all tests
+9. Prints deployment summary
+
 ## Setup
 
 ### 1. Clone and install dependencies

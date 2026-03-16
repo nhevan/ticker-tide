@@ -1,4 +1,5 @@
 .env
+.python-version
 data/
 
 # IDE and OS files
