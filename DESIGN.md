@@ -30,8 +30,43 @@ The backfiller is a one-time historical data loader with the following modules:
 | `src/backfiller/fundamentals.py` | Quarterly income, ratios, YoY growth | yfinance |
 | `src/backfiller/earnings.py` | Earnings dates, EPS estimates/actuals | Finnhub |
 | `src/backfiller/corporate_actions.py` | Dividends, splits, short interest | Polygon |
+| `src/backfiller/news.py` | News articles + AI sentiment (3 months) | Polygon + Finnhub |
+| `src/backfiller/filings.py` | 8-K SEC filings (6 months) | Polygon |
+| `src/backfiller/main.py` | Orchestrator: ticker sync + all phases | — |
 
 Each module follows the same pattern: per-ticker function + batch function with ProgressTracker + Telegram progress updates. Polygon's Starter tier has no rate limiting. Finnhub free tier enforces 1 second delay between calls via `FinnhubClient._rate_limit()`.
+
+### Backfill Orchestrator (`src/backfiller/main.py`)
+
+`sync_tickers_from_config` synchronises the tickers table with `config/tickers.json`:
+- Inserts new tickers (preserving `added_date` on re-insert via `INSERT OR IGNORE`)
+- Updates name, SIC code, market cap from Polygon's ticker details endpoint
+- Deactivates tickers removed from config (`active=0`) without deleting their data
+- Reactivates tickers added back to config (`active=1`)
+
+`run_full_backfill` runs all phases in order:
+1. `sync` — ticker sync
+2. `ohlcv` — 5yr OHLCV bars
+3. `macro` — treasury yields + VIX
+4. `fundamentals` — quarterly financials
+5. `earnings` — earnings calendar
+6. `corporate_actions` — dividends, splits, short interest
+7. `news` — Polygon + Finnhub news articles
+8. `filings` — 8-K SEC filings
+
+Phase failures are caught and logged; remaining phases continue. A `pipeline_runs` entry is written on completion. Supports `ticker_filter` (single ticker) and `phase_filter` (single phase) for targeted re-runs.
+
+### News Backfiller (`src/backfiller/news.py`)
+
+- Polygon: fetches last 3 months of articles per ticker; extracts per-ticker sentiment from the `insights` array using `extract_sentiment_for_ticker` (correctly handles multi-ticker articles)
+- Finnhub: fetches last 1 month of articles per ticker; generates deterministic IDs via `generate_finnhub_article_id` (format: `finnhub_{ticker}_{datetime}_{sha256[:8]}`)
+- Both sources stored in `news_articles` with `source` column distinguishing them
+- Polygon and Finnhub are attempted independently per ticker — a Finnhub failure does not block Polygon data
+
+### 8-K Filings Backfiller (`src/backfiller/filings.py`)
+
+- Fetches last 6 months of 8-K filings per ticker from Polygon
+- Stores in `filings_8k` with accession_number as PRIMARY KEY for idempotency
 
 ## 3. Data Sources
 

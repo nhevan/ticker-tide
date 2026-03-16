@@ -83,6 +83,20 @@ The backfill modules and their data sources:
 - `src/backfiller/fundamentals.py` — quarterly financials and ratios from yfinance
 - `src/backfiller/earnings.py` — earnings calendar (dates, EPS, revenue) from Finnhub
 - `src/backfiller/corporate_actions.py` — dividends, splits, short interest from Polygon
+- `src/backfiller/news.py` — news articles + AI sentiment from Polygon (3 months) + Finnhub (1 month)
+- `src/backfiller/filings.py` — 8-K SEC filings from Polygon (6 months)
+
+**Targeted runs** — backfill a single ticker or single phase:
+```bash
+python scripts/run_backfill.py --ticker AAPL
+python scripts/run_backfill.py --phase news
+python scripts/run_backfill.py --ticker AAPL --phase ohlcv
+```
+
+**Verify API access** before running a full backfill:
+```bash
+python scripts/test_api_access.py
+```
 
 ### 4. Run the daily pipeline (or set up cron)
 
@@ -109,7 +123,7 @@ Tests mock all external API calls. No real API keys required to run the test sui
 |--------|----------|------|
 | Polygon.io | OHLCV, news, 8-K filings, dividends, splits, short interest, treasury yields | API key |
 | yfinance | Fundamentals, financial ratios, VIX | None |
-| Finnhub | Earnings calendar | API key |
+| Finnhub | Earnings calendar, supplementary news | API key |
 | Anthropic Claude | AI signal reasoning | API key |
 | Telegram | Signal delivery | Bot token |
 
