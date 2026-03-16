@@ -45,21 +45,20 @@ if [[ -x "$HOME/.pyenv/bin/pyenv" ]] || command -v pyenv &>/dev/null 2>&1; then
     eval "$(pyenv init -)"
 fi
 
-# Helper: returns major.minor as integers and checks >= 3.10
-_python_is_310_plus() {
+_python_is_39_plus() {
     local bin="$1"
     local ver
     ver="$("$bin" --version 2>&1 | awk '{print $2}')" || return 1
     local major minor
     major="$(echo "$ver" | cut -d. -f1)"
     minor="$(echo "$ver" | cut -d. -f2)"
-    [[ "$major" -gt 3 ]] || [[ "$major" -eq 3 && "$minor" -ge 10 ]]
+    [[ "$major" -gt 3 ]] || [[ "$major" -eq 3 && "$minor" -ge 9 ]]
 }
 
 PYTHON_BIN=""
-for candidate in python python3.11 python3.10 python3; do
+for candidate in python python3.11 python3.10 python3.9 python3; do
     if command -v "$candidate" &>/dev/null 2>&1; then
-        if _python_is_310_plus "$candidate"; then
+        if _python_is_39_plus "$candidate"; then
             PYTHON_BIN="$(command -v "$candidate")"
             break
         fi
@@ -68,7 +67,7 @@ done
 
 if [[ -z "$PYTHON_BIN" ]]; then
     FALLBACK_VER="$(python3 --version 2>&1 | awk '{print $2}' || echo "not found")"
-    echo -e "${RED}❌ Python 3.10+ required. Found: ${FALLBACK_VER}${RESET}" >&2
+    echo -e "${RED}❌ Python 3.9+ required. Found: ${FALLBACK_VER}${RESET}" >&2
     echo -e "${RED}   Install via pyenv: pyenv install 3.11.9 && pyenv local 3.11.9${RESET}" >&2
     exit 1
 fi
@@ -83,7 +82,7 @@ if [[ -d "${PROJECT_DIR}/.venv" ]]; then
     VENV_PYTHON_VER="$("${PROJECT_DIR}/.venv/bin/python" --version 2>&1 | awk '{print $2}')"
     VENV_MAJOR="$(echo "$VENV_PYTHON_VER" | cut -d. -f1)"
     VENV_MINOR="$(echo "$VENV_PYTHON_VER" | cut -d. -f2)"
-    if [[ "$VENV_MAJOR" -lt 3 ]] || [[ "$VENV_MAJOR" -eq 3 && "$VENV_MINOR" -lt 10 ]]; then
+    if [[ "$VENV_MAJOR" -lt 3 ]] || [[ "$VENV_MAJOR" -eq 3 && "$VENV_MINOR" -lt 9 ]]; then
         echo -e "${YELLOW}⚠️  Existing venv uses Python ${VENV_PYTHON_VER}. Recreating with ${PYTHON_BIN}...${RESET}"
         rm -rf "${PROJECT_DIR}/.venv"
         "$PYTHON_BIN" -m venv "${PROJECT_DIR}/.venv"
@@ -110,6 +109,7 @@ echo -e "${GREEN}✅ Virtual environment active: ${ACTIVE_PYTHON}${RESET}"
 echo ""
 echo -e "${BOLD}📦 Installing dependencies...${RESET}"
 pip install --upgrade pip -q
+
 if ! pip install -r "${PROJECT_DIR}/requirements.txt"; then
     echo -e "${RED}❌ pip install failed. Check requirements.txt and your network connection.${RESET}" >&2
     exit 1

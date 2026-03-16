@@ -180,7 +180,9 @@ def test_telegram_edit_message(mocker):
     mock_response = mocker.MagicMock()
     mock_response.json.return_value = {"ok": True, "result": {"message_id": 12345}}
     mock_response.raise_for_status = mocker.MagicMock()
+    mock_response.status_code = 200
     mock_post = mocker.patch("httpx.post", return_value=mock_response)
+    mocker.patch("time.sleep")
 
     result = edit_telegram_message("mytoken", "chat123", message_id=12345, new_text="updated")
 
@@ -205,9 +207,71 @@ def test_telegram_send_message_error_handling(mocker):
 
 
 def test_telegram_edit_message_error_handling(mocker):
-    """edit_telegram_message should return False on exception, not crash."""
+    """edit_telegram_message should return False on permanent exception, not crash."""
     mocker.patch("httpx.post", side_effect=Exception("connection error"))
+    mocker.patch("time.sleep")
     result = edit_telegram_message("mytoken", "chat123", message_id=1, new_text="hi")
+    assert result is False
+
+
+def test_telegram_edit_message_429_retries(mocker):
+    """edit_telegram_message should sleep retry_after seconds and retry once on 429."""
+    mock_429 = mocker.MagicMock()
+    mock_429.status_code = 429
+    mock_429.json.return_value = {"ok": False, "parameters": {"retry_after": 3}}
+    mock_429.raise_for_status = mocker.MagicMock()
+
+    mock_ok = mocker.MagicMock()
+    mock_ok.status_code = 200
+    mock_ok.json.return_value = {"ok": True, "result": {"message_id": 99}}
+    mock_ok.raise_for_status = mocker.MagicMock()
+
+    mock_post = mocker.patch("httpx.post", side_effect=[mock_429, mock_ok])
+    mock_sleep = mocker.patch("time.sleep")
+
+    result = edit_telegram_message("tok", "chat", message_id=99, new_text="hi")
+
+    assert result is True
+    assert mock_post.call_count == 2
+    # Should have slept retry_after + 1 = 4 seconds for the 429
+    sleep_calls = [call.args[0] for call in mock_sleep.call_args_list]
+    assert any(s >= 4 for s in sleep_calls)
+
+
+def test_telegram_edit_message_connection_reset_retries(mocker):
+    """edit_telegram_message should retry once after a connection reset (OSError)."""
+    mock_ok = mocker.MagicMock()
+    mock_ok.status_code = 200
+    mock_ok.json.return_value = {"ok": True, "result": {"message_id": 77}}
+    mock_ok.raise_for_status = mocker.MagicMock()
+
+    mock_post = mocker.patch(
+        "httpx.post",
+        side_effect=[OSError("[Errno 104] Connection reset by peer"), mock_ok],
+    )
+    mock_sleep = mocker.patch("time.sleep")
+
+    result = edit_telegram_message("tok", "chat", message_id=77, new_text="hi")
+
+    assert result is True
+    assert mock_post.call_count == 2
+    # Should have slept 2 seconds after connection reset
+    sleep_calls = [call.args[0] for call in mock_sleep.call_args_list]
+    assert 2 in sleep_calls
+
+
+def test_telegram_edit_message_429_fails_after_retry(mocker):
+    """edit_telegram_message returns False if both attempts hit 429."""
+    mock_429 = mocker.MagicMock()
+    mock_429.status_code = 429
+    mock_429.json.return_value = {"ok": False, "parameters": {"retry_after": 1}}
+    mock_429.raise_for_status = mocker.MagicMock()
+
+    mocker.patch("httpx.post", return_value=mock_429)
+    mocker.patch("time.sleep")
+
+    result = edit_telegram_message("tok", "chat", message_id=55, new_text="hi")
+
     assert result is False
 
 

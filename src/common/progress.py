@@ -24,6 +24,7 @@ Usage during backfill:
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -36,6 +37,13 @@ _STATUS_PROCESSING = "processing"
 _STATUS_COMPLETED = "completed"
 _STATUS_SKIPPED = "skipped"
 _STATUS_FAILED = "failed"
+
+# Minimum seconds between successive edits to the same Telegram message.
+# Telegram's editMessageText rate limit is ~1 edit/second per message; 2s gives headroom.
+_MIN_EDIT_INTERVAL_SECONDS = 2.0
+
+# Module-level dict tracking the last monotonic timestamp an edit was sent per message_id.
+_last_edit_time: dict[int, float] = {}
 
 _STATUS_EMOJI = {
     _STATUS_COMPLETED: "✅",
@@ -306,6 +314,15 @@ def edit_telegram_message(
     """
     Edit an existing Telegram message via the Bot API.
 
+    Throttles edits to at most one per _MIN_EDIT_INTERVAL_SECONDS per message_id
+    to avoid Telegram 429 rate limit errors. If called before the interval has
+    elapsed, sleeps for the remaining time before proceeding — ensuring every
+    caller's edit (including the final completion update) is eventually sent.
+
+    Handles 429 Too Many Requests by reading retry_after from the API response
+    and sleeping before one retry. Handles transient connection errors with a
+    single retry after a 2-second pause.
+
     Truncates new_text to 4096 characters if necessary. Never raises — returns
     False on any error (except "message is not modified" which returns True).
 
@@ -322,19 +339,54 @@ def edit_telegram_message(
     if len(new_text) > _TELEGRAM_MAX_LENGTH:
         new_text = new_text[: _TELEGRAM_MAX_LENGTH - 3] + "..."
 
+    # Throttle: sleep any remaining time in the minimum edit interval.
+    elapsed = time.monotonic() - _last_edit_time.get(message_id, 0.0)
+    if elapsed < _MIN_EDIT_INTERVAL_SECONDS:
+        time.sleep(_MIN_EDIT_INTERVAL_SECONDS - elapsed)
+
     url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
     payload: dict = {"chat_id": chat_id, "message_id": message_id, "text": new_text}
     if parse_mode is not None:
         payload["parse_mode"] = parse_mode
 
-    try:
-        response = httpx.post(url, json=payload, timeout=10.0)
-        data = response.json()
-        # Telegram returns HTTP 400 with this description when content is unchanged
-        if not data.get("ok") and "message is not modified" in data.get("description", ""):
+    def _attempt() -> bool | None:
+        """
+        Make one POST attempt. Returns True on success, False on permanent failure,
+        None to signal the caller to retry (after sleeping).
+        """
+        try:
+            response = httpx.post(url, json=payload, timeout=10.0)
+            data = response.json()
+            if not data.get("ok") and "message is not modified" in data.get("description", ""):
+                _last_edit_time[message_id] = time.monotonic()
+                return True
+            if response.status_code == 429:
+                retry_after = data.get("parameters", {}).get("retry_after", 5)
+                logger.warning(
+                    f"edit_telegram_message 429 for message {message_id}: "
+                    f"retrying after {retry_after}s"
+                )
+                time.sleep(retry_after + 1)
+                return None
+            response.raise_for_status()
+            _last_edit_time[message_id] = time.monotonic()
             return True
-        response.raise_for_status()
-        return True
-    except Exception as exc:
-        logger.warning(f"edit_telegram_message failed: {exc}")
-        return False
+        except httpx.HTTPStatusError as exc:
+            logger.warning(f"edit_telegram_message failed: {exc}")
+            return False
+        except (httpx.ConnectError, httpx.RemoteProtocolError, OSError) as exc:
+            logger.warning(f"edit_telegram_message connection error: {exc}, retrying in 2s")
+            time.sleep(2)
+            return None
+        except Exception as exc:
+            logger.warning(f"edit_telegram_message failed: {exc}")
+            return False
+
+    result = _attempt()
+    if result is None:
+        # One retry after 429 or connection reset.
+        result = _attempt()
+        if result is None:
+            logger.warning(f"edit_telegram_message failed after retry for message {message_id}")
+            return False
+    return result

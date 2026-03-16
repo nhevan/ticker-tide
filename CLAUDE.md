@@ -1,7 +1,7 @@
 # CLAUDE.md — Stock Signal Engine
 
 ## Coding Standards
-- Python 3.10+
+- Python 3.9+
 - Write tests FIRST (TDD) using pytest. Always create/update tests before implementing.
 - Every function must have type hints on all parameters and return values
 - Every function must have a descriptive docstring explaining: what it does, parameters, return value
@@ -57,7 +57,7 @@
 ## Dependencies
 - pandas for data manipulation
 - numpy for numerical computation
-- pandas_ta for technical indicators (NOT TA-Lib)
+- ta for technical indicators (NOT TA-Lib, NOT pandas_ta)
 - httpx for HTTP API calls (synchronous)
 - tenacity for retry logic
 - python-dotenv for environment variables

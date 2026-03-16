@@ -400,25 +400,25 @@ Enable WAL mode on connection.
 
 ## 5. Technical Indicators (15 total)
 
-All computed using pandas_ta from OHLCV data. Parameters configurable in calculator.json.
+All computed using the `ta` library from OHLCV data. Parameters configurable in calculator.json.
 
-| Category | Indicator | pandas_ta Function | Default Params |
+| Category | Indicator | ta Function | Default Params |
 |---|---|---|---|
-| Trend | EMA 9 | ema(close, length=9) | length: 9 |
-| Trend | EMA 21 | ema(close, length=21) | length: 21 |
-| Trend | EMA 50 | ema(close, length=50) | length: 50 |
-| Trend | MACD | macd(close, fast=12, slow=26, signal=9) | fast:12, slow:26, signal:9 |
-| Trend | ADX | adx(high, low, close, length=14) | length: 14 |
-| Momentum | RSI | rsi(close, length=14) | length: 14 |
-| Momentum | Stochastic | stoch(high, low, close, k=14, d=3, smooth_k=3) | k:14, d:3, smooth_k:3 |
-| Momentum | CCI | cci(high, low, close, length=20) | length: 20 |
-| Momentum | Williams %R | willr(high, low, close, length=14) | length: 14 |
-| Volume | OBV | obv(close, volume) | — |
-| Volume | CMF | cmf(high, low, close, volume, length=20) | length: 20 |
-| Volume | A/D Line | ad(high, low, close, volume) | — |
-| Volatility | Bollinger Bands | bbands(close, length=20, std=2) | length:20, std:2 |
-| Volatility | ATR | atr(high, low, close, length=14) | length: 14 |
-| Volatility | Keltner | kc(high, low, close, length=20) | length: 20 |
+| Trend | EMA 9 | `ta.trend.EMAIndicator(close, window=9).ema_indicator()` | window: 9 |
+| Trend | EMA 21 | `ta.trend.EMAIndicator(close, window=21).ema_indicator()` | window: 21 |
+| Trend | EMA 50 | `ta.trend.EMAIndicator(close, window=50).ema_indicator()` | window: 50 |
+| Trend | MACD | `ta.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)` → `.macd()` / `.macd_signal()` / `.macd_diff()` | fast:12, slow:26, signal:9 |
+| Trend | ADX | `ta.trend.ADXIndicator(high, low, close, window=14).adx()` | window: 14 |
+| Momentum | RSI | `ta.momentum.RSIIndicator(close, window=14).rsi()` | window: 14 |
+| Momentum | Stochastic | `ta.momentum.StochasticOscillator(high, low, close, window=14, smooth_window=3)` → `.stoch()` / `.stoch_signal()` | window:14, smooth:3 |
+| Momentum | CCI | `ta.trend.CCIIndicator(high, low, close, window=20).cci()` | window: 20 |
+| Momentum | Williams %R | `ta.momentum.WilliamsRIndicator(high, low, close, lbp=14).williams_r()` | lbp: 14 |
+| Volume | OBV | `ta.volume.OnBalanceVolumeIndicator(close, volume).on_balance_volume()` | — |
+| Volume | CMF | `ta.volume.ChaikinMoneyFlowIndicator(high, low, close, volume, window=20).chaikin_money_flow()` | window: 20 |
+| Volume | A/D Line | `ta.volume.AccDistIndexIndicator(high, low, close, volume).acc_dist_index()` | — |
+| Volatility | Bollinger Bands | `ta.volatility.BollingerBands(close, window=20, window_dev=2)` → `.bollinger_hband()` / `.bollinger_lband()` / `.bollinger_pband()` | window:20, std:2 |
+| Volatility | ATR | `ta.volatility.AverageTrueRange(high, low, close, window=14).average_true_range()` | window: 14 |
+| Volatility | Keltner | `ta.volatility.KeltnerChannel(high, low, close, window=20)` → `.keltner_channel_hband()` / `.keltner_channel_lband()` | window: 20 |
 
 ## 6. Pattern Detection
 
