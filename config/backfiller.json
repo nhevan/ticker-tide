@@ -20,6 +20,9 @@
   "macro": {
     "treasury_lookback_years": 5
   },
+  "earnings": {
+    "lookback_years": 2
+  },
   "rate_limit": {
     "polygon_rate_limited": false,
     "finnhub_calls_per_minute": 60,

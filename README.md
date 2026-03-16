@@ -75,7 +75,14 @@ cp .env.example .env
 python scripts/run_backfill.py
 ```
 
-This loads up to 5 years of OHLCV data, fundamentals, news, and macro data for all tickers in `config/tickers.json`.
+This loads up to 5 years of OHLCV data, fundamentals, earnings calendar, corporate actions (dividends, splits, short interest), news, and macro data for all tickers in `config/tickers.json`.
+
+The backfill modules and their data sources:
+- `src/backfiller/ohlcv.py` — daily OHLCV bars from Polygon
+- `src/backfiller/macro.py` — treasury yields and VIX from Polygon/yfinance
+- `src/backfiller/fundamentals.py` — quarterly financials and ratios from yfinance
+- `src/backfiller/earnings.py` — earnings calendar (dates, EPS, revenue) from Finnhub
+- `src/backfiller/corporate_actions.py` — dividends, splits, short interest from Polygon
 
 ### 4. Run the daily pipeline (or set up cron)
 

@@ -19,6 +19,20 @@ Runs on EC2 Amazon Linux.
 tickers.json ──► BACKFILLER (one-time) ──► SQLite3 │ FETCHER (daily cron 00:00 UTC) ──► SQLite3 │ event: fetcher_done ▼ CALCULATOR ──► SQLite3 │ event: calculator_done ▼ SCORER ──► SQLite3 │ event: scorer_done ▼ AI + TELEGRAM ──► User
 
 
+## 2.1 Backfiller Modules
+
+The backfiller is a one-time historical data loader with the following modules:
+
+| Module | Data | Source |
+|---|---|---|
+| `src/backfiller/ohlcv.py` | 5 years of daily OHLCV bars | Polygon |
+| `src/backfiller/macro.py` | Treasury yields, VIX | Polygon, yfinance |
+| `src/backfiller/fundamentals.py` | Quarterly income, ratios, YoY growth | yfinance |
+| `src/backfiller/earnings.py` | Earnings dates, EPS estimates/actuals | Finnhub |
+| `src/backfiller/corporate_actions.py` | Dividends, splits, short interest | Polygon |
+
+Each module follows the same pattern: per-ticker function + batch function with ProgressTracker + Telegram progress updates. Polygon's Starter tier has no rate limiting. Finnhub free tier enforces 1 second delay between calls via `FinnhubClient._rate_limit()`.
+
 ## 3. Data Sources
 
 ### 3.1 Polygon.io (api.polygon.io)
