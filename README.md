@@ -23,7 +23,7 @@ ticker-tide/
 │   ├── notifier.json   # AI model config and Telegram delivery settings
 │   └── database.json   # SQLite path and maintenance settings
 ├── src/
-│   ├── common/         # Shared utilities: DB connection, config loader, logging
+│   ├── common/         # Shared utilities: DB connection, config loader, logging, validation, events, progress
 │   ├── backfiller/     # One-time historical data loader
 │   ├── fetcher/        # Daily data fetch (OHLCV, news, fundamentals, macro)
 │   ├── calculator/     # Technical indicator computation and pattern detection

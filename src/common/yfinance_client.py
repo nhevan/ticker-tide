@@ -5,6 +5,8 @@ Used as a fallback since Polygon's financials endpoints are not available
 on our plan. No API key needed.
 """
 
+from __future__ import annotations
+
 import logging
 import math
 from typing import Any
