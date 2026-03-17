@@ -33,6 +33,7 @@ The backfiller is a one-time historical data loader with the following modules:
 | `src/backfiller/news.py` | News articles + AI sentiment (3 months) | Polygon + Finnhub |
 | `src/backfiller/filings.py` | 8-K SEC filings (6 months) | Polygon |
 | `src/backfiller/main.py` | Orchestrator: ticker sync + all phases | — |
+| `src/backfiller/verify.py` | Post-backfill data verification + report | — |
 
 Each module follows the same pattern: per-ticker function + batch function with ProgressTracker + Telegram progress updates. Polygon's Starter tier has no rate limiting. Finnhub free tier enforces 1 second delay between calls via `FinnhubClient._rate_limit()`.
 
@@ -67,6 +68,29 @@ Phase failures are caught and logged; remaining phases continue. A `pipeline_run
 
 - Fetches last 6 months of 8-K filings per ticker from Polygon
 - Stores in `filings_8k` with accession_number as PRIMARY KEY for idempotency
+
+### Backfill Verifier (`src/backfiller/verify.py`)
+
+Run after `run_full_backfill` via `python scripts/verify_backfill.py` to validate data quality.
+
+**Checks performed (10 total):**
+
+| Check | Failure condition | Status |
+|---|---|---|
+| `table_row_counts` | `ohlcv_daily` is empty | fail; other tables below min → warn |
+| `ticker_coverage_ohlcv_daily` | Any active ticker missing from `ohlcv_daily` | fail |
+| `ticker_coverage_*` | Any ticker missing from fundamentals/news/etc. | warn |
+| `date_range_all_tickers` | Ticker has < 50% of expected 1260 trading days | fail; < 80% → warn |
+| `date_gaps_all_tickers` | Ticker has > 5 missing Mon-Fri trading days | warn |
+| `data_freshness` | Any ticker is > 30 days behind today | fail; > 5 days → warn |
+| `value_sanity` | Zero or negative close/volume | fail; 500%+ price jump → warn |
+| `cross_table_consistency` | Active ticker in `tickers` table has no OHLCV rows | fail |
+| `fundamentals_null_coverage` | > 50% NULL in pe_ratio/eps/revenue/debt_to_equity | warn |
+| `news_sentiment_coverage` | Overall sentiment coverage < 50% | warn |
+
+**Data classes:** `CheckResult` (name, status, message, details, data), `VerificationReport` (checks, overall_status, pass_count, warn_count, fail_count, timestamp).
+
+**Entry point:** `scripts/verify_backfill.py --quiet --no-telegram --ticker AAPL --db-path PATH`. Exits 0 on PASS, 1 on FAIL.
 
 ## 3. Data Sources
 
