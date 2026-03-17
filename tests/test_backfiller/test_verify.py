@@ -20,9 +20,11 @@ from src.backfiller.verify import (
     check_date_gaps,
     check_date_range,
     check_null_coverage,
+    check_optional_ticker_coverage,
     check_table_row_counts,
     check_ticker_coverage,
     check_value_sanity,
+    detect_market_wide_closures,
     format_verification_report,
     run_full_verification,
 )
@@ -653,3 +655,252 @@ def test_format_verification_report_truncates_long_lists() -> None:
     assert "Warning item 20" not in formatted
     assert "30 more" in formatted
     assert len(formatted) <= 4096
+
+
+# ---------------------------------------------------------------------------
+# detect_market_wide_closures
+# ---------------------------------------------------------------------------
+
+def test_detect_market_wide_closures_identifies_shared_gaps() -> None:
+    """
+    A date missing in all 5 tickers (100% >= 80% threshold) is identified
+    as a market-wide closure.
+    """
+    gaps_by_ticker = {
+        "AAPL": ["2026-01-19", "2026-02-16"],
+        "MSFT": ["2026-01-19", "2026-02-16"],
+        "NVDA": ["2026-01-19", "2026-02-16"],
+        "TSLA": ["2026-01-19", "2026-02-16"],
+        "AMZN": ["2026-01-19", "2026-02-16"],
+    }
+    closures = detect_market_wide_closures(gaps_by_ticker)
+
+    assert "2026-01-19" in closures
+    assert "2026-02-16" in closures
+
+
+def test_detect_market_wide_closures_ignores_ticker_specific_gaps() -> None:
+    """
+    A date missing in only 1 out of 5 tickers (20% < 80% threshold) is NOT
+    identified as a market-wide closure.
+    """
+    gaps_by_ticker = {
+        "AAPL": ["2026-01-19"],   # only AAPL is missing this date
+        "MSFT": [],
+        "NVDA": [],
+        "TSLA": [],
+        "AMZN": [],
+    }
+    closures = detect_market_wide_closures(gaps_by_ticker)
+
+    assert "2026-01-19" not in closures
+
+
+def test_detect_market_wide_closures_uses_threshold() -> None:
+    """
+    With 5 tickers and min_ticker_fraction=0.80, a date missing in 4/5 (80%)
+    is a closure; missing in 3/5 (60%) is not.
+    """
+    gaps_by_ticker = {
+        "AAPL": ["2026-01-19", "2026-02-16"],
+        "MSFT": ["2026-01-19"],
+        "NVDA": ["2026-01-19"],
+        "TSLA": ["2026-01-19"],
+        "AMZN": [],
+    }
+    closures = detect_market_wide_closures(gaps_by_ticker, min_ticker_fraction=0.80)
+
+    # 2026-01-19 missing in 4/5 = 80% → should be closure
+    assert "2026-01-19" in closures
+    # 2026-02-16 missing in 1/5 = 20% → not a closure
+    assert "2026-02-16" not in closures
+
+
+def test_detect_market_wide_closures_returns_empty_for_no_gaps() -> None:
+    """All tickers have no gaps → empty closure set."""
+    gaps_by_ticker = {"AAPL": [], "MSFT": [], "NVDA": []}
+    closures = detect_market_wide_closures(gaps_by_ticker)
+
+    assert closures == set()
+
+
+def test_detect_market_wide_closures_returns_empty_for_empty_input() -> None:
+    """Empty gaps_by_ticker dict → empty closure set."""
+    assert detect_market_wide_closures({}) == set()
+
+
+# ---------------------------------------------------------------------------
+# check_date_gaps_all_tickers — market closure auto-detection
+# ---------------------------------------------------------------------------
+
+def test_date_gaps_all_tickers_excludes_market_wide_closures(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    All 5 tickers missing the same date (a holiday) — auto-detected as a
+    market closure and excluded. Result should be 'pass'.
+    """
+    # 2026-01-19 is MLK Day (market closed) — insert a week of data around it
+    # (Mon 2026-01-12 to Fri 2026-01-23, skipping 2026-01-19)
+    all_days = _generate_trading_days("2026-01-12", "2026-01-23")
+    days_without_holiday = [d for d in all_days if d != "2026-01-19"]
+
+    for ticker in ("AAPL", "MSFT", "NVDA", "TSLA", "AMZN"):
+        _insert_ohlcv_rows(db_connection, ticker, days_without_holiday)
+
+    from src.backfiller.verify import check_date_gaps_all_tickers
+    result = check_date_gaps_all_tickers(
+        db_connection,
+        ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"],
+    )
+
+    assert result.status == "pass", f"Expected pass, got warn: {result.message}"
+
+
+def test_date_gaps_all_tickers_flags_ticker_specific_gaps(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    All 5 tickers span the same date range, but AAPL has 10 dates removed
+    from the middle (a halt/gap). Other tickers have complete data.
+    After market closure auto-detection, AAPL's specific gaps remain and
+    the result should be 'warn' with AAPL listed.
+    """
+    all_days = _generate_trading_days("2026-01-05", "2026-03-13")
+
+    # 4 tickers: full data
+    for ticker in ("MSFT", "NVDA", "TSLA", "AMZN"):
+        _insert_ohlcv_rows(db_connection, ticker, all_days)
+
+    # AAPL: remove 10 dates from the middle (unique gap, not shared with others)
+    gap_dates = set(all_days[20:30])  # 10 specific dates only AAPL is missing
+    aapl_days = [d for d in all_days if d not in gap_dates]
+    _insert_ohlcv_rows(db_connection, "AAPL", aapl_days)
+
+    from src.backfiller.verify import check_date_gaps_all_tickers
+    result = check_date_gaps_all_tickers(
+        db_connection,
+        ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"],
+    )
+
+    assert result.status == "warn"
+    assert any("AAPL" in detail for detail in (result.details or []))
+    # The 4 tickers with complete data should not be in issues
+    assert not any("MSFT" in detail for detail in (result.details or []))
+
+
+def test_date_gaps_all_tickers_reports_excluded_count(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    When market closures are auto-detected, the pass message mentions
+    'Excluded N detected market holidays/closures'.
+    """
+    all_days = _generate_trading_days("2026-01-12", "2026-01-23")
+    days_without_holiday = [d for d in all_days if d != "2026-01-19"]
+
+    for ticker in ("AAPL", "MSFT", "NVDA"):
+        _insert_ohlcv_rows(db_connection, ticker, days_without_holiday)
+
+    from src.backfiller.verify import check_date_gaps_all_tickers
+    result = check_date_gaps_all_tickers(
+        db_connection, ["AAPL", "MSFT", "NVDA"]
+    )
+
+    assert "Excluded" in result.message
+    assert "market holidays" in result.message
+
+
+# ---------------------------------------------------------------------------
+# check_optional_ticker_coverage
+# ---------------------------------------------------------------------------
+
+def test_dividends_coverage_pass_for_partial_coverage(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    3/5 tickers have dividend data (60% >= 20% threshold).
+    Result should be 'pass' with an informational message.
+    """
+    for idx, ticker in enumerate(("AAPL", "MSFT", "JPM")):
+        db_connection.execute(
+            "INSERT OR REPLACE INTO dividends (id, ticker, ex_dividend_date, cash_amount, fetched_at) "
+            "VALUES (?, ?, '2026-01-15', 0.25, '2026-01-01')",
+            (f"div-{idx}", ticker),
+        )
+    db_connection.commit()
+
+    result = check_optional_ticker_coverage(
+        db_connection, "dividends",
+        ["AAPL", "MSFT", "JPM", "AMZN", "NVDA"],
+    )
+
+    assert result.status == "pass"
+    assert "normal" in result.message
+    assert result.data["missing"] == ["AMZN", "NVDA"]
+
+
+def test_dividends_coverage_warn_below_threshold(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    1/10 tickers have dividend data (10% < 20% threshold).
+    Result should be 'warn' indicating a possible fetch failure.
+    """
+    db_connection.execute(
+        "INSERT OR REPLACE INTO dividends (id, ticker, ex_dividend_date, cash_amount, fetched_at) "
+        "VALUES ('div-1', 'AAPL', '2026-01-15', 0.25, '2026-01-01')"
+    )
+    db_connection.commit()
+
+    tickers = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN",
+               "GOOGL", "META", "JPM", "BAC", "XOM"]
+    result = check_optional_ticker_coverage(db_connection, "dividends", tickers)
+
+    assert result.status == "warn"
+    assert "possible fetch failure" in result.message
+
+
+def test_short_interest_optional_coverage_pass(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    4/5 tickers have short interest data (80% >= 20% threshold).
+    Result should be 'pass'.
+    """
+    for ticker in ("AAPL", "MSFT", "NVDA", "TSLA"):
+        db_connection.execute(
+            "INSERT OR REPLACE INTO short_interest "
+            "(ticker, settlement_date, short_interest, days_to_cover, fetched_at) "
+            "VALUES (?, '2026-01-15', 1000000, 2.5, '2026-01-01')",
+            (ticker,),
+        )
+    db_connection.commit()
+
+    result = check_optional_ticker_coverage(
+        db_connection, "short_interest",
+        ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"],
+    )
+
+    assert result.status == "pass"
+    assert "normal" in result.message
+
+
+def test_optional_coverage_pass_when_all_present(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """All tickers have data → pass with informational message (0 missing — normal)."""
+    for idx, ticker in enumerate(("AAPL", "MSFT")):
+        db_connection.execute(
+            "INSERT OR REPLACE INTO dividends (id, ticker, ex_dividend_date, cash_amount, fetched_at) "
+            "VALUES (?, ?, '2026-01-15', 0.25, '2026-01-01')",
+            (f"div-{idx}", ticker),
+        )
+    db_connection.commit()
+
+    result = check_optional_ticker_coverage(
+        db_connection, "dividends", ["AAPL", "MSFT"]
+    )
+
+    assert result.status == "pass"
+    assert result.data["missing"] == []

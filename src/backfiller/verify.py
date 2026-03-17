@@ -200,16 +200,82 @@ def check_ticker_coverage(
     )
 
 
+def check_optional_ticker_coverage(
+    db_conn: sqlite3.Connection,
+    table_name: str,
+    expected_tickers: list[str],
+    min_coverage_pct: float = 0.20,
+) -> CheckResult:
+    """
+    Check ticker coverage for tables where absence is expected for some tickers.
+
+    Used for tables like dividends and short_interest where not all tickers
+    will have data (growth stocks don't pay dividends; very new listings may
+    lack short interest history). Returns "pass" with an informational note
+    as long as at least min_coverage_pct of expected tickers have data.
+    Only returns "warn" if coverage drops suspiciously low, suggesting a
+    data fetch failure rather than legitimate absence.
+
+    Args:
+        db_conn: Open SQLite connection.
+        table_name: Name of the table to query.
+        expected_tickers: List of ticker symbols to check against.
+        min_coverage_pct: Minimum fraction of tickers that must have data
+            before a warning is raised. Default is 0.20 (20%).
+
+    Returns:
+        CheckResult with "pass" and informational message when coverage is
+        acceptable, or "warn" when coverage is suspiciously low.
+    """
+    rows = db_conn.execute(
+        f"SELECT DISTINCT ticker FROM {table_name}"
+    ).fetchall()
+    present_tickers = {row[0] for row in rows}
+
+    expected_set = set(expected_tickers)
+    present = sorted(expected_set & present_tickers)
+    missing = sorted(expected_set - present_tickers)
+
+    total = len(expected_tickers)
+    present_count = len(present)
+    missing_count = len(missing)
+
+    coverage_pct = present_count / total if total > 0 else 0.0
+
+    if coverage_pct < min_coverage_pct:
+        return CheckResult(
+            name=f"ticker_coverage_{table_name}",
+            status="warn",
+            message=(
+                f"{table_name}: only {present_count}/{total} tickers have data"
+                " — possible fetch failure"
+            ),
+            data={"present": present, "missing": missing},
+        )
+
+    return CheckResult(
+        name=f"ticker_coverage_{table_name}",
+        status="pass",
+        message=(
+            f"{table_name}: {present_count}/{total} tickers have data"
+            f" ({missing_count} tickers have no {table_name} — normal)"
+        ),
+        data={"present": present, "missing": missing},
+    )
+
+
 def check_all_ticker_coverage(
     db_conn: sqlite3.Connection,
     active_tickers: list[str],
 ) -> list[CheckResult]:
     """
-    Run check_ticker_coverage for each relevant backfill table.
+    Run ticker coverage checks for each relevant backfill table.
 
-    Checks ohlcv_daily, fundamentals, earnings_calendar, news_articles,
-    short_interest, and dividends. Missing tickers in dividends and short_interest
-    are warnings rather than failures (not all stocks pay dividends or have short data).
+    Uses check_ticker_coverage for critical tables (ohlcv_daily, fundamentals,
+    earnings_calendar, news_articles) where missing tickers are unexpected.
+    Uses check_optional_ticker_coverage for dividends and short_interest, where
+    absence is normal (growth stocks don't pay dividends; thin float stocks may
+    lack short interest history).
 
     Args:
         db_conn: Open SQLite connection.
@@ -218,16 +284,22 @@ def check_all_ticker_coverage(
     Returns:
         List of CheckResult, one per checked table.
     """
-    tables = [
+    # Tables where every active ticker should have data
+    required_tables = [
         "ohlcv_daily",
         "fundamentals",
         "earnings_calendar",
         "news_articles",
+    ]
+    # Tables where partial coverage is normal
+    optional_tables = [
         "short_interest",
         "dividends",
     ]
+
     results: list[CheckResult] = []
-    for table_name in tables:
+
+    for table_name in required_tables:
         try:
             result = check_ticker_coverage(db_conn, table_name, active_tickers)
             results.append(result)
@@ -240,6 +312,21 @@ def check_all_ticker_coverage(
                     message=f"Could not query {table_name}: {exc}",
                 )
             )
+
+    for table_name in optional_tables:
+        try:
+            result = check_optional_ticker_coverage(db_conn, table_name, active_tickers)
+            results.append(result)
+        except sqlite3.OperationalError as exc:
+            logger.warning(f"check_optional_ticker_coverage skipped for {table_name}: {exc}")
+            results.append(
+                CheckResult(
+                    name=f"ticker_coverage_{table_name}",
+                    status="warn",
+                    message=f"Could not query {table_name}: {exc}",
+                )
+            )
+
     return results
 
 
@@ -353,9 +440,39 @@ def check_date_range_all_tickers(
     )
 
 
-# ---------------------------------------------------------------------------
-# Date gaps
-# ---------------------------------------------------------------------------
+def detect_market_wide_closures(
+    gaps_by_ticker: dict[str, list[str]],
+    min_ticker_fraction: float = 0.80,
+) -> set[str]:
+    """
+    Auto-detect market-wide closures from per-ticker gap lists.
+
+    A date is considered a market-wide closure (e.g. a US market holiday) if
+    it appears in the gap lists of at least min_ticker_fraction of all tickers.
+    This avoids the need for a manually maintained holiday calendar.
+
+    Args:
+        gaps_by_ticker: Dict mapping ticker symbol to list of missing ISO date strings.
+        min_ticker_fraction: Fraction of tickers (0.0–1.0) that must be missing a date
+            for it to be classified as a market-wide closure. Default is 0.80 (80%).
+
+    Returns:
+        set[str]: ISO date strings identified as market-wide closures.
+    """
+    if not gaps_by_ticker:
+        return set()
+
+    total_tickers = len(gaps_by_ticker)
+    threshold = total_tickers * min_ticker_fraction
+
+    from collections import Counter
+    date_counts: Counter = Counter()
+    for gaps in gaps_by_ticker.values():
+        for gap_date in gaps:
+            date_counts[gap_date] += 1
+
+    return {d for d, count in date_counts.items() if count >= threshold}
+
 
 def check_date_gaps(
     db_conn: sqlite3.Connection,
@@ -412,39 +529,65 @@ def check_date_gaps_all_tickers(
     """
     Run check_date_gaps for every active ticker and aggregate.
 
-    Warns if any ticker has more than max_gaps_before_warn missing trading days.
+    First auto-detects market-wide closures (dates missing for >=80% of tickers)
+    and excludes them. Then warns only if any ticker has more than
+    max_gaps_before_warn truly ticker-specific missing days.
 
     Args:
         db_conn: Open SQLite connection.
         active_tickers: List of active ticker symbols to check.
-        holidays: Optional list of ISO holiday date strings to ignore.
-        max_gaps_before_warn: Gap count above which a ticker triggers a warning.
+        holidays: Optional list of ISO holiday date strings to also ignore.
+        max_gaps_before_warn: Real-gap count above which a ticker triggers a warning.
 
     Returns:
-        CheckResult with details listing the specific missing dates per ticker.
+        CheckResult with details listing ticker-specific missing dates.
+        Pass message includes count of auto-detected market closures excluded.
     """
-    issues: list[str] = []
+    # Collect all raw gaps per ticker (before filtering closures)
+    gaps_by_ticker: dict[str, list[str]] = {}
+    explicit_holidays = set(holidays) if holidays else set()
+
     for ticker in active_tickers:
         gaps = check_date_gaps(db_conn, ticker, holidays=holidays)
-        if len(gaps) > max_gaps_before_warn:
+        gaps_by_ticker[ticker] = gaps
+
+    # Auto-detect dates missing across the majority of tickers → market closures
+    market_closures = detect_market_wide_closures(gaps_by_ticker)
+    all_excluded = market_closures | explicit_holidays
+    n_excluded = len(market_closures)
+
+    # Re-evaluate each ticker using only ticker-specific gaps
+    issues: list[str] = []
+    for ticker, raw_gaps in gaps_by_ticker.items():
+        real_gaps = [d for d in raw_gaps if d not in all_excluded]
+        if len(real_gaps) > max_gaps_before_warn:
             issues.append(
-                f"{ticker}: {len(gaps)} missing trading days — "
-                + ", ".join(gaps[:5])
-                + (" ..." if len(gaps) > 5 else "")
+                f"{ticker}: {len(real_gaps)} missing trading days — "
+                + ", ".join(real_gaps[:5])
+                + (" ..." if len(real_gaps) > 5 else "")
             )
+
+    excluded_note = (
+        f" (Excluded {n_excluded} detected market holidays/closures)"
+        if n_excluded > 0
+        else ""
+    )
 
     if issues:
         return CheckResult(
             name="date_gaps_all_tickers",
             status="warn",
-            message=f"{len(issues)} ticker(s) have excessive date gaps",
+            message=f"{len(issues)} ticker(s) have excessive date gaps{excluded_note}",
             details=issues,
         )
 
     return CheckResult(
         name="date_gaps_all_tickers",
         status="pass",
-        message=f"All {len(active_tickers)} tickers have acceptable date continuity",
+        message=(
+            f"All {len(active_tickers)} tickers have acceptable date continuity"
+            + excluded_note
+        ),
     )
 
 
