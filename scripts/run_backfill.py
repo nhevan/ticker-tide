@@ -20,6 +20,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _PROJECT_ROOT)
 
 from src.backfiller.main import run_full_backfill  # noqa: E402
+from src.common.logger import setup_root_logging  # noqa: E402
 
 VALID_PHASES = [
     "ohlcv",
@@ -80,6 +81,7 @@ def main() -> int:
     Returns:
         int: Exit code — 0 on success, 1 on error.
     """
+    setup_root_logging()
     parser = build_argument_parser()
     args = parser.parse_args()
 

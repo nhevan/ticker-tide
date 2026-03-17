@@ -1,5 +1,5 @@
 """
-Tests for src/common/logger.py — setup_logger function.
+Tests for src/common/logger.py — setup_logger and setup_root_logging functions.
 """
 
 import io
@@ -7,16 +7,25 @@ import logging
 
 import pytest
 
-from src.common.logger import setup_logger
+from src.common.logger import setup_logger, setup_root_logging
 
 
 @pytest.fixture(autouse=True)
 def reset_loggers():
-    """Remove all handlers from test loggers before each test to ensure isolation."""
+    """Save and restore root logger state; clear named test loggers around each test."""
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handlers = root.handlers[:]
+    root.handlers.clear()
+
     yield
-    for name in ["test_module", "backfiller.ohlcv", "test", "my_module"]:
-        logger = logging.getLogger(name)
-        logger.handlers.clear()
+
+    for name in ["test_module", "backfiller.ohlcv", "test", "my_module",
+                 "src.backfiller.main"]:
+        logging.getLogger(name).handlers.clear()
+    root.handlers.clear()
+    root.handlers.extend(saved_handlers)
+    root.setLevel(saved_level)
 
 
 def test_setup_logger_returns_logger():
@@ -107,3 +116,46 @@ def test_setup_logger_no_duplicate_handlers():
     setup_logger("test")
     result = setup_logger("test")
     assert len(result.handlers) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests for setup_root_logging
+# ---------------------------------------------------------------------------
+
+def test_setup_root_logging_adds_handler() -> None:
+    """setup_root_logging should add at least one handler to the root logger."""
+    setup_root_logging()
+    root = logging.getLogger()
+    assert len(root.handlers) >= 1
+
+
+def test_setup_root_logging_sets_info_level_by_default() -> None:
+    """setup_root_logging should set the root logger level to INFO by default."""
+    setup_root_logging()
+    root = logging.getLogger()
+    assert root.level == logging.INFO
+
+
+def test_setup_root_logging_custom_level() -> None:
+    """setup_root_logging should respect a custom level argument."""
+    setup_root_logging(level=logging.DEBUG)
+    root = logging.getLogger()
+    assert root.level == logging.DEBUG
+
+
+def test_setup_root_logging_produces_output() -> None:
+    """After setup_root_logging, a child logger's INFO message should appear in output."""
+    import re
+
+    setup_root_logging()
+    root = logging.getLogger()
+    stream = io.StringIO()
+    root.handlers[0].stream = stream
+
+    child_logger = logging.getLogger("src.backfiller.main")
+    child_logger.info("pipeline started")
+
+    output = stream.getvalue()
+    assert "pipeline started" in output
+    assert "INFO" in output
+    assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", output)
