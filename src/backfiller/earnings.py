@@ -14,6 +14,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 
+from src.backfiller.utils import _is_table_data_fresh
 from src.common.events import log_alert
 from src.common.progress import (
     ProgressTracker,
@@ -51,9 +52,15 @@ def convert_yfinance_to_earnings_row(record: dict) -> dict:
 def backfill_earnings_for_ticker(
     db_conn: sqlite3.Connection,
     ticker: str,
+    config: dict | None = None,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store earnings calendar records for a single ticker via yfinance.
+
+    When force=False (default), skips the API call if data for this ticker in
+    earnings_calendar was fetched within config['skip_if_fresh_days']['earnings']
+    days (default 7). When force=True, always fetches regardless of existing data.
 
     Calls fetch_earnings_dates to retrieve all available earnings events,
     converts each to DB format, and inserts using INSERT OR REPLACE for
@@ -62,13 +69,20 @@ def backfill_earnings_for_ticker(
     Args:
         db_conn: Open SQLite connection with the earnings_calendar and alerts_log tables.
         ticker: Stock ticker symbol to backfill, e.g. 'AAPL'.
+        config: Optional backfiller config dict; reads
+            config['skip_if_fresh_days']['earnings'] for the freshness threshold.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
-        int: Number of rows inserted.
+        int: Number of rows inserted. Returns 0 if skipped due to freshness.
 
     Raises:
         Exception: Re-raises any exception from fetch_earnings_dates after logging.
     """
+    threshold = (config or {}).get("skip_if_fresh_days", {}).get("earnings", 7)
+    if not force and _is_table_data_fresh(db_conn, "earnings_calendar", ticker, threshold):
+        return 0
+
     logger.info(f"Starting earnings backfill for ticker={ticker}")
 
     records = fetch_earnings_dates(ticker)
@@ -101,8 +115,10 @@ def backfill_earnings_for_ticker(
 def backfill_all_earnings(
     db_conn: sqlite3.Connection,
     tickers: list[dict],
+    config: dict | None = None,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Backfill earnings calendar data for all tickers in the provided list.
@@ -114,8 +130,10 @@ def backfill_all_earnings(
     Args:
         db_conn: Open SQLite connection with earnings_calendar and alerts_log tables.
         tickers: List of ticker config dicts, each with at least a 'symbol' key.
+        config: Backfiller config dict passed through to backfill_earnings_for_ticker.
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
         dict with keys: processed (int), failed (int), total_rows (int).
@@ -140,7 +158,7 @@ def backfill_all_earnings(
             edit_telegram_message(bot_token, chat_id, msg_id, tracker.format_progress_message())
 
         try:
-            count = backfill_earnings_for_ticker(db_conn, ticker)
+            count = backfill_earnings_for_ticker(db_conn, ticker, config, force=force)
             total_rows += count
             processed += 1
             tracker.mark_completed(ticker, details=f"{count} records")

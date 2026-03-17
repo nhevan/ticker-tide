@@ -1,4 +1,13 @@
 {
+  "skip_if_fresh_days": {
+    "earnings": 7,
+    "fundamentals": 30,
+    "dividends": 7,
+    "splits": 30,
+    "short_interest": 7,
+    "news": 1,
+    "filings": 7
+  },
   "ohlcv": {
     "lookback_years": 5,
     "adjusted": true,

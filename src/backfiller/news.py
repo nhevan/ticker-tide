@@ -13,6 +13,7 @@ import sqlite3
 from datetime import date, datetime, timezone
 from dateutil.relativedelta import relativedelta
 
+from src.backfiller.utils import _is_table_data_fresh
 from src.common.events import log_alert
 from src.common.progress import (
     ProgressTracker,
@@ -156,6 +157,7 @@ def backfill_news_polygon(
     from_date: str,
     to_date: str,
     limit: int = 1000,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store Polygon news articles for a single ticker.
@@ -171,6 +173,7 @@ def backfill_news_polygon(
         from_date: Start date in 'YYYY-MM-DD' format (inclusive).
         to_date: End date in 'YYYY-MM-DD' format (inclusive).
         limit: Maximum articles per page request. Defaults to 1000.
+        force: Accepted for API consistency; staleness is checked by the caller.
 
     Returns:
         int: Number of rows inserted. Returns 0 if no data.
@@ -211,6 +214,7 @@ def backfill_news_finnhub(
     ticker: str,
     from_date: str,
     to_date: str,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store Finnhub news articles for a single ticker.
@@ -225,6 +229,7 @@ def backfill_news_finnhub(
         ticker: Stock ticker symbol, e.g. 'AAPL'.
         from_date: Start date in 'YYYY-MM-DD' format (inclusive).
         to_date: End date in 'YYYY-MM-DD' format (inclusive).
+        force: Accepted for API consistency; staleness is checked by the caller.
 
     Returns:
         int: Number of rows inserted. Returns 0 if no data.
@@ -267,13 +272,18 @@ def backfill_all_news(
     config: dict,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Backfill news from both Polygon and Finnhub for all tickers.
 
-    For each ticker, attempts Polygon and Finnhub independently — a Finnhub failure
-    does not prevent Polygon data from being stored. Progress is tracked via
-    ProgressTracker and Telegram updates sent if credentials are provided.
+    For each ticker, checks freshness first: if data in news_articles was fetched
+    within config['skip_if_fresh_days']['news'] days (default 1) and force=False,
+    both Polygon and Finnhub fetches are skipped for that ticker.
+
+    When fetching proceeds, Polygon and Finnhub are attempted independently — a
+    Finnhub failure does not prevent Polygon data from being stored. Progress is
+    tracked via ProgressTracker and Telegram updates sent if credentials are provided.
 
     Date ranges:
     - Polygon: today minus config["news"]["lookback_months"] months
@@ -287,6 +297,7 @@ def backfill_all_news(
         config: Backfiller config dict containing the news section.
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
         dict with keys: polygon_articles (int), finnhub_articles (int),
@@ -299,6 +310,7 @@ def backfill_all_news(
     polygon_lookback = config["news"]["lookback_months"]
     finnhub_lookback = config["news"]["finnhub_lookback_months"]
     polygon_limit = config["news"]["polygon_limit_per_request"]
+    news_threshold = config.get("skip_if_fresh_days", {}).get("news", 1)
 
     polygon_from = (today - relativedelta(months=polygon_lookback)).isoformat()
     finnhub_from = (today - relativedelta(months=finnhub_lookback)).isoformat()
@@ -318,6 +330,13 @@ def backfill_all_news(
         tracker.mark_processing(ticker)
         if msg_id:
             edit_telegram_message(bot_token, chat_id, msg_id, tracker.format_progress_message())
+
+        if not force and _is_table_data_fresh(db_conn, "news_articles", ticker, news_threshold):
+            tickers_processed += 1
+            tracker.mark_completed(ticker, details="skipped (fresh)")
+            if msg_id:
+                edit_telegram_message(bot_token, chat_id, msg_id, tracker.format_progress_message())
+            continue
 
         ticker_had_error = False
 

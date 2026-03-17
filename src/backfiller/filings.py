@@ -12,6 +12,7 @@ import sqlite3
 from datetime import date, datetime, timezone
 from dateutil.relativedelta import relativedelta
 
+from src.backfiller.utils import _is_table_data_fresh
 from src.common.events import log_alert
 from src.common.progress import (
     ProgressTracker,
@@ -50,9 +51,15 @@ def backfill_8k_for_ticker(
     ticker: str,
     from_date: str,
     to_date: str,
+    config: dict | None = None,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store 8-K filing records for a single ticker.
+
+    When force=False (default), skips the API call if data for this ticker in
+    filings_8k was fetched within config['skip_if_fresh_days']['filings'] days
+    (default 7).
 
     Calls polygon_client.fetch_8k_filings(ticker, from_date, to_date), converts
     each filing to DB format, and inserts using INSERT OR REPLACE for idempotency.
@@ -63,10 +70,16 @@ def backfill_8k_for_ticker(
         ticker: Stock ticker symbol, e.g. 'AAPL'.
         from_date: Start filing date in 'YYYY-MM-DD' format (inclusive).
         to_date: End filing date in 'YYYY-MM-DD' format (inclusive).
+        config: Optional backfiller config dict for the freshness threshold.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
-        int: Number of rows inserted. Returns 0 if no data.
+        int: Number of rows inserted. Returns 0 if no data or skipped.
     """
+    threshold = (config or {}).get("skip_if_fresh_days", {}).get("filings", 7)
+    if not force and _is_table_data_fresh(db_conn, "filings_8k", ticker, threshold):
+        return 0
+
     logger.info(
         f"Starting 8-K filings backfill for ticker={ticker} from={from_date} to={to_date}"
     )
@@ -101,6 +114,7 @@ def backfill_all_filings(
     config: dict,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Backfill 8-K filings for all tickers.
@@ -116,6 +130,7 @@ def backfill_all_filings(
         config: Backfiller config dict containing the filings section.
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
         dict with keys: filings_total (int), tickers_processed (int), tickers_failed (int).
@@ -143,7 +158,7 @@ def backfill_all_filings(
             edit_telegram_message(bot_token, chat_id, msg_id, tracker.format_progress_message())
 
         try:
-            count = backfill_8k_for_ticker(db_conn, polygon_client, ticker, from_date, today_str)
+            count = backfill_8k_for_ticker(db_conn, polygon_client, ticker, from_date, today_str, config=config, force=force)
             filings_total += count
             tickers_processed += 1
             tracker.mark_completed(ticker)

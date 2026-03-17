@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from dateutil.relativedelta import relativedelta
 
@@ -78,25 +78,31 @@ def backfill_ohlcv_for_ticker(
     lookback_years: int,
     former_symbol: str | None = None,
     symbol_since: str | None = None,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store historical OHLCV data for a single ticker.
 
-    Computes a date range from today minus lookback_years to today, fetches
-    daily bars from Polygon, validates each bar, and inserts valid rows into
-    ohlcv_daily using INSERT OR REPLACE for idempotency. Invalid rows are
-    skipped with a warning alert logged to alerts_log.
+    When force=False (default), staleness checks avoid redundant API calls:
+      - If the most recent date in ohlcv_daily for this ticker is >= yesterday,
+        the data is considered current and 0 is returned immediately.
+      - If data exists but is older, from_date is set to max_date + 1 day so
+        only missing bars are fetched (incremental update).
+      - If no data exists, the full lookback range is used.
+
+    When force=True, the full lookback range is always used regardless of what
+    is already in the database.
 
     When a ticker has a known historical name change (e.g. FB → META), supply
-    former_symbol and symbol_since. If symbol_since falls within the lookback
-    range, two Polygon fetches are made:
+    former_symbol and symbol_since. If symbol_since falls within the computed
+    from_date–to_date range, two Polygon fetches are made:
       - current ticker: symbol_since → to_date
       - former ticker:  from_date → day before symbol_since
     Both sets of rows are stored under the current ticker symbol.
 
-    If symbol_since is before from_date (the change predates the lookback
-    window), all available history is already under the current ticker and a
-    single fetch is performed.
+    If symbol_since is before from_date (the change predates the fetch window),
+    all available history is already under the current ticker and a single fetch
+    is performed.
 
     Args:
         db_conn: Open SQLite connection with ohlcv_daily and alerts_log tables.
@@ -104,16 +110,39 @@ def backfill_ohlcv_for_ticker(
         ticker: Ticker symbol to backfill (e.g. 'META').
         lookback_years: Number of years of historical data to fetch.
         former_symbol: Optional prior ticker symbol (e.g. 'FB'). Used only when
-            the ticker was renamed within the lookback window.
+            the ticker was renamed within the fetch window.
         symbol_since: ISO date string (YYYY-MM-DD) on which the current ticker
             symbol became active. Required when former_symbol is provided.
+        force: When True, bypass staleness checks and re-fetch from full
+            lookback. Defaults to False.
 
     Returns:
         Number of rows successfully inserted into ohlcv_daily.
     """
     today = date.today()
-    from_date = (today - relativedelta(years=lookback_years)).strftime("%Y-%m-%d")
     to_date = today.strftime("%Y-%m-%d")
+
+    if not force:
+        max_date_row = db_conn.execute(
+            "SELECT MAX(date) AS max_date FROM ohlcv_daily WHERE ticker = ?",
+            (ticker,),
+        ).fetchone()
+        max_date = max_date_row["max_date"] if max_date_row else None
+
+        if max_date is not None:
+            today_minus_one = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+            if max_date >= today_minus_one:
+                logger.info(
+                    f"Skipping OHLCV for ticker={ticker}: data is fresh (max_date={max_date})"
+                )
+                return 0
+            from_date = (
+                date.fromisoformat(max_date) + timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+        else:
+            from_date = (today - relativedelta(years=lookback_years)).strftime("%Y-%m-%d")
+    else:
+        from_date = (today - relativedelta(years=lookback_years)).strftime("%Y-%m-%d")
 
     logger.info(
         f"Starting OHLCV backfill for ticker={ticker} from={from_date} to={to_date}"
@@ -126,7 +155,6 @@ def backfill_ohlcv_for_ticker(
     )
 
     if use_split_fetch:
-        from datetime import timedelta
         symbol_since_date = date.fromisoformat(symbol_since)
         day_before = (symbol_since_date - timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -206,6 +234,7 @@ def backfill_all_tickers(
     config: dict,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Backfill OHLCV data for all tickers in the provided list.
@@ -221,6 +250,7 @@ def backfill_all_tickers(
         config: Config dict; reads config['ohlcv']['lookback_years'] (default 5).
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass staleness checks and re-fetch all data.
 
     Returns:
         dict with keys: processed (int), skipped (int), failed (int), total_rows (int).
@@ -253,6 +283,7 @@ def backfill_all_tickers(
                 db_conn, polygon_client, ticker, lookback_years,
                 former_symbol=former_symbol,
                 symbol_since=symbol_since,
+                force=force,
             )
             total_rows += count
             processed += 1

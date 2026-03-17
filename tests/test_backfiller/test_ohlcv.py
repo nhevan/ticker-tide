@@ -4,10 +4,11 @@ Tests are written first (TDD). All external API calls are mocked.
 """
 
 import sqlite3
-from datetime import date, timezone
+from datetime import date, timedelta, timezone
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+from dateutil.relativedelta import relativedelta
 
 from src.backfiller.ohlcv import (
     backfill_all_tickers,
@@ -544,3 +545,140 @@ def test_backfill_all_tickers_uses_progress_tracker(
     assert mock_send.call_count >= 1
     # edit_telegram_message called at least once per ticker (3 tickers × 2 updates = ≥6)
     assert mock_edit.call_count >= 3
+
+
+# ---------------------------------------------------------------------------
+# Staleness / skip-if-fresh tests for backfill_ohlcv_for_ticker
+# ---------------------------------------------------------------------------
+
+def _insert_ohlcv_row(db_connection, ticker: str, row_date: str) -> None:
+    """Helper to insert a minimal valid OHLCV row."""
+    db_connection.execute(
+        """
+        INSERT OR REPLACE INTO ohlcv_daily
+            (ticker, date, open, high, low, close, volume)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (ticker, row_date, 150.0, 155.0, 148.0, 153.0, 5_000_000),
+    )
+    db_connection.commit()
+
+
+def test_backfill_ohlcv_skips_when_current(
+    db_connection, sample_polygon_bars
+) -> None:
+    """
+    When max_date in ohlcv_daily >= yesterday, fetch_ohlcv is NOT called and 0 is returned.
+    """
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    _insert_ohlcv_row(db_connection, "AAPL", yesterday)
+
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    result = backfill_ohlcv_for_ticker(db_connection, mock_client, "AAPL", 5)
+
+    mock_client.fetch_ohlcv.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_ohlcv_skips_when_today(
+    db_connection, sample_polygon_bars
+) -> None:
+    """
+    When max_date equals today, fetch_ohlcv is NOT called.
+    """
+    today = date.today().isoformat()
+    _insert_ohlcv_row(db_connection, "AAPL", today)
+
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    result = backfill_ohlcv_for_ticker(db_connection, mock_client, "AAPL", 5)
+
+    mock_client.fetch_ohlcv.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_ohlcv_incremental_fetch(
+    db_connection, sample_polygon_bars
+) -> None:
+    """
+    When max_date exists but is stale (10 days ago), fetch_ohlcv is called
+    with from_date = max_date + 1 day (not the full 5-year lookback).
+    """
+    ten_days_ago = (date.today() - timedelta(days=10)).isoformat()
+    nine_days_ago = (date.today() - timedelta(days=9)).isoformat()
+    _insert_ohlcv_row(db_connection, "AAPL", ten_days_ago)
+
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    backfill_ohlcv_for_ticker(db_connection, mock_client, "AAPL", 5)
+
+    assert mock_client.fetch_ohlcv.called
+    from_date_arg = mock_client.fetch_ohlcv.call_args[0][1]
+    assert from_date_arg == nine_days_ago
+
+
+def test_backfill_ohlcv_full_lookback_when_no_data(
+    db_connection, sample_polygon_bars
+) -> None:
+    """
+    When no data exists in ohlcv_daily for the ticker, the full lookback range is used.
+    """
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    backfill_ohlcv_for_ticker(db_connection, mock_client, "AAPL", 5)
+
+    assert mock_client.fetch_ohlcv.called
+    from_date_arg = mock_client.fetch_ohlcv.call_args[0][1]
+    expected_from = (date.today() - relativedelta(years=5)).strftime("%Y-%m-%d")
+    assert from_date_arg == expected_from
+
+
+def test_backfill_ohlcv_force_full_fetch(
+    db_connection, sample_polygon_bars
+) -> None:
+    """
+    When force=True, the full lookback range is always used even if data is current.
+    """
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    _insert_ohlcv_row(db_connection, "AAPL", yesterday)
+
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    backfill_ohlcv_for_ticker(db_connection, mock_client, "AAPL", 5, force=True)
+
+    assert mock_client.fetch_ohlcv.called
+    from_date_arg = mock_client.fetch_ohlcv.call_args[0][1]
+    expected_from = (date.today() - relativedelta(years=5)).strftime("%Y-%m-%d")
+    assert from_date_arg == expected_from
+
+
+def test_backfill_ohlcv_incremental_skips_split_when_former_covered(
+    db_connection, sample_polygon_bars
+) -> None:
+    """
+    When incremental from_date > symbol_since, the split-fetch is not triggered
+    and only the current ticker is fetched (former period already covered).
+    """
+    symbol_since = (date.today() - relativedelta(months=9)).strftime("%Y-%m-%d")
+    # max_date is 5 days ago → from_date = 4 days ago, which is > symbol_since
+    five_days_ago = (date.today() - timedelta(days=5)).isoformat()
+    _insert_ohlcv_row(db_connection, "META", five_days_ago)
+
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    backfill_ohlcv_for_ticker(
+        db_connection, mock_client, "META", 1,
+        former_symbol="FB",
+        symbol_since=symbol_since,
+    )
+
+    # Should only call for META, not FB (from_date is after symbol_since)
+    assert mock_client.fetch_ohlcv.call_count == 1
+    assert mock_client.fetch_ohlcv.call_args[0][0] == "META"

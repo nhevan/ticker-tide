@@ -13,6 +13,7 @@ import logging
 import sqlite3
 from datetime import date, datetime, timezone
 
+from src.backfiller.utils import _is_table_data_fresh
 from src.common.events import log_alert
 from src.common.progress import (
     ProgressTracker,
@@ -91,9 +92,15 @@ def backfill_dividends_for_ticker(
     db_conn: sqlite3.Connection,
     polygon_client: object,
     ticker: str,
+    config: dict | None = None,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store historical dividend records for a single ticker.
+
+    When force=False (default), skips the API call if data for this ticker in
+    the dividends table was fetched within config['skip_if_fresh_days']['dividends']
+    days (default 7).
 
     Calls polygon_client.fetch_dividends(ticker), converts each record to DB
     format, and inserts using INSERT OR REPLACE for idempotency.
@@ -102,10 +109,16 @@ def backfill_dividends_for_ticker(
         db_conn: Open SQLite connection with the dividends and alerts_log tables.
         polygon_client: PolygonClient instance with a fetch_dividends method.
         ticker: Stock ticker symbol, e.g. 'AAPL'.
+        config: Optional backfiller config dict for the freshness threshold.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
-        int: Number of rows inserted. Returns 0 if no data or on error.
+        int: Number of rows inserted. Returns 0 if no data, on error, or skipped.
     """
+    threshold = (config or {}).get("skip_if_fresh_days", {}).get("dividends", 7)
+    if not force and _is_table_data_fresh(db_conn, "dividends", ticker, threshold):
+        return 0
+
     logger.info(f"Starting dividends backfill for ticker={ticker}")
     records = polygon_client.fetch_dividends(ticker)
 
@@ -134,9 +147,15 @@ def backfill_splits_for_ticker(
     db_conn: sqlite3.Connection,
     polygon_client: object,
     ticker: str,
+    config: dict | None = None,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store historical stock split records for a single ticker.
+
+    When force=False (default), skips the API call if data for this ticker in
+    the splits table was fetched within config['skip_if_fresh_days']['splits']
+    days (default 30).
 
     Calls polygon_client.fetch_splits(ticker), converts each record to DB
     format, and inserts using INSERT OR REPLACE for idempotency.
@@ -145,10 +164,16 @@ def backfill_splits_for_ticker(
         db_conn: Open SQLite connection with the splits and alerts_log tables.
         polygon_client: PolygonClient instance with a fetch_splits method.
         ticker: Stock ticker symbol, e.g. 'AAPL'.
+        config: Optional backfiller config dict for the freshness threshold.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
-        int: Number of rows inserted. Returns 0 if no data.
+        int: Number of rows inserted. Returns 0 if no data or skipped.
     """
+    threshold = (config or {}).get("skip_if_fresh_days", {}).get("splits", 30)
+    if not force and _is_table_data_fresh(db_conn, "splits", ticker, threshold):
+        return 0
+
     logger.info(f"Starting splits backfill for ticker={ticker}")
     records = polygon_client.fetch_splits(ticker)
 
@@ -176,9 +201,15 @@ def backfill_short_interest_for_ticker(
     db_conn: sqlite3.Connection,
     polygon_client: object,
     ticker: str,
+    config: dict | None = None,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store short interest records for a single ticker.
+
+    When force=False (default), skips the API call if data for this ticker in
+    the short_interest table was fetched within
+    config['skip_if_fresh_days']['short_interest'] days (default 7).
 
     Calls polygon_client.fetch_short_interest(ticker), converts each record to
     DB format, and inserts using INSERT OR REPLACE for idempotency.
@@ -187,10 +218,16 @@ def backfill_short_interest_for_ticker(
         db_conn: Open SQLite connection with the short_interest and alerts_log tables.
         polygon_client: PolygonClient instance with a fetch_short_interest method.
         ticker: Stock ticker symbol, e.g. 'AAPL'.
+        config: Optional backfiller config dict for the freshness threshold.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
-        int: Number of rows inserted. Returns 0 if no data.
+        int: Number of rows inserted. Returns 0 if no data or skipped.
     """
+    threshold = (config or {}).get("skip_if_fresh_days", {}).get("short_interest", 7)
+    if not force and _is_table_data_fresh(db_conn, "short_interest", ticker, threshold):
+        return 0
+
     logger.info(f"Starting short interest backfill for ticker={ticker}")
     records = polygon_client.fetch_short_interest(ticker)
 
@@ -219,8 +256,10 @@ def backfill_all_corporate_actions(
     db_conn: sqlite3.Connection,
     polygon_client: object,
     tickers: list[dict],
+    config: dict | None = None,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Backfill dividends, splits, and short interest for all tickers.
@@ -235,8 +274,10 @@ def backfill_all_corporate_actions(
         polygon_client: PolygonClient instance with fetch_dividends, fetch_splits,
             and fetch_short_interest methods.
         tickers: List of ticker config dicts, each with at least a 'symbol' key.
+        config: Optional backfiller config dict for staleness thresholds.
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
         dict with keys: dividends_total (int), splits_total (int),
@@ -265,7 +306,7 @@ def backfill_all_corporate_actions(
         ticker_had_error = False
 
         try:
-            dividends_count = backfill_dividends_for_ticker(db_conn, polygon_client, ticker)
+            dividends_count = backfill_dividends_for_ticker(db_conn, polygon_client, ticker, config=config, force=force)
             dividends_total += dividends_count
         except Exception as exc:
             ticker_had_error = True
@@ -274,7 +315,7 @@ def backfill_all_corporate_actions(
             logger.error(f"Dividends backfill failed for ticker={ticker}: {exc!r}")
 
         try:
-            splits_count = backfill_splits_for_ticker(db_conn, polygon_client, ticker)
+            splits_count = backfill_splits_for_ticker(db_conn, polygon_client, ticker, config=config, force=force)
             splits_total += splits_count
         except Exception as exc:
             ticker_had_error = True
@@ -283,7 +324,7 @@ def backfill_all_corporate_actions(
             logger.error(f"Splits backfill failed for ticker={ticker}: {exc!r}")
 
         try:
-            si_count = backfill_short_interest_for_ticker(db_conn, polygon_client, ticker)
+            si_count = backfill_short_interest_for_ticker(db_conn, polygon_client, ticker, config=config, force=force)
             short_interest_total += si_count
         except Exception as exc:
             ticker_had_error = True

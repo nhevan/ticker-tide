@@ -288,3 +288,89 @@ def test_backfill_all_earnings_continues_after_ticker_error(
     assert result["failed"] == 1
     assert result["processed"] == 2
 
+
+
+# ---------------------------------------------------------------------------
+# Staleness / skip-if-fresh tests
+# ---------------------------------------------------------------------------
+
+def _insert_fresh_earnings(db_connection, ticker: str) -> None:
+    """Insert a recent earnings_calendar row to simulate fresh data."""
+    from datetime import datetime, timedelta, timezone
+    fetched_at = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).isoformat()
+    db_connection.execute(
+        "INSERT INTO earnings_calendar (ticker, earnings_date, fetched_at) VALUES (?, ?, ?)",
+        (ticker, "2025-01-30", fetched_at),
+    )
+    db_connection.commit()
+
+
+def test_backfill_earnings_skips_when_fresh(
+    db_connection, sample_yfinance_records
+) -> None:
+    """
+    When data was fetched less than 7 days ago, fetch_earnings_dates is NOT called.
+    """
+    _insert_fresh_earnings(db_connection, "AAPL")
+    config = {"skip_if_fresh_days": {"earnings": 7}}
+
+    with patch("src.backfiller.earnings.fetch_earnings_dates") as mock_fetch:
+        result = backfill_earnings_for_ticker(db_connection, "AAPL", config=config)
+
+    mock_fetch.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_earnings_fetches_when_stale(
+    db_connection, sample_yfinance_records
+) -> None:
+    """
+    When data is older than the threshold, fetch_earnings_dates IS called.
+    """
+    from datetime import datetime, timedelta, timezone
+    stale_fetched_at = (datetime.now(tz=timezone.utc) - timedelta(days=10)).isoformat()
+    db_connection.execute(
+        "INSERT INTO earnings_calendar (ticker, earnings_date, fetched_at) VALUES (?, ?, ?)",
+        ("AAPL", "2025-01-30", stale_fetched_at),
+    )
+    db_connection.commit()
+    config = {"skip_if_fresh_days": {"earnings": 7}}
+
+    with patch("src.backfiller.earnings.fetch_earnings_dates",
+               return_value=sample_yfinance_records):
+        result = backfill_earnings_for_ticker(db_connection, "AAPL", config=config)
+
+    assert result == len(sample_yfinance_records)
+
+
+def test_backfill_earnings_fetches_when_no_data(
+    db_connection, sample_yfinance_records
+) -> None:
+    """
+    When no data exists, fetch_earnings_dates IS called.
+    """
+    config = {"skip_if_fresh_days": {"earnings": 7}}
+
+    with patch("src.backfiller.earnings.fetch_earnings_dates",
+               return_value=sample_yfinance_records):
+        result = backfill_earnings_for_ticker(db_connection, "AAPL", config=config)
+
+    assert result == len(sample_yfinance_records)
+
+
+def test_backfill_earnings_force_bypasses_staleness(
+    db_connection, sample_yfinance_records
+) -> None:
+    """
+    When force=True, fetch_earnings_dates is called even when data is fresh.
+    """
+    _insert_fresh_earnings(db_connection, "AAPL")
+    config = {"skip_if_fresh_days": {"earnings": 7}}
+
+    with patch("src.backfiller.earnings.fetch_earnings_dates",
+               return_value=sample_yfinance_records):
+        result = backfill_earnings_for_ticker(
+            db_connection, "AAPL", config=config, force=True
+        )
+
+    assert result == len(sample_yfinance_records)

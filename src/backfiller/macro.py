@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from dateutil.relativedelta import relativedelta
 
@@ -47,6 +47,7 @@ def backfill_sector_etfs(
     lookback_years: int,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Backfill OHLCV data for all sector ETFs.
@@ -62,6 +63,7 @@ def backfill_sector_etfs(
         lookback_years: Number of years of historical data to fetch.
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass staleness checks and re-fetch all data.
 
     Returns:
         dict with keys: processed (int), skipped (int), failed (int), total_rows (int).
@@ -83,7 +85,7 @@ def backfill_sector_etfs(
             edit_telegram_message(bot_token, chat_id, msg_id, tracker.format_progress_message())
 
         try:
-            count = backfill_ohlcv_for_ticker(db_conn, polygon_client, etf, lookback_years)
+            count = backfill_ohlcv_for_ticker(db_conn, polygon_client, etf, lookback_years, force=force)
             total_rows += count
             processed += 1
             tracker.mark_completed(etf, details=f"{count:,} rows")
@@ -116,6 +118,7 @@ def backfill_market_benchmarks(
     polygon_client: object,
     benchmarks: dict,
     lookback_years: int,
+    force: bool = False,
 ) -> dict:
     """
     Backfill OHLCV data for market benchmarks (e.g. SPY, QQQ).
@@ -129,6 +132,7 @@ def backfill_market_benchmarks(
         benchmarks: Dict mapping label to symbol, e.g. {'spy': 'SPY', 'qqq': 'QQQ'}.
                     The '^VIX' ticker is skipped here (handled by backfill_vix).
         lookback_years: Number of years of historical data to fetch.
+        force: When True, bypass staleness checks and re-fetch all data.
 
     Returns:
         dict with keys: processed (int), skipped (int), failed (int), total_rows (int).
@@ -145,7 +149,7 @@ def backfill_market_benchmarks(
             continue
 
         try:
-            count = backfill_ohlcv_for_ticker(db_conn, polygon_client, symbol, lookback_years)
+            count = backfill_ohlcv_for_ticker(db_conn, polygon_client, symbol, lookback_years, force=force)
             total_rows += count
             processed += 1
             logger.info(f"Backfilled benchmark ticker={symbol}: {count:,} rows")
@@ -173,9 +177,16 @@ def backfill_vix(
     db_conn: sqlite3.Connection,
     from_date: str,
     to_date: str,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store historical VIX data into ohlcv_daily with ticker='^VIX'.
+
+    When force=False (default), applies the same incremental logic as OHLCV:
+      - If MAX(date) in ohlcv_daily for '^VIX' >= yesterday, skip (return 0).
+      - If data exists but is older, use max_date + 1 as the effective from_date.
+      - If no VIX data exists, use the passed from_date.
+    When force=True, uses the passed from_date unconditionally.
 
     Uses yfinance_client.fetch_vix_data to retrieve VIX OHLCV bars. Each row
     is validated before insertion. vwap and num_transactions are set to None
@@ -183,12 +194,30 @@ def backfill_vix(
 
     Args:
         db_conn: Open SQLite connection with ohlcv_daily and alerts_log tables.
-        from_date: Start date in 'YYYY-MM-DD' format (inclusive).
+        from_date: Start date in 'YYYY-MM-DD' format (inclusive). Used as
+            fallback when no existing data is found.
         to_date: End date in 'YYYY-MM-DD' format (inclusive).
+        force: When True, bypass staleness checks and use the passed from_date.
 
     Returns:
         Number of rows successfully inserted into ohlcv_daily.
     """
+    if not force:
+        today = date.today()
+        today_minus_one = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        max_date_row = db_conn.execute(
+            "SELECT MAX(date) AS max_date FROM ohlcv_daily WHERE ticker = '^VIX'"
+        ).fetchone()
+        max_date = max_date_row["max_date"] if max_date_row else None
+
+        if max_date is not None:
+            if max_date >= today_minus_one:
+                logger.info(f"Skipping VIX backfill: data is fresh (max_date={max_date})")
+                return 0
+            from_date = (
+                date.fromisoformat(max_date) + timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+
     logger.info(f"Starting VIX backfill from={from_date} to={to_date}")
 
     df = yfinance_client.fetch_vix_data(from_date, to_date)
@@ -262,9 +291,16 @@ def backfill_treasury_yields(
     db_conn: sqlite3.Connection,
     polygon_client: object,
     lookback_years: int,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store historical US Treasury yield curve data.
+
+    When force=False (default), applies incremental logic:
+      - If MAX(date) in treasury_yields >= yesterday, skip (return 0).
+      - If data exists but is older, use max_date + 1 as from_date.
+      - If no data exists, use the full lookback range.
+    When force=True, always fetches the full lookback range.
 
     Fetches yield records from Polygon for all maturities (1M through 30Y).
     Missing maturity fields default to None. Uses INSERT OR REPLACE for
@@ -274,13 +310,34 @@ def backfill_treasury_yields(
         db_conn: Open SQLite connection with treasury_yields table.
         polygon_client: PolygonClient instance with a fetch_treasury_yields method.
         lookback_years: Number of years of historical data to fetch.
+        force: When True, bypass staleness checks and re-fetch from full lookback.
 
     Returns:
         Number of rows inserted into treasury_yields.
     """
     today = date.today()
-    from_date = (today - relativedelta(years=lookback_years)).strftime("%Y-%m-%d")
     to_date = today.strftime("%Y-%m-%d")
+
+    if not force:
+        today_minus_one = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        max_date_row = db_conn.execute(
+            "SELECT MAX(date) AS max_date FROM treasury_yields"
+        ).fetchone()
+        max_date = max_date_row["max_date"] if max_date_row else None
+
+        if max_date is not None:
+            if max_date >= today_minus_one:
+                logger.info(
+                    f"Skipping treasury yields backfill: data is fresh (max_date={max_date})"
+                )
+                return 0
+            from_date = (
+                date.fromisoformat(max_date) + timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+        else:
+            from_date = (today - relativedelta(years=lookback_years)).strftime("%Y-%m-%d")
+    else:
+        from_date = (today - relativedelta(years=lookback_years)).strftime("%Y-%m-%d")
 
     logger.info(f"Starting treasury yields backfill from={from_date} to={to_date}")
 
@@ -373,6 +430,7 @@ def backfill_all_macro(
     benchmarks: dict = None,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Orchestrate all macro data backfill sub-tasks.
@@ -391,6 +449,7 @@ def backfill_all_macro(
                     Defaults to {'spy': 'SPY', 'qqq': 'QQQ'}.
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass all staleness checks and re-fetch from scratch.
 
     Returns:
         dict with per-sub-task row counts and summary totals.
@@ -413,7 +472,7 @@ def backfill_all_macro(
     if bot_token and chat_id:
         send_telegram_message(bot_token, chat_id, "📊 Backfilling Sector ETFs...")
     etf_result = backfill_sector_etfs(
-        db_conn, polygon_client, sector_etfs, lookback_years, bot_token, chat_id
+        db_conn, polygon_client, sector_etfs, lookback_years, bot_token, chat_id, force=force
     )
     results["sector_etfs"] = etf_result
     logger.info(f"Sector ETF backfill complete: {etf_result}")
@@ -422,7 +481,7 @@ def backfill_all_macro(
     if bot_token and chat_id:
         send_telegram_message(bot_token, chat_id, "📊 Backfilling Market Benchmarks (SPY, QQQ)...")
     benchmark_result = backfill_market_benchmarks(
-        db_conn, polygon_client, benchmarks, lookback_years
+        db_conn, polygon_client, benchmarks, lookback_years, force=force
     )
     results["benchmarks"] = benchmark_result
     logger.info(f"Benchmark backfill complete: {benchmark_result}")
@@ -430,14 +489,14 @@ def backfill_all_macro(
     # --- VIX ---
     if bot_token and chat_id:
         send_telegram_message(bot_token, chat_id, "📊 Backfilling VIX...")
-    vix_rows = backfill_vix(db_conn, from_date, to_date)
+    vix_rows = backfill_vix(db_conn, from_date, to_date, force=force)
     results["vix_rows"] = vix_rows
     logger.info(f"VIX backfill complete: {vix_rows} rows")
 
     # --- Treasury yields ---
     if bot_token and chat_id:
         send_telegram_message(bot_token, chat_id, "📊 Backfilling Treasury Yields...")
-    treasury_rows = backfill_treasury_yields(db_conn, polygon_client, treasury_lookback_years)
+    treasury_rows = backfill_treasury_yields(db_conn, polygon_client, treasury_lookback_years, force=force)
     results["treasury_rows"] = treasury_rows
     logger.info(f"Treasury yields backfill complete: {treasury_rows} rows")
 

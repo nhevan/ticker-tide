@@ -38,7 +38,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     Build and return the CLI argument parser.
 
     Returns:
-        argparse.ArgumentParser: Configured parser with --ticker, --phase, and --db-path options.
+        argparse.ArgumentParser: Configured parser with --ticker, --phase,
+            --db-path, and --force options.
     """
     parser = argparse.ArgumentParser(
         description="Run the full historical data backfill pipeline for the Stock Signal Engine.",
@@ -50,6 +51,8 @@ Examples:
   python scripts/run_backfill.py --phase ohlcv
   python scripts/run_backfill.py --ticker AAPL --phase news
   python scripts/run_backfill.py --db-path /custom/path/signals.db
+  python scripts/run_backfill.py --force
+  python scripts/run_backfill.py --phase ohlcv --force
         """,
     )
     parser.add_argument(
@@ -71,6 +74,11 @@ Examples:
         metavar="PATH",
         help="Override the database file path from config/database.json.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass all staleness checks and re-fetch all data from scratch.",
+    )
     return parser
 
 
@@ -90,6 +98,7 @@ def main() -> int:
             db_path=args.db_path,
             ticker_filter=args.ticker,
             phase_filter=args.phase,
+            force=args.force,
         )
         return 0
     except Exception as exc:

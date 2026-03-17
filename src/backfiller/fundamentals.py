@@ -16,6 +16,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import date, datetime, timezone
 
+from src.backfiller.utils import _is_table_data_fresh
 from src.common.events import log_alert
 from src.common.progress import (
     ProgressTracker,
@@ -110,9 +111,15 @@ def backfill_fundamentals_for_ticker(
     db_conn: sqlite3.Connection,
     ticker: str,
     lookback_years: int,
+    config: dict | None = None,
+    force: bool = False,
 ) -> int:
     """
     Fetch and store historical quarterly fundamentals for a single ticker.
+
+    When force=False (default), skips the API call if data for this ticker in
+    the fundamentals table was fetched within the threshold from
+    config['skip_if_fresh_days']['fundamentals'] (default 30 days).
 
     Calls fetch_fundamentals_history to get all available quarterly records,
     matches each record with its same-quarter prior-year record (for YoY growth
@@ -123,11 +130,18 @@ def backfill_fundamentals_for_ticker(
         db_conn: Open SQLite connection with the fundamentals and alerts_log tables.
         ticker: Stock ticker symbol to backfill, e.g. 'AAPL'.
         lookback_years: Number of years of quarterly history to fetch.
+        config: Optional backfiller config dict; reads
+            config['skip_if_fresh_days']['fundamentals'] for the freshness threshold.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
         int: Number of rows successfully inserted into the fundamentals table.
-            Returns 0 if no data is available or an error occurs.
+            Returns 0 if no data is available, an error occurs, or skipped.
     """
+    threshold = (config or {}).get("skip_if_fresh_days", {}).get("fundamentals", 30)
+    if not force and _is_table_data_fresh(db_conn, "fundamentals", ticker, threshold):
+        return 0
+
     today = date.today().isoformat()
     logger.info(f"Starting fundamentals backfill for ticker={ticker} lookback_years={lookback_years}")
 
@@ -192,6 +206,7 @@ def backfill_all_fundamentals(
     config: dict,
     bot_token: str = None,
     chat_id: str = None,
+    force: bool = False,
 ) -> dict:
     """
     Backfill fundamentals for all tickers in the provided list.
@@ -206,6 +221,7 @@ def backfill_all_fundamentals(
         config: Config dict; reads config['fundamentals']['lookback_years'] (default 5).
         bot_token: Optional Telegram bot token for progress notifications.
         chat_id: Optional Telegram chat/channel ID for progress notifications.
+        force: When True, bypass staleness checks and always fetch.
 
     Returns:
         dict with keys: processed (int), failed (int), total_rows (int).
@@ -229,7 +245,7 @@ def backfill_all_fundamentals(
             edit_telegram_message(bot_token, chat_id, msg_id, tracker.format_progress_message())
 
         try:
-            count = backfill_fundamentals_for_ticker(db_conn, ticker, lookback_years)
+            count = backfill_fundamentals_for_ticker(db_conn, ticker, lookback_years, config=config, force=force)
             total_rows += count
             processed += 1
             tracker.mark_completed(ticker, details=f"{count} quarters")

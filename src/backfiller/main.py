@@ -144,6 +144,7 @@ def run_full_backfill(
     db_path: str = None,
     ticker_filter: str = None,
     phase_filter: str = None,
+    force: bool = False,
 ) -> None:
     """
     Run the full historical data backfill pipeline.
@@ -160,6 +161,8 @@ def run_full_backfill(
         phase_filter: Optional phase name to run only that phase, e.g. 'ohlcv'.
             When set, the 'sync' phase is NOT run. Valid values: ohlcv, macro,
             fundamentals, earnings, corporate_actions, news, filings.
+        force: When True, bypass all staleness checks and re-fetch all data
+            from scratch regardless of what is already in the database.
 
     Returns:
         None
@@ -193,28 +196,28 @@ def run_full_backfill(
     with PolygonClient(polygon_api_key) as polygon_client:
         phases = {
             "ohlcv": lambda: backfill_all_tickers(
-                db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id
+                db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id, force=force
             ),
             "macro": lambda: backfill_all_macro(
                 db_conn, polygon_client, backfiller_config,
                 sector_etfs=get_sector_etfs(),
                 benchmarks=get_market_benchmarks(),
-                bot_token=bot_token, chat_id=chat_id,
+                bot_token=bot_token, chat_id=chat_id, force=force,
             ),
             "fundamentals": lambda: backfill_all_fundamentals(
-                db_conn, tickers, backfiller_config, bot_token, chat_id
+                db_conn, tickers, backfiller_config, bot_token, chat_id, force=force
             ),
             "earnings": lambda: backfill_all_earnings(
-                db_conn, tickers, bot_token, chat_id
+                db_conn, tickers, backfiller_config, bot_token, chat_id, force=force
             ),
             "corporate_actions": lambda: backfill_all_corporate_actions(
-                db_conn, polygon_client, tickers, bot_token, chat_id
+                db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id, force=force
             ),
             "news": lambda: backfill_all_news(
-                db_conn, polygon_client, finnhub_client, tickers, backfiller_config, bot_token, chat_id
+                db_conn, polygon_client, finnhub_client, tickers, backfiller_config, bot_token, chat_id, force=force
             ),
             "filings": lambda: backfill_all_filings(
-                db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id
+                db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id, force=force
             ),
         }
 

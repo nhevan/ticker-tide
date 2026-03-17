@@ -553,3 +553,101 @@ def test_backfill_all_fundamentals_uses_progress_tracker(
 
     assert mock_send.call_count >= 1
     assert mock_edit.call_count >= 3
+
+
+# ---------------------------------------------------------------------------
+# Staleness / skip-if-fresh tests
+# ---------------------------------------------------------------------------
+
+def _insert_fresh_fundamentals(db_connection, ticker: str) -> None:
+    """Insert a recent fundamentals row to simulate fresh data."""
+    from datetime import datetime, timedelta, timezone
+    fetched_at = (datetime.now(tz=timezone.utc) - timedelta(days=5)).isoformat()
+    db_connection.execute(
+        """
+        INSERT INTO fundamentals (ticker, report_date, period, fetched_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (ticker, "2024-12-31", "Q4", fetched_at),
+    )
+    db_connection.commit()
+
+
+def test_backfill_fundamentals_skips_when_fresh(
+    db_connection,
+) -> None:
+    """
+    When data was fetched less than 30 days ago, fetch_fundamentals_history is NOT called.
+    """
+    _insert_fresh_fundamentals(db_connection, "AAPL")
+    config = {"skip_if_fresh_days": {"fundamentals": 30}}
+
+    with patch("src.backfiller.fundamentals.fetch_fundamentals_history") as mock_fetch:
+        result = backfill_fundamentals_for_ticker(
+            db_connection, "AAPL", 5, config=config
+        )
+
+    mock_fetch.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_fundamentals_fetches_when_stale(
+    db_connection, four_quarterly_records
+) -> None:
+    """
+    When data is older than the threshold, fetch_fundamentals_history IS called.
+    """
+    from datetime import datetime, timedelta, timezone
+    stale_fetched_at = (datetime.now(tz=timezone.utc) - timedelta(days=45)).isoformat()
+    db_connection.execute(
+        """
+        INSERT INTO fundamentals (ticker, report_date, period, fetched_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        ("AAPL", "2024-12-31", "Q4", stale_fetched_at),
+    )
+    db_connection.commit()
+    config = {"skip_if_fresh_days": {"fundamentals": 30}}
+
+    with patch("src.backfiller.fundamentals.fetch_fundamentals_history",
+               return_value=four_quarterly_records):
+        result = backfill_fundamentals_for_ticker(
+            db_connection, "AAPL", 5, config=config
+        )
+
+    assert result == len(four_quarterly_records)
+
+
+def test_backfill_fundamentals_fetches_when_no_data(
+    db_connection, four_quarterly_records
+) -> None:
+    """
+    When no data exists, fetch_fundamentals_history IS called.
+    """
+    config = {"skip_if_fresh_days": {"fundamentals": 30}}
+
+    with patch("src.backfiller.fundamentals.fetch_fundamentals_history",
+               return_value=four_quarterly_records):
+        result = backfill_fundamentals_for_ticker(
+            db_connection, "AAPL", 5, config=config
+        )
+
+    assert result == len(four_quarterly_records)
+
+
+def test_backfill_fundamentals_force_bypasses_staleness(
+    db_connection, four_quarterly_records
+) -> None:
+    """
+    When force=True, fetch_fundamentals_history is called even when data is fresh.
+    """
+    _insert_fresh_fundamentals(db_connection, "AAPL")
+    config = {"skip_if_fresh_days": {"fundamentals": 30}}
+
+    with patch("src.backfiller.fundamentals.fetch_fundamentals_history",
+               return_value=four_quarterly_records):
+        result = backfill_fundamentals_for_ticker(
+            db_connection, "AAPL", 5, config=config, force=True
+        )
+
+    assert result == len(four_quarterly_records)
