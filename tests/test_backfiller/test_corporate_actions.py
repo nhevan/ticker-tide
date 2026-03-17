@@ -449,3 +449,145 @@ def test_backfill_all_corporate_actions_returns_summary(
     assert result["dividends_total"] == 9   # 3 records × 3 tickers
     assert result["splits_total"] == 6      # 2 records × 3 tickers
     assert result["short_interest_total"] == 15  # 5 records × 3 tickers
+
+
+# ---------------------------------------------------------------------------
+# Staleness / skip-if-fresh tests
+# ---------------------------------------------------------------------------
+
+def _insert_fresh_row(db_connection, table: str, ticker: str, pk_col: str = None, pk_val: str = None, date_col: str = None, date_val: str = None) -> None:
+    """Helper to insert a recent row into a corporate-actions table."""
+    from datetime import datetime, timedelta, timezone
+    fetched_at = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).isoformat()
+    if table == "dividends":
+        db_connection.execute(
+            "INSERT INTO dividends (id, ticker, ex_dividend_date, fetched_at) VALUES (?, ?, ?, ?)",
+            ("test-id-fresh", ticker, "2025-01-01", fetched_at),
+        )
+    elif table == "splits":
+        db_connection.execute(
+            "INSERT INTO splits (id, ticker, execution_date, fetched_at) VALUES (?, ?, ?, ?)",
+            ("test-id-fresh", ticker, "2025-01-01", fetched_at),
+        )
+    elif table == "short_interest":
+        db_connection.execute(
+            "INSERT INTO short_interest (ticker, settlement_date, fetched_at) VALUES (?, ?, ?)",
+            (ticker, "2025-01-01", fetched_at),
+        )
+    db_connection.commit()
+
+
+def test_backfill_dividends_skips_when_fresh(
+    db_connection, sample_dividend_records
+) -> None:
+    """When dividends data is fresh, fetch_dividends is NOT called."""
+    _insert_fresh_row(db_connection, "dividends", "AAPL")
+    mock_client = MagicMock()
+    config = {"skip_if_fresh_days": {"dividends": 7}}
+
+    result = backfill_dividends_for_ticker(db_connection, mock_client, "AAPL", config=config)
+
+    mock_client.fetch_dividends.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_dividends_fetches_when_stale(
+    db_connection, sample_dividend_records
+) -> None:
+    """When dividends data is stale, fetch_dividends IS called."""
+    from datetime import datetime, timedelta, timezone
+    stale_fetched_at = (datetime.now(tz=timezone.utc) - timedelta(days=10)).isoformat()
+    db_connection.execute(
+        "INSERT INTO dividends (id, ticker, ex_dividend_date, fetched_at) VALUES (?, ?, ?, ?)",
+        ("test-stale", "AAPL", "2025-01-01", stale_fetched_at),
+    )
+    db_connection.commit()
+    mock_client = MagicMock()
+    mock_client.fetch_dividends.return_value = sample_dividend_records
+    config = {"skip_if_fresh_days": {"dividends": 7}}
+
+    result = backfill_dividends_for_ticker(db_connection, mock_client, "AAPL", config=config)
+
+    mock_client.fetch_dividends.assert_called_once()
+    assert result == len(sample_dividend_records)
+
+
+def test_backfill_dividends_force_bypasses_staleness(
+    db_connection, sample_dividend_records
+) -> None:
+    """When force=True, fetch_dividends is called even when data is fresh."""
+    _insert_fresh_row(db_connection, "dividends", "AAPL")
+    mock_client = MagicMock()
+    mock_client.fetch_dividends.return_value = sample_dividend_records
+    config = {"skip_if_fresh_days": {"dividends": 7}}
+
+    result = backfill_dividends_for_ticker(
+        db_connection, mock_client, "AAPL", config=config, force=True
+    )
+
+    mock_client.fetch_dividends.assert_called_once()
+    assert result == len(sample_dividend_records)
+
+
+def test_backfill_splits_skips_when_fresh(
+    db_connection, sample_split_records
+) -> None:
+    """When splits data is fresh, fetch_splits is NOT called."""
+    _insert_fresh_row(db_connection, "splits", "AAPL")
+    mock_client = MagicMock()
+    config = {"skip_if_fresh_days": {"splits": 30}}
+
+    result = backfill_splits_for_ticker(db_connection, mock_client, "AAPL", config=config)
+
+    mock_client.fetch_splits.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_splits_force_bypasses_staleness(
+    db_connection, sample_split_records
+) -> None:
+    """When force=True, fetch_splits is called even when data is fresh."""
+    _insert_fresh_row(db_connection, "splits", "AAPL")
+    mock_client = MagicMock()
+    mock_client.fetch_splits.return_value = sample_split_records
+    config = {"skip_if_fresh_days": {"splits": 30}}
+
+    result = backfill_splits_for_ticker(
+        db_connection, mock_client, "AAPL", config=config, force=True
+    )
+
+    mock_client.fetch_splits.assert_called_once()
+    assert result == len(sample_split_records)
+
+
+def test_backfill_short_interest_skips_when_fresh(
+    db_connection, sample_short_interest_records
+) -> None:
+    """When short_interest data is fresh, fetch_short_interest is NOT called."""
+    _insert_fresh_row(db_connection, "short_interest", "AAPL")
+    mock_client = MagicMock()
+    config = {"skip_if_fresh_days": {"short_interest": 7}}
+
+    result = backfill_short_interest_for_ticker(
+        db_connection, mock_client, "AAPL", config=config
+    )
+
+    mock_client.fetch_short_interest.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_short_interest_force_bypasses_staleness(
+    db_connection, sample_short_interest_records
+) -> None:
+    """When force=True, fetch_short_interest is called even when data is fresh."""
+    _insert_fresh_row(db_connection, "short_interest", "AAPL")
+    mock_client = MagicMock()
+    mock_client.fetch_short_interest.return_value = sample_short_interest_records
+    config = {"skip_if_fresh_days": {"short_interest": 7}}
+
+    result = backfill_short_interest_for_ticker(
+        db_connection, mock_client, "AAPL", config=config, force=True
+    )
+
+    mock_client.fetch_short_interest.assert_called_once()
+    assert result == len(sample_short_interest_records)

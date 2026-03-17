@@ -391,6 +391,11 @@ def check_date_range_all_tickers(
     Warns if any ticker has < 80% of expected trading days. Fails if any
     ticker has < 50% of expected trading days.
 
+    For recently-listed tickers (IPO within the expected_years window), the
+    expected trading days are capped to the maximum possible based on the
+    earliest available OHLCV date, so a new listing is not penalised for
+    data that simply does not exist yet.
+
     Args:
         db_conn: Open SQLite connection.
         active_tickers: List of active ticker symbols to check.
@@ -400,8 +405,7 @@ def check_date_range_all_tickers(
         Aggregated CheckResult across all tickers.
     """
     expected_days = int(252 * expected_years)
-    fail_threshold = int(expected_days * _FAIL_TRADING_DAY_PCT)
-    warn_threshold = int(expected_days * _WARN_TRADING_DAY_PCT)
+    today = date.today()
 
     warnings: list[str] = []
     failures: list[str] = []
@@ -409,6 +413,21 @@ def check_date_range_all_tickers(
     for ticker in active_tickers:
         result = check_date_range(db_conn, ticker)
         trading_days = result["trading_days"]
+        min_date_str = result.get("min_date")
+
+        # For recently-listed tickers, cap expected days to what is actually
+        # achievable given the earliest available OHLCV date.
+        if min_date_str:
+            listing_date = datetime.strptime(min_date_str, "%Y-%m-%d").date()
+            calendar_days = (today - listing_date).days
+            max_possible = int(calendar_days * 252 / 365)
+            effective_expected = min(expected_days, max_possible)
+        else:
+            effective_expected = expected_days
+
+        fail_threshold = int(effective_expected * _FAIL_TRADING_DAY_PCT)
+        warn_threshold = int(effective_expected * _WARN_TRADING_DAY_PCT)
+
         if trading_days < fail_threshold:
             failures.append(
                 f"{ticker}: {trading_days} days (< {fail_threshold} fail threshold)"
@@ -933,10 +952,13 @@ def check_news_sentiment_coverage(
     active_tickers: list[str],
 ) -> CheckResult:
     """
-    Check what fraction of news articles have sentiment populated.
+    Check what fraction of Polygon news articles have sentiment populated.
 
-    Polygon articles carry sentiment; Finnhub articles do not. Warns if overall
-    sentiment coverage is < 50%.
+    Polygon is the sole source of sentiment; Finnhub articles never carry sentiment
+    by design. The check therefore evaluates Polygon-specific coverage and warns
+    when it drops below 80% — which signals a real regression (e.g. Polygon plan
+    downgraded, insights API broken). The overall combined percentage is retained
+    in the message and data for visibility, but does not drive the status.
 
     Args:
         db_conn: Open SQLite connection.
@@ -944,8 +966,10 @@ def check_news_sentiment_coverage(
 
     Returns:
         CheckResult with overall and per-source sentiment coverage in ``data``.
+        Status is "warn" when Polygon sentiment coverage is below 80%, "pass"
+        otherwise.
     """
-    row = db_conn.execute(
+    rows = db_conn.execute(
         "SELECT COUNT(*) AS total, "
         "SUM(CASE WHEN sentiment IS NOT NULL THEN 1 ELSE 0 END) AS with_sentiment, "
         "source "
@@ -961,7 +985,7 @@ def check_news_sentiment_coverage(
     total_with_sentiment = 0
     source_breakdown: dict[str, dict] = {}
 
-    for source_row in row:
+    for source_row in rows:
         source = source_row["source"] or "unknown"
         total = source_row["total"]
         with_sent = source_row["with_sentiment"] or 0
@@ -974,16 +998,25 @@ def check_news_sentiment_coverage(
         }
 
     overall_pct = round(total_with_sentiment / total_all * 100, 1) if total_all > 0 else 0.0
+    polygon_pct = source_breakdown.get("polygon", {}).get("pct", 0.0)
 
-    status = "warn" if overall_pct < 50 else "pass"
+    per_source_parts = ", ".join(
+        f"{src}={info['pct']}% ({info['total']:,})"
+        for src, info in sorted(source_breakdown.items())
+    )
     message = (
-        f"News sentiment coverage: {overall_pct}% "
-        f"({total_with_sentiment:,}/{total_all:,} articles)"
+        f"News sentiment coverage: {per_source_parts} | overall={overall_pct}%"
+        f" ({total_with_sentiment:,}/{total_all:,} articles)"
     )
 
     issues: Optional[list[str]] = None
-    if status == "warn":
-        issues = [f"Overall sentiment coverage {overall_pct}% is below 50% threshold"]
+    if polygon_pct < 80:
+        issues = [
+            f"Polygon sentiment coverage {polygon_pct}% is below 80% threshold "
+            f"(Finnhub articles never carry sentiment — only Polygon is evaluated)"
+        ]
+
+    status = "warn" if issues else "pass"
 
     return CheckResult(
         name="news_sentiment_coverage",
@@ -992,6 +1025,7 @@ def check_news_sentiment_coverage(
         details=issues,
         data={
             "overall_sentiment_pct": overall_pct,
+            "polygon_sentiment_pct": polygon_pct,
             "total_articles": total_all,
             "articles_with_sentiment": total_with_sentiment,
             "source_breakdown": source_breakdown,

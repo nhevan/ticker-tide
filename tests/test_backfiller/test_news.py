@@ -649,3 +649,138 @@ def test_backfill_all_news_returns_summary(
     assert "tickers_failed" in result
     assert result["tickers_processed"] == 3
     assert result["tickers_failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Staleness / skip-if-fresh tests
+# ---------------------------------------------------------------------------
+
+def _insert_fresh_news(db_connection, ticker: str) -> None:
+    """Insert a recent news_articles row to simulate fresh data."""
+    from datetime import datetime, timedelta, timezone
+    fetched_at = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).isoformat()
+    db_connection.execute(
+        """
+        INSERT INTO news_articles (id, ticker, date, source, fetched_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        ("test-fresh-001", ticker, "2025-01-30", "polygon", fetched_at),
+    )
+    db_connection.commit()
+
+
+def test_backfill_all_news_skips_when_fresh(
+    db_connection,
+) -> None:
+    """
+    When news data is fresh (< 1 day old), both fetch_news and
+    fetch_company_news are NOT called for that ticker.
+    """
+    _insert_fresh_news(db_connection, "AAPL")
+    mock_polygon = MagicMock()
+    mock_finnhub = MagicMock()
+    config = {
+        "news": {
+            "lookback_months": 3,
+            "finnhub_lookback_months": 1,
+            "polygon_limit_per_request": 1000,
+        },
+        "skip_if_fresh_days": {"news": 1},
+    }
+
+    backfill_all_news(
+        db_connection, mock_polygon, mock_finnhub,
+        [{"symbol": "AAPL"}], config,
+    )
+
+    mock_polygon.fetch_news.assert_not_called()
+    mock_finnhub.fetch_company_news.assert_not_called()
+
+
+def test_backfill_all_news_fetches_when_stale(
+    db_connection, sample_polygon_articles
+) -> None:
+    """
+    When news data is stale (> 1 day old), fetch_news IS called.
+    """
+    from datetime import datetime, timedelta, timezone
+    stale_fetched_at = (datetime.now(tz=timezone.utc) - timedelta(days=3)).isoformat()
+    db_connection.execute(
+        "INSERT INTO news_articles (id, ticker, date, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        ("test-stale-001", "AAPL", "2025-01-01", "polygon", stale_fetched_at),
+    )
+    db_connection.commit()
+    mock_polygon = MagicMock()
+    mock_polygon.fetch_news.return_value = sample_polygon_articles
+    mock_finnhub = MagicMock()
+    mock_finnhub.fetch_company_news.return_value = []
+    config = {
+        "news": {
+            "lookback_months": 3,
+            "finnhub_lookback_months": 1,
+            "polygon_limit_per_request": 1000,
+        },
+        "skip_if_fresh_days": {"news": 1},
+    }
+
+    backfill_all_news(
+        db_connection, mock_polygon, mock_finnhub,
+        [{"symbol": "AAPL"}], config,
+    )
+
+    mock_polygon.fetch_news.assert_called_once()
+
+
+def test_backfill_all_news_fetches_when_no_data(
+    db_connection, sample_polygon_articles
+) -> None:
+    """
+    When no news data exists, fetch_news IS called.
+    """
+    mock_polygon = MagicMock()
+    mock_polygon.fetch_news.return_value = sample_polygon_articles
+    mock_finnhub = MagicMock()
+    mock_finnhub.fetch_company_news.return_value = []
+    config = {
+        "news": {
+            "lookback_months": 3,
+            "finnhub_lookback_months": 1,
+            "polygon_limit_per_request": 1000,
+        },
+        "skip_if_fresh_days": {"news": 1},
+    }
+
+    backfill_all_news(
+        db_connection, mock_polygon, mock_finnhub,
+        [{"symbol": "AAPL"}], config,
+    )
+
+    mock_polygon.fetch_news.assert_called_once()
+
+
+def test_backfill_all_news_force_bypasses_staleness(
+    db_connection, sample_polygon_articles
+) -> None:
+    """
+    When force=True, fetch_news is called even when data is fresh.
+    """
+    _insert_fresh_news(db_connection, "AAPL")
+    mock_polygon = MagicMock()
+    mock_polygon.fetch_news.return_value = sample_polygon_articles
+    mock_finnhub = MagicMock()
+    mock_finnhub.fetch_company_news.return_value = []
+    config = {
+        "news": {
+            "lookback_months": 3,
+            "finnhub_lookback_months": 1,
+            "polygon_limit_per_request": 1000,
+        },
+        "skip_if_fresh_days": {"news": 1},
+    }
+
+    backfill_all_news(
+        db_connection, mock_polygon, mock_finnhub,
+        [{"symbol": "AAPL"}], config, force=True,
+    )
+
+    mock_polygon.fetch_news.assert_called_once()

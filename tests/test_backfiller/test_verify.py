@@ -19,6 +19,7 @@ from src.backfiller.verify import (
     check_data_freshness,
     check_date_gaps,
     check_date_range,
+    check_date_range_all_tickers,
     check_null_coverage,
     check_optional_ticker_coverage,
     check_table_row_counts,
@@ -200,6 +201,56 @@ def test_check_date_range_too_short(db_connection: sqlite3.Connection) -> None:
     assert result["trading_days"] == 100
     assert result["status"] == "warn"
     assert "100" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# check_date_range_all_tickers — recently-listed ticker exemption
+# ---------------------------------------------------------------------------
+
+
+def test_check_date_range_all_tickers_recently_listed_passes(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    A recently-listed ticker with complete data for its available history should
+    pass, not fail, even if its total trading days < 630 (50% of 5-year window).
+
+    Simulates a ticker that IPO'd ~2.5 years ago and has a full dataset from
+    its IPO date to today (100% of available history).
+    """
+    # Generate ~630 trading days starting 2.5 years ago (simulates ARM-like case)
+    start = date.today() - timedelta(days=920)  # ~2.5 calendar years back
+    start_str = start.strftime("%Y-%m-%d")
+    end_str = date.today().strftime("%Y-%m-%d")
+    trading_days = _generate_trading_days(start_str, end_str)
+    _insert_ohlcv_rows(db_connection, "NEWCO", trading_days)
+
+    result = check_date_range_all_tickers(db_connection, ["NEWCO"])
+
+    assert result.status == "pass", (
+        f"Expected pass for a recently-listed ticker with full history, got "
+        f"{result.status}: {result.details}"
+    )
+
+
+def test_check_date_range_all_tickers_genuine_gap_fails(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    A ticker that has existed for 5 years but only has 1 year of data should
+    still fail (genuine data gap, not a new listing).
+    """
+    # Insert only ~252 trading days for a ticker whose first data point is 5 years ago
+    start_str = (date.today() - timedelta(days=5 * 365)).strftime("%Y-%m-%d")
+    one_year_end = (date.today() - timedelta(days=4 * 365)).strftime("%Y-%m-%d")
+    trading_days = _generate_trading_days(start_str, one_year_end)
+    _insert_ohlcv_rows(db_connection, "OLDCO", trading_days)
+
+    result = check_date_range_all_tickers(db_connection, ["OLDCO"])
+
+    assert result.status == "fail", (
+        f"Expected fail for an old ticker with only 1yr of data, got {result.status}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -413,8 +464,10 @@ def test_check_null_coverage(db_connection: sqlite3.Connection) -> None:
 # check_news_sentiment_coverage
 # ---------------------------------------------------------------------------
 
-def test_check_news_sentiment_coverage(db_connection: sqlite3.Connection) -> None:
-    """Insert 10 news articles, 7 with sentiment, 3 without. Verify 70% coverage."""
+def test_check_news_sentiment_coverage_polygon_below_threshold_warns(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """10 Polygon articles, 7 with sentiment (70%) — below 80% threshold, should warn."""
     for idx in range(10):
         sentiment = "positive" if idx < 7 else None
         _insert_news_article(
@@ -427,7 +480,88 @@ def test_check_news_sentiment_coverage(db_connection: sqlite3.Connection) -> Non
 
     assert isinstance(result, CheckResult)
     assert result.data is not None
+    assert result.data["polygon_sentiment_pct"] == pytest.approx(70.0)
     assert result.data["overall_sentiment_pct"] == pytest.approx(70.0)
+    assert result.status == "warn"
+    assert result.details is not None
+    assert any("80%" in issue for issue in result.details)
+
+
+def test_check_news_sentiment_coverage_polygon_100_finnhub_0_passes(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Polygon articles all have sentiment (100%); Finnhub articles have none (0%).
+    Overall is below 50% but the check should pass because only Polygon is evaluated."""
+    for idx in range(5):
+        db_connection.execute(
+            "INSERT OR REPLACE INTO news_articles "
+            "(id, ticker, date, source, headline, sentiment, fetched_at) "
+            "VALUES (?, 'AAPL', '2026-03-10', 'polygon', 'Polygon headline', 'positive', '2026-01-01')",
+            (f"poly-{idx}",),
+        )
+    for idx in range(10):
+        db_connection.execute(
+            "INSERT OR REPLACE INTO news_articles "
+            "(id, ticker, date, source, headline, sentiment, fetched_at) "
+            "VALUES (?, 'AAPL', '2026-03-10', 'finnhub', 'Finnhub headline', NULL, '2026-01-01')",
+            (f"finn-{idx}",),
+        )
+    db_connection.commit()
+
+    from src.backfiller.verify import check_news_sentiment_coverage
+
+    result = check_news_sentiment_coverage(db_connection, ["AAPL"])
+
+    assert result.data is not None
+    assert result.data["polygon_sentiment_pct"] == pytest.approx(100.0)
+    assert result.data["overall_sentiment_pct"] == pytest.approx(100 * 5 / 15, rel=1e-2)
+    assert result.status == "pass"
+    assert result.details is None
+
+
+def test_check_news_sentiment_coverage_no_polygon_articles_warns(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Only Finnhub articles present — no Polygon data at all — should warn (0% polygon)."""
+    for idx in range(5):
+        db_connection.execute(
+            "INSERT OR REPLACE INTO news_articles "
+            "(id, ticker, date, source, headline, sentiment, fetched_at) "
+            "VALUES (?, 'AAPL', '2026-03-10', 'finnhub', 'Finnhub headline', NULL, '2026-01-01')",
+            (f"finn-{idx}",),
+        )
+    db_connection.commit()
+
+    from src.backfiller.verify import check_news_sentiment_coverage
+
+    result = check_news_sentiment_coverage(db_connection, ["AAPL"])
+
+    assert result.data is not None
+    assert result.data["polygon_sentiment_pct"] == pytest.approx(0.0)
+    assert result.status == "warn"
+
+
+def test_check_news_sentiment_coverage_polygon_60_pct_warns(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Polygon articles at 60% sentiment coverage — below 80% threshold, should warn."""
+    for idx in range(10):
+        sentiment = "positive" if idx < 6 else None
+        db_connection.execute(
+            "INSERT OR REPLACE INTO news_articles "
+            "(id, ticker, date, source, headline, sentiment, fetched_at) "
+            "VALUES (?, 'AAPL', '2026-03-10', 'polygon', 'Headline', ?, '2026-01-01')",
+            (f"poly-{idx}", sentiment),
+        )
+    db_connection.commit()
+
+    from src.backfiller.verify import check_news_sentiment_coverage
+
+    result = check_news_sentiment_coverage(db_connection, ["AAPL"])
+
+    assert result.data is not None
+    assert result.data["polygon_sentiment_pct"] == pytest.approx(60.0)
+    assert result.status == "warn"
 
 
 # ---------------------------------------------------------------------------

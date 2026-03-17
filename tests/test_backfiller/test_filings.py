@@ -218,3 +218,109 @@ def test_backfill_all_filings_returns_summary(
     assert "tickers_failed" in result
     assert result["tickers_processed"] == 3
     assert result["tickers_failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Staleness / skip-if-fresh tests
+# ---------------------------------------------------------------------------
+
+def _insert_fresh_filing(db_connection, ticker: str) -> None:
+    """Insert a recent filings_8k row to simulate fresh data."""
+    from datetime import datetime, timedelta, timezone
+    fetched_at = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).isoformat()
+    db_connection.execute(
+        """
+        INSERT INTO filings_8k (accession_number, ticker, filing_date, fetched_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        ("0000000000-25-000001", ticker, "2025-01-30", fetched_at),
+    )
+    db_connection.commit()
+
+
+def test_backfill_8k_skips_when_fresh(
+    db_connection, sample_filings
+) -> None:
+    """
+    When filings_8k data is fresh (< 7 days), fetch_8k_filings is NOT called.
+    """
+    _insert_fresh_filing(db_connection, "AAPL")
+    mock_client = MagicMock()
+    config = {"skip_if_fresh_days": {"filings": 7}}
+
+    result = backfill_8k_for_ticker(
+        db_connection, mock_client, "AAPL",
+        "2024-01-01", "2024-12-31",
+        config=config,
+    )
+
+    mock_client.fetch_8k_filings.assert_not_called()
+    assert result == 0
+
+
+def test_backfill_8k_fetches_when_stale(
+    db_connection, sample_filings
+) -> None:
+    """
+    When filings data is stale (> 7 days), fetch_8k_filings IS called.
+    """
+    from datetime import datetime, timedelta, timezone
+    stale_fetched_at = (datetime.now(tz=timezone.utc) - timedelta(days=10)).isoformat()
+    db_connection.execute(
+        "INSERT INTO filings_8k (accession_number, ticker, filing_date, fetched_at) VALUES (?, ?, ?, ?)",
+        ("0000000000-25-000099", "AAPL", "2025-01-01", stale_fetched_at),
+    )
+    db_connection.commit()
+    mock_client = MagicMock()
+    mock_client.fetch_8k_filings.return_value = sample_filings
+    config = {"skip_if_fresh_days": {"filings": 7}}
+
+    result = backfill_8k_for_ticker(
+        db_connection, mock_client, "AAPL",
+        "2024-01-01", "2024-12-31",
+        config=config,
+    )
+
+    mock_client.fetch_8k_filings.assert_called_once()
+    assert result == len(sample_filings)
+
+
+def test_backfill_8k_fetches_when_no_data(
+    db_connection, sample_filings
+) -> None:
+    """
+    When no filings data exists, fetch_8k_filings IS called.
+    """
+    mock_client = MagicMock()
+    mock_client.fetch_8k_filings.return_value = sample_filings
+    config = {"skip_if_fresh_days": {"filings": 7}}
+
+    result = backfill_8k_for_ticker(
+        db_connection, mock_client, "AAPL",
+        "2024-01-01", "2024-12-31",
+        config=config,
+    )
+
+    mock_client.fetch_8k_filings.assert_called_once()
+    assert result == len(sample_filings)
+
+
+def test_backfill_8k_force_bypasses_staleness(
+    db_connection, sample_filings
+) -> None:
+    """
+    When force=True, fetch_8k_filings is called even when data is fresh.
+    """
+    _insert_fresh_filing(db_connection, "AAPL")
+    mock_client = MagicMock()
+    mock_client.fetch_8k_filings.return_value = sample_filings
+    config = {"skip_if_fresh_days": {"filings": 7}}
+
+    result = backfill_8k_for_ticker(
+        db_connection, mock_client, "AAPL",
+        "2024-01-01", "2024-12-31",
+        config=config, force=True,
+    )
+
+    mock_client.fetch_8k_filings.assert_called_once()
+    assert result == len(sample_filings)
