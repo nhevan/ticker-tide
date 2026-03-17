@@ -211,7 +211,79 @@ Step 10: news               independent
 
 
 
-### 3.1 Polygon.io (api.polygon.io)
+## 2.3 Scorer Modules
+
+The scorer runs after the calculator completes (`calculator_done` event) and produces BULLISH/BEARISH/NEUTRAL signals with confidence scores.
+
+| Module | Purpose |
+|---|---|
+| `src/scorer/regime.py` | Market regime detection (Trending/Ranging/Volatile) from ADX, ATR, VIX |
+| `src/scorer/indicator_scorer.py` | Maps each indicator value to -100 to +100 using percentile profiles |
+| `src/scorer/pattern_scorer.py` | Scores candlestick/structural patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
+| `src/scorer/category_scorer.py` | Rolls up component scores into 9 categories; applies regime-based adaptive weights |
+| `src/scorer/sector_adjuster.py` | Computes sector ETF trend score and applies adjustment (±5 to ±10) |
+| `src/scorer/timeframe_merger.py` | Merges daily (×0.6) + weekly (×0.4) composite scores; computes weekly score from indicators_weekly |
+| `src/scorer/confidence.py` | Signal classification (BULLISH/BEARISH/NEUTRAL), confidence modifiers, data_completeness dict, key_signals list |
+| `src/scorer/flip_detector.py` | Detects signal direction changes; saves to signal_flips table |
+| `src/scorer/main.py` | Orchestrator: per-ticker score_ticker() + run_scorer() for daily pipeline + run_historical_scoring() for Option E |
+
+### Signal Classification
+- `final_score >= +30` → BULLISH
+- `final_score <= -30` → BEARISH
+- Otherwise → NEUTRAL
+
+### Confidence Modifiers (applied to base = |final_score|):
+| Modifier | Condition | Value |
+|---|---|---|
+| timeframe_agree | Daily and weekly both same direction | +10 |
+| timeframe_disagree | Daily and weekly opposite directions | -15 |
+| volume_confirms | Volume category agrees with trend direction | +10 |
+| volume_diverges | Volume category opposes trend direction | -10 |
+| indicator_consensus | >60% of indicators agree with signal direction | +5 |
+| indicator_mixed | <50% of indicators agree with signal direction | -10 |
+| earnings_penalty | Next earnings within 7 days | -15 |
+| vix_extreme | VIX > 30 | -10 |
+| atr_expanding | ATR > 1.5× its 20-day SMA | -5 |
+| missing_news | No news data available | -5 |
+| missing_fundamentals | No fundamentals data available | -3 |
+
+Final confidence is clamped to [0, 100].
+
+### Scorer Orchestrator (`src/scorer/main.py`)
+
+**`run_scorer()`** — daily pipeline entry point:
+1. Checks `calculator_done` event; returns early if missing.
+2. Checks if `scorer_done` already completed for today; skips if so.
+3. Writes `scorer_done` with `status="processing"`.
+4. Scores all active tickers via `score_ticker()`.
+5. Detects signal flips via `detect_flips_for_all()`.
+6. Writes `scorer_done` with `status="completed"`.
+7. Logs `pipeline_runs` entry.
+8. Sends Telegram summary with signal distribution and flip count.
+
+**`run_historical_scoring(mode="both")`** — Option E historical backfill:
+- `mode="daily"`: scores last 12 months of trading days from `ohlcv_daily` dates.
+- `mode="weekly"`: scores months 13-60 using week_start dates from `weekly_candles`.
+- `mode="both"`: runs daily first, then weekly.
+
+**`score_ticker()`** — full pipeline for one ticker on one date:
+1. Load indicators + close price (returns None if absent).
+2. Detect regime; get adaptive weights.
+3. Score all 15 indicators.
+4. Load and score patterns, divergences, crossovers, gaps, Fibonacci (on-the-fly).
+5. Score news sentiment, short interest.
+6. Score fundamentals; compute macro (SPY trend + VIX + sector ETF + treasury + RS).
+7. Compute 9 category scores → apply adaptive weights → daily_score.
+8. Apply sector adjustment.
+9. Compute weekly score; merge timeframes → final_score.
+10. Classify signal; compute confidence + modifiers.
+11. Build data_completeness JSON; build key_signals list.
+12. Save to `scores_daily` (INSERT OR REPLACE).
+13. Detect and save any signal flip to `signal_flips`.
+
+**Entry point script:** `scripts/run_scorer.py` with `--ticker` (optional), `--historical` (flag), `--db-path` (optional).
+
+
 Base URL: https://api.polygon.io
 Auth: apiKey query parameter
 

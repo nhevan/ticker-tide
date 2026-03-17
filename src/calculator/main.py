@@ -70,6 +70,32 @@ _EVENT_NAME = "calculator_done"
 _PROFILE_RECOMPUTE_DAYS = 7
 
 
+def _resolve_data_date(db_conn: sqlite3.Connection) -> str:
+    """Return the most common latest indicator date across all tickers.
+
+    Uses the same mode-finding subquery as the scorer so the two phases
+    agree on which trading day's data they're working with.  Falls back to
+    today's UTC date when indicators_daily is empty (e.g. first ever run).
+    """
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    row = db_conn.execute(
+        """
+        SELECT date, COUNT(*) AS cnt
+        FROM (
+            SELECT ticker, MAX(date) AS date
+            FROM indicators_daily
+            GROUP BY ticker
+        )
+        GROUP BY date
+        ORDER BY cnt DESC, date DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is None or row["date"] is None:
+        return today
+    return row["date"]
+
+
 def should_recompute_profiles(
     db_conn: sqlite3.Connection,
     ticker: str,
@@ -449,6 +475,10 @@ def run_calculator(
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
     started_at = datetime.now(tz=timezone.utc).isoformat()
 
+    # Resolve the latest data date already in the DB (may differ from today on
+    # weekends / holidays).  Used for the skip-if-done check and the final event.
+    data_date = _resolve_data_date(db_conn)
+
     empty_summary: dict = {
         "tickers_processed": 0,
         "tickers_failed": 0,
@@ -471,21 +501,24 @@ def run_calculator(
             )
             return empty_summary
 
-    # ── Pre-flight: skip if already completed today (unless forced) ──────────
-    calc_status = get_pipeline_event_status(db_conn, _EVENT_NAME, today)
-    if calc_status == "completed" and not force:
+    # ── Pre-flight: skip if already completed (check today AND data_date) ─────
+    # Check both: data_date handles the "ran on a weekend for Friday's data" case;
+    # today handles a same-day re-run on a trading day.
+    if not force:
+        for check_date in dict.fromkeys([data_date, today]):  # deduplicated, order preserved
+            if get_pipeline_event_status(db_conn, _EVENT_NAME, check_date) == "completed":
+                logger.info(
+                    f"phase={_PHASE} date={check_date} — already completed, skipping "
+                    f"(use force=True to override)"
+                )
+                return empty_summary
+    else:
         logger.info(
-            f"phase={_PHASE} date={today} — already completed today, skipping "
-            f"(use force=True to override)"
-        )
-        return empty_summary
-    if force and calc_status == "completed":
-        logger.info(
-            f"phase={_PHASE} date={today} — force=True, re-running despite completed status"
+            f"phase={_PHASE} date={data_date} — force=True, re-running despite completed status"
         )
 
     # ── Mark as processing ───────────────────────────────────────────────────
-    write_pipeline_event(db_conn, _EVENT_NAME, today, "processing")
+    write_pipeline_event(db_conn, _EVENT_NAME, data_date, "processing")
 
     # ── Load tickers ─────────────────────────────────────────────────────────
     all_tickers = get_active_tickers()
@@ -584,7 +617,11 @@ def run_calculator(
         datetime.fromisoformat(completed_at) - datetime.fromisoformat(started_at)
     ).total_seconds()
 
-    write_pipeline_event(db_conn, _EVENT_NAME, today, "completed")
+    # Re-resolve after processing — the run may have inserted new indicator rows
+    # whose date differs from what was in the DB before the run started.
+    final_data_date = _resolve_data_date(db_conn)
+
+    write_pipeline_event(db_conn, _EVENT_NAME, final_data_date, "completed")
 
     run_status = (
         "success" if tickers_failed == 0
@@ -594,7 +631,7 @@ def run_calculator(
 
     log_pipeline_run(
         db_conn=db_conn,
-        date=today,
+        date=final_data_date,
         phase=_PHASE,
         started_at=started_at,
         completed_at=completed_at,
@@ -620,7 +657,7 @@ def run_calculator(
     }
 
     summary_text = (
-        f"📊 Calculator Complete — {today}\n"
+        f"📊 Calculator Complete — {final_data_date}\n"
         f"Tickers: {tickers_processed}/{len(stock_tickers)} ({tickers_failed} failed)\n"
         f"Indicators: {total_indicators} rows | Divergences: {total_divergences}\n"
         f"Patterns: {total_patterns} | Profiles: {total_profiles}\n"
@@ -632,7 +669,7 @@ def run_calculator(
         send_telegram_message(bot_token, chat_id, summary_text)
 
     logger.info(
-        f"phase={_PHASE} completed date={today} mode={mode} "
+        f"phase={_PHASE} completed data_date={final_data_date} run_date={today} mode={mode} "
         f"tickers_processed={tickers_processed} tickers_failed={tickers_failed} "
         f"duration={duration_seconds:.1f}s"
     )

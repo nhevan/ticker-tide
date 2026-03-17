@@ -1058,3 +1058,106 @@ class TestRunCalculator:
         assert isinstance(result["duration_seconds"], float)
         assert result["tickers_processed"] >= 0
         assert result["tickers_failed"] >= 0
+
+
+# ── Tests: pipeline event date matches actual data date ───────────────────────
+
+def _insert_indicators_row(conn: sqlite3.Connection, ticker: str, date: str) -> None:
+    """Insert a minimal indicators_daily row for event-date tests."""
+    conn.execute(
+        """INSERT OR REPLACE INTO indicators_daily
+               (ticker, date, ema_9, ema_21, ema_50, macd_line, macd_signal,
+                macd_histogram, adx, rsi_14, stoch_k, stoch_d, cci_20,
+                williams_r, obv, cmf_20, ad_line, bb_upper, bb_lower, bb_pctb,
+                atr_14, keltner_upper, keltner_lower)
+           VALUES (?, ?, 101, 100, 99, 0.5, 0.3, 0.2, 22, 55, 60, 55, 30,
+                   -30, 1000000, 0.1, 500000, 105, 95, 0.6, 1.5, 106, 94)""",
+        (ticker, date),
+    )
+    conn.commit()
+
+
+class TestCalculatorPipelineEventDate:
+    """The calculator should write calculator_done for the latest data date, not today."""
+
+    def test_writes_event_with_latest_data_date_not_today(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """calculator_done event is written for the MAX(date) in indicators_daily,
+        not for today's wall-clock date."""
+        from src.calculator.main import run_calculator
+
+        DATA_DATE = "2025-01-15"  # a past trading date
+
+        # Pre-insert indicator rows so MAX(date) resolves to DATA_DATE
+        for ticker in ("AAPL", "MSFT", "JPM"):
+            _insert_indicators_row(db_connection, ticker, DATA_DATE)
+
+        _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="full")
+
+        # Event should be written for DATA_DATE, not today
+        row_data = db_connection.execute(
+            "SELECT status FROM pipeline_events WHERE event = 'calculator_done' AND date = ?",
+            (DATA_DATE,),
+        ).fetchone()
+        assert row_data is not None, (
+            f"Expected calculator_done for data date {DATA_DATE}"
+        )
+        assert row_data["status"] == "completed"
+
+    def test_skips_if_data_date_already_done(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """If calculator_done exists for the latest data date (not today), the run is skipped."""
+        from src.calculator.main import run_calculator
+
+        DATA_DATE = "2025-01-15"
+
+        # Simulate: indicators exist for DATA_DATE, and event already completed
+        for ticker in ("AAPL", "MSFT", "JPM"):
+            _insert_indicators_row(db_connection, ticker, DATA_DATE)
+        _insert_pipeline_event(db_connection, "calculator_done", DATA_DATE, "completed")
+
+        ns = _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="full")
+
+        # Sub-modules should NOT have been called (skipped)
+        ns.compute_indicators.assert_not_called()
+
+    def test_falls_back_to_today_when_no_indicator_data(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """When indicators_daily is empty, event is written for today as fallback."""
+        from src.calculator.main import run_calculator
+
+        _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="full")
+
+        row = db_connection.execute(
+            "SELECT status FROM pipeline_events WHERE event = 'calculator_done' AND date = ?",
+            (_today(),),
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "completed"
