@@ -124,6 +124,30 @@ Run after `run_full_backfill` via `python scripts/verify_backfill.py` to validat
 
 **Entry point:** `scripts/verify_backfill.py --quiet --no-telegram --ticker AAPL --db-path PATH`. Exits 0 on PASS, 1 on FAIL.
 
+## 2.2 Calculator Modules
+
+The calculator runs after the fetcher completes (`fetcher_done` event) and writes to four output tables.
+
+| Module | Computes | Output Table |
+|---|---|---|
+| `src/calculator/indicators.py` | 15 technical indicators (EMA, MACD, ADX, RSI, Stochastic, CCI, Williams %R, OBV, CMF, A/D, Bollinger, ATR, Keltner) + weekly variants | `indicators_daily`, `indicators_weekly` |
+| `src/calculator/crossovers.py` | EMA 9/21, EMA 21/50, MACD signal line crossovers | `crossovers_daily` |
+| `src/calculator/gaps.py` | Gap up/down with Breakaway/Continuation/Exhaustion/Common classification | `gaps_daily` |
+| `src/calculator/swing_points.py` | Swing highs/lows (N candles dominant on both sides, default N=5) with strength | `swing_points` |
+| `src/calculator/support_resistance.py` | Cluster swing points into S/R levels with touch count, strength, and broken detection | `support_resistance` |
+| `src/calculator/patterns.py` | 7 candlestick patterns + 7 structural patterns (Double Top/Bottom, Bull/Bear Flag, Breakout, Breakdown, False Breakout) | `patterns_daily` |
+| `src/calculator/divergences.py` | Regular/Hidden Bullish/Bearish divergences across RSI, MACD histogram, OBV, Stochastic | `divergences_daily` |
+| `src/calculator/fibonacci.py` | Fibonacci retracement levels from most recent significant swing pair; on-the-fly computation | *(not stored — used by scorer)* |
+
+### Entry Points
+- `detect_swing_points_for_ticker(db_conn, ticker, config)` → populates `swing_points`
+- `detect_support_resistance_for_ticker(db_conn, ticker, config)` → populates `support_resistance`
+- `detect_all_patterns_for_ticker(db_conn, ticker, config)` → populates `patterns_daily` (candlestick + structural)
+- `detect_divergences_for_ticker(db_conn, ticker, config)` → populates `divergences_daily`
+- `compute_fibonacci_for_ticker(db_conn, ticker, config)` → returns result dict (scorer calls on-the-fly)
+
+All modules follow the same per-ticker error handling: catch specific exceptions, log with ticker+phase+date context, write to `alerts_log`, continue to next ticker.
+
 ## 3. Data Sources
 
 ### 3.1 Polygon.io (api.polygon.io)
