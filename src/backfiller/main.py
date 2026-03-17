@@ -179,7 +179,6 @@ def run_full_backfill(
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-    polygon_client = PolygonClient(polygon_api_key)
     finnhub_client = FinnhubClient(finnhub_api_key)
 
     started_at = datetime.now(timezone.utc).isoformat()
@@ -191,74 +190,75 @@ def run_full_backfill(
     else:
         tickers = all_tickers
 
-    phases = {
-        "ohlcv": lambda: backfill_all_tickers(
-            db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id
-        ),
-        "macro": lambda: backfill_all_macro(
-            db_conn, polygon_client, backfiller_config,
-            sector_etfs=get_sector_etfs(),
-            benchmarks=get_market_benchmarks(),
-            bot_token=bot_token, chat_id=chat_id,
-        ),
-        "fundamentals": lambda: backfill_all_fundamentals(
-            db_conn, tickers, backfiller_config, bot_token, chat_id
-        ),
-        "earnings": lambda: backfill_all_earnings(
-            db_conn, finnhub_client, tickers, backfiller_config, bot_token, chat_id
-        ),
-        "corporate_actions": lambda: backfill_all_corporate_actions(
-            db_conn, polygon_client, tickers, bot_token, chat_id
-        ),
-        "news": lambda: backfill_all_news(
-            db_conn, polygon_client, finnhub_client, tickers, backfiller_config, bot_token, chat_id
-        ),
-        "filings": lambda: backfill_all_filings(
-            db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id
-        ),
-    }
+    with PolygonClient(polygon_api_key) as polygon_client:
+        phases = {
+            "ohlcv": lambda: backfill_all_tickers(
+                db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id
+            ),
+            "macro": lambda: backfill_all_macro(
+                db_conn, polygon_client, backfiller_config,
+                sector_etfs=get_sector_etfs(),
+                benchmarks=get_market_benchmarks(),
+                bot_token=bot_token, chat_id=chat_id,
+            ),
+            "fundamentals": lambda: backfill_all_fundamentals(
+                db_conn, tickers, backfiller_config, bot_token, chat_id
+            ),
+            "earnings": lambda: backfill_all_earnings(
+                db_conn, finnhub_client, tickers, backfiller_config, bot_token, chat_id
+            ),
+            "corporate_actions": lambda: backfill_all_corporate_actions(
+                db_conn, polygon_client, tickers, bot_token, chat_id
+            ),
+            "news": lambda: backfill_all_news(
+                db_conn, polygon_client, finnhub_client, tickers, backfiller_config, bot_token, chat_id
+            ),
+            "filings": lambda: backfill_all_filings(
+                db_conn, polygon_client, tickers, backfiller_config, bot_token, chat_id
+            ),
+        }
 
-    phase_order = [
-        "ohlcv", "macro", "fundamentals", "earnings",
-        "corporate_actions", "news", "filings",
-    ]
+        phase_order = [
+            "ohlcv", "macro", "fundamentals", "earnings",
+            "corporate_actions", "news", "filings",
+        ]
 
-    tickers_processed_total = 0
-    tickers_failed_total = 0
-    failed_phases: list[str] = []
+        tickers_processed_total = 0
+        tickers_failed_total = 0
+        failed_phases: list[str] = []
 
-    if phase_filter:
-        phases_to_run = [phase_filter] if phase_filter in phases else []
-    else:
-        # Run sync first, then all other phases
-        logger.info("Running ticker sync phase")
-        try:
-            sync_tickers_from_config(db_conn, polygon_client, bot_token, chat_id)
-        except Exception as exc:
-            logger.error(f"Ticker sync phase failed: {exc!r}")
-            log_alert(db_conn, None, today, "backfiller", "error",
-                      f"Ticker sync failed: {exc}")
-            failed_phases.append("sync")
+        if phase_filter:
+            phases_to_run = [phase_filter] if phase_filter in phases else []
+        else:
+            # Run sync first, then all other phases
+            logger.info("Running ticker sync phase")
+            try:
+                sync_tickers_from_config(db_conn, polygon_client, bot_token, chat_id)
+            except Exception as exc:
+                logger.error(f"Ticker sync phase failed: {exc!r}")
+                log_alert(db_conn, None, today, "backfiller", "error",
+                          f"Ticker sync failed: {exc}")
+                failed_phases.append("sync")
 
-        phases_to_run = phase_order
+            phases_to_run = phase_order
 
-    for phase_name in phases_to_run:
-        if phase_name not in phases:
-            logger.warning(f"Unknown phase: {phase_name} — skipping")
-            continue
+        for phase_name in phases_to_run:
+            if phase_name not in phases:
+                logger.warning(f"Unknown phase: {phase_name} — skipping")
+                continue
 
-        logger.info(f"Starting backfill phase: {phase_name}")
-        try:
-            result = phases[phase_name]()
-            if isinstance(result, dict):
-                tickers_processed_total += result.get("tickers_processed", 0)
-                tickers_failed_total += result.get("tickers_failed", 0)
-            logger.info(f"Completed backfill phase: {phase_name}")
-        except Exception as exc:
-            failed_phases.append(phase_name)
-            logger.error(f"Backfill phase '{phase_name}' failed: {exc!r}")
-            log_alert(db_conn, None, today, "backfiller", "error",
-                      f"Backfill phase '{phase_name}' failed: {exc}")
+            logger.info(f"Starting backfill phase: {phase_name}")
+            try:
+                result = phases[phase_name]()
+                if isinstance(result, dict):
+                    tickers_processed_total += result.get("tickers_processed", 0)
+                    tickers_failed_total += result.get("tickers_failed", 0)
+                logger.info(f"Completed backfill phase: {phase_name}")
+            except Exception as exc:
+                failed_phases.append(phase_name)
+                logger.error(f"Backfill phase '{phase_name}' failed: {exc!r}")
+                log_alert(db_conn, None, today, "backfiller", "error",
+                          f"Backfill phase '{phase_name}' failed: {exc}")
 
     completed_at = datetime.now(timezone.utc).isoformat()
     duration_seconds = (

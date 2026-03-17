@@ -72,6 +72,12 @@ class PolygonClient:
         self.rate_limited = rate_limited
         self.client = httpx.Client()
         self.logger = logging.getLogger(__name__)
+        self._retrying_execute = retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception(_is_retryable_http_error),
+            reraise=True,
+        )(self._execute_request)
 
     def close(self) -> None:
         """Close the underlying httpx.Client, releasing connection pool resources."""
@@ -113,19 +119,13 @@ class PolygonClient:
         """
         Return _execute_request wrapped with tenacity retry logic.
 
-        Retries up to 3 times with exponential backoff (1–10s) for retryable
-        HTTP errors. Used by both _make_request and _follow_pagination so retry
-        behaviour is consistent across initial and paginated requests.
+        Deprecated: use self._retrying_execute directly. This method exists only
+        for backwards compatibility and delegates to the pre-built instance attribute.
 
         Returns:
-            Callable: A retry-wrapped version of _execute_request.
+            Callable: The pre-built retry-wrapped version of _execute_request.
         """
-        return retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=retry_if_exception(_is_retryable_http_error),
-            reraise=True,
-        )(self._execute_request)
+        return self._retrying_execute
 
     def _make_request(self, endpoint: str, params: dict = None) -> dict:
         """
@@ -146,8 +146,7 @@ class PolygonClient:
         merged_params["apiKey"] = self.api_key
 
         try:
-            retrying_execute = self._get_retrying_execute()
-            return retrying_execute(url, merged_params)
+            return self._retrying_execute(url, merged_params)
         except Exception as exc:
             self.logger.error(
                 f"Request failed for endpoint '{endpoint}': {exc!r}"
@@ -175,8 +174,7 @@ class PolygonClient:
         while next_url:
             self.logger.info(f"Following pagination next_url for endpoint '{endpoint}'")
             try:
-                retrying_execute = self._get_retrying_execute()
-                page_data = retrying_execute(next_url, {"apiKey": self.api_key})
+                page_data = self._retrying_execute(next_url, {"apiKey": self.api_key})
             except Exception as exc:
                 self.logger.error(f"Pagination request failed: {exc!r}")
                 break
@@ -341,7 +339,7 @@ class PolygonClient:
         )
         return self._follow_pagination(endpoint, params)
 
-    def fetch_dividends(self, ticker: str) -> list[dict]:
+    def fetch_dividends(self, ticker: str, limit: int = 1000) -> list[dict]:
         """
         Fetch historical dividend records for a ticker.
 
@@ -350,16 +348,18 @@ class PolygonClient:
 
         Args:
             ticker: Stock ticker symbol, e.g. 'AAPL'.
+            limit: Maximum results per page. Defaults to 1000 to minimise the
+                number of paginated requests.
 
         Returns:
             list[dict]: List of dividend event dicts. Returns [] if request fails.
         """
         endpoint = "/stocks/v1/dividends"
-        params = {"ticker": ticker}
+        params = {"ticker": ticker, "limit": limit}
         self.logger.info(f"Fetching dividends for ticker={ticker}")
         return self._follow_pagination(endpoint, params)
 
-    def fetch_splits(self, ticker: str) -> list[dict]:
+    def fetch_splits(self, ticker: str, limit: int = 1000) -> list[dict]:
         """
         Fetch historical stock split records for a ticker.
 
@@ -368,16 +368,18 @@ class PolygonClient:
 
         Args:
             ticker: Stock ticker symbol, e.g. 'AAPL'.
+            limit: Maximum results per page. Defaults to 1000 to minimise the
+                number of paginated requests.
 
         Returns:
             list[dict]: List of stock split event dicts. Returns [] if request fails.
         """
         endpoint = "/stocks/v1/splits"
-        params = {"ticker": ticker}
+        params = {"ticker": ticker, "limit": limit}
         self.logger.info(f"Fetching splits for ticker={ticker}")
         return self._follow_pagination(endpoint, params)
 
-    def fetch_short_interest(self, ticker: str) -> list[dict]:
+    def fetch_short_interest(self, ticker: str, limit: int = 1000) -> list[dict]:
         """
         Fetch short interest data for a ticker.
 
@@ -386,13 +388,15 @@ class PolygonClient:
 
         Args:
             ticker: Stock ticker symbol, e.g. 'AAPL'.
+            limit: Maximum results per page. Defaults to 1000 to minimise the
+                number of paginated requests.
 
         Returns:
             list[dict]: List of short interest records by settlement date.
                 Returns [] if request fails.
         """
         endpoint = "/stocks/v1/short-interest"
-        params = {"ticker": ticker}
+        params = {"ticker": ticker, "limit": limit}
         self.logger.info(f"Fetching short interest for ticker={ticker}")
         return self._follow_pagination(endpoint, params)
 

@@ -109,26 +109,25 @@ def backfill_dividends_for_ticker(
     logger.info(f"Starting dividends backfill for ticker={ticker}")
     records = polygon_client.fetch_dividends(ticker)
 
-    count = 0
-    for record in records:
-        row = convert_polygon_dividend_to_row(record)
-        db_conn.execute(
+    rows = [convert_polygon_dividend_to_row(record) for record in records]
+    if rows:
+        db_conn.executemany(
             """
             INSERT OR REPLACE INTO dividends
                 (id, ticker, ex_dividend_date, pay_date, cash_amount, frequency, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                row["id"], row["ticker"], row["ex_dividend_date"],
-                row["pay_date"], row["cash_amount"], row["frequency"],
-                row["fetched_at"],
-            ),
+            [
+                (row["id"], row["ticker"], row["ex_dividend_date"],
+                 row["pay_date"], row["cash_amount"], row["frequency"],
+                 row["fetched_at"])
+                for row in rows
+            ],
         )
-        count += 1
 
     db_conn.commit()
-    logger.info(f"Backfilled {count} dividend records for ticker={ticker}")
-    return count
+    logger.info(f"Backfilled {len(rows)} dividend records for ticker={ticker}")
+    return len(rows)
 
 
 def backfill_splits_for_ticker(
@@ -153,25 +152,24 @@ def backfill_splits_for_ticker(
     logger.info(f"Starting splits backfill for ticker={ticker}")
     records = polygon_client.fetch_splits(ticker)
 
-    count = 0
-    for record in records:
-        row = convert_polygon_split_to_row(record)
-        db_conn.execute(
+    rows = [convert_polygon_split_to_row(record) for record in records]
+    if rows:
+        db_conn.executemany(
             """
             INSERT OR REPLACE INTO splits
                 (id, ticker, execution_date, split_from, split_to, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (
-                row["id"], row["ticker"], row["execution_date"],
-                row["split_from"], row["split_to"], row["fetched_at"],
-            ),
+            [
+                (row["id"], row["ticker"], row["execution_date"],
+                 row["split_from"], row["split_to"], row["fetched_at"])
+                for row in rows
+            ],
         )
-        count += 1
 
     db_conn.commit()
-    logger.info(f"Backfilled {count} split records for ticker={ticker}")
-    return count
+    logger.info(f"Backfilled {len(rows)} split records for ticker={ticker}")
+    return len(rows)
 
 
 def backfill_short_interest_for_ticker(
@@ -196,26 +194,25 @@ def backfill_short_interest_for_ticker(
     logger.info(f"Starting short interest backfill for ticker={ticker}")
     records = polygon_client.fetch_short_interest(ticker)
 
-    count = 0
-    for record in records:
-        row = convert_polygon_short_interest_to_row(record)
-        db_conn.execute(
+    rows = [convert_polygon_short_interest_to_row(record) for record in records]
+    if rows:
+        db_conn.executemany(
             """
             INSERT OR REPLACE INTO short_interest
                 (ticker, settlement_date, short_interest, avg_daily_volume,
                  days_to_cover, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (
-                row["ticker"], row["settlement_date"], row["short_interest"],
-                row["avg_daily_volume"], row["days_to_cover"], row["fetched_at"],
-            ),
+            [
+                (row["ticker"], row["settlement_date"], row["short_interest"],
+                 row["avg_daily_volume"], row["days_to_cover"], row["fetched_at"])
+                for row in rows
+            ],
         )
-        count += 1
 
     db_conn.commit()
-    logger.info(f"Backfilled {count} short interest records for ticker={ticker}")
-    return count
+    logger.info(f"Backfilled {len(rows)} short interest records for ticker={ticker}")
+    return len(rows)
 
 
 def backfill_all_corporate_actions(

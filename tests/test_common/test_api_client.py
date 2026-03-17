@@ -36,11 +36,30 @@ def _make_http_status_error(status_code: int) -> httpx.HTTPStatusError:
 # ---------------------------------------------------------------------------
 
 def test_polygon_client_init() -> None:
-    """PolygonClient should store api_key and base_url as attributes."""
+    """PolygonClient should store api_key and base_url as attributes, and pre-build _retrying_execute."""
     client = PolygonClient(api_key="test_key", base_url="https://api.polygon.io")
 
     assert client.api_key == "test_key"
     assert client.base_url == "https://api.polygon.io"
+    assert callable(client._retrying_execute), "_retrying_execute must be a callable built at init time"
+
+
+def test_polygon_retry_wrapper_is_same_object_across_requests(
+    mock_polygon_ohlcv_response: dict,
+) -> None:
+    """_retrying_execute should be the same object for every request — not recreated per call."""
+    mock_polygon_ohlcv_response["next_url"] = None
+    client = PolygonClient(api_key="test_key", rate_limited=False)
+    wrapper_id = id(client._retrying_execute)
+
+    mock_resp = _make_mock_response(mock_polygon_ohlcv_response)
+    with patch.object(client.client, "get", return_value=mock_resp):
+        client.fetch_ohlcv("AAPL", "2024-01-01", "2024-01-05")
+        client.fetch_ohlcv("AAPL", "2024-01-06", "2024-01-10")
+
+    assert id(client._retrying_execute) == wrapper_id, (
+        "_retrying_execute must not be recreated between requests"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +292,7 @@ def test_polygon_fetch_ticker_details() -> None:
 # ---------------------------------------------------------------------------
 
 def test_polygon_fetch_dividends() -> None:
-    """fetch_dividends should call the dividends endpoint with ticker param."""
+    """fetch_dividends should call the dividends endpoint with ticker and limit params."""
     client = PolygonClient(api_key="test_key", rate_limited=False)
 
     api_response = {"results": [{"cash_amount": 0.24}], "next_url": None, "status": "OK"}
@@ -287,10 +306,25 @@ def test_polygon_fetch_dividends() -> None:
     params = call_args[1].get("params", {})
     assert "/stocks/v1/dividends" in url
     assert params.get("ticker") == "AAPL"
+    assert params.get("limit") == 1000
+
+
+def test_polygon_fetch_dividends_custom_limit() -> None:
+    """fetch_dividends should pass a custom limit when specified."""
+    client = PolygonClient(api_key="test_key", rate_limited=False)
+
+    api_response = {"results": [], "next_url": None, "status": "OK"}
+    mock_resp = _make_mock_response(api_response)
+
+    with patch.object(client.client, "get", return_value=mock_resp) as mock_get:
+        client.fetch_dividends("AAPL", limit=500)
+
+    params = mock_get.call_args[1].get("params", {})
+    assert params.get("limit") == 500
 
 
 def test_polygon_fetch_splits() -> None:
-    """fetch_splits should call the splits endpoint."""
+    """fetch_splits should call the splits endpoint with ticker and limit params."""
     client = PolygonClient(api_key="test_key", rate_limited=False)
 
     api_response = {"results": [{"split_from": 1, "split_to": 4}], "next_url": None, "status": "OK"}
@@ -301,11 +335,13 @@ def test_polygon_fetch_splits() -> None:
 
     call_args = mock_get.call_args
     url = call_args[0][0]
+    params = call_args[1].get("params", {})
     assert "/stocks/v1/splits" in url
+    assert params.get("limit") == 1000
 
 
 def test_polygon_fetch_short_interest() -> None:
-    """fetch_short_interest should call the short-interest endpoint."""
+    """fetch_short_interest should call the short-interest endpoint with ticker and limit params."""
     client = PolygonClient(api_key="test_key", rate_limited=False)
 
     api_response = {"results": [{"short_interest": 1000000}], "next_url": None, "status": "OK"}
@@ -316,7 +352,9 @@ def test_polygon_fetch_short_interest() -> None:
 
     call_args = mock_get.call_args
     url = call_args[0][0]
+    params = call_args[1].get("params", {})
     assert "/stocks/v1/short-interest" in url
+    assert params.get("limit") == 1000
 
 
 # ---------------------------------------------------------------------------
