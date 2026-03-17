@@ -180,30 +180,29 @@ def backfill_news_polygon(
     )
     articles = polygon_client.fetch_news(ticker, from_date, to_date, limit=limit)
 
-    count = 0
-    for article in articles:
-        row = convert_polygon_news_to_row(article, ticker)
-        db_conn.execute(
+    rows = [convert_polygon_news_to_row(article, ticker) for article in articles]
+    if rows:
+        db_conn.executemany(
             """
             INSERT OR REPLACE INTO news_articles
                 (id, ticker, date, source, headline, summary, url,
                  sentiment, sentiment_reasoning, published_utc, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                row["id"], row["ticker"], row["date"], row["source"],
-                row["headline"], row["summary"], row["url"],
-                row["sentiment"], row["sentiment_reasoning"],
-                row["published_utc"], row["fetched_at"],
-            ),
+            [
+                (row["id"], row["ticker"], row["date"], row["source"],
+                 row["headline"], row["summary"], row["url"],
+                 row["sentiment"], row["sentiment_reasoning"],
+                 row["published_utc"], row["fetched_at"])
+                for row in rows
+            ],
         )
-        count += 1
 
     db_conn.commit()
     logger.info(
-        f"Backfilled {count} Polygon news articles for ticker={ticker}"
+        f"Backfilled {len(rows)} Polygon news articles for ticker={ticker}"
     )
-    return count
+    return len(rows)
 
 
 def backfill_news_finnhub(
@@ -235,30 +234,29 @@ def backfill_news_finnhub(
     )
     articles = finnhub_client.fetch_company_news(ticker, from_date, to_date)
 
-    count = 0
-    for article in articles:
-        row = convert_finnhub_news_to_row(article, ticker)
-        db_conn.execute(
+    rows = [convert_finnhub_news_to_row(article, ticker) for article in articles]
+    if rows:
+        db_conn.executemany(
             """
             INSERT OR REPLACE INTO news_articles
                 (id, ticker, date, source, headline, summary, url,
                  sentiment, sentiment_reasoning, published_utc, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                row["id"], row["ticker"], row["date"], row["source"],
-                row["headline"], row["summary"], row["url"],
-                row["sentiment"], row["sentiment_reasoning"],
-                row["published_utc"], row["fetched_at"],
-            ),
+            [
+                (row["id"], row["ticker"], row["date"], row["source"],
+                 row["headline"], row["summary"], row["url"],
+                 row["sentiment"], row["sentiment_reasoning"],
+                 row["published_utc"], row["fetched_at"])
+                for row in rows
+            ],
         )
-        count += 1
 
     db_conn.commit()
     logger.info(
-        f"Backfilled {count} Finnhub news articles for ticker={ticker}"
+        f"Backfilled {len(rows)} Finnhub news articles for ticker={ticker}"
     )
-    return count
+    return len(rows)
 
 
 def backfill_all_news(

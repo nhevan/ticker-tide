@@ -400,7 +400,7 @@ def test_polygon_fetch_market_holidays() -> None:
 # ---------------------------------------------------------------------------
 
 def test_polygon_fetch_8k_filings() -> None:
-    """fetch_8k_filings should call the filings endpoint with ticker and date range params."""
+    """fetch_8k_filings should call the filings endpoint with ticker, date range, and limit params."""
     client = PolygonClient(api_key="test_key", rate_limited=False)
 
     api_response = {
@@ -418,6 +418,7 @@ def test_polygon_fetch_8k_filings() -> None:
     params = call_args[1].get("params", {})
     assert "filings" in url
     assert params.get("ticker") == "AAPL"
+    assert params.get("limit") == 1000
 
 
 # ---------------------------------------------------------------------------

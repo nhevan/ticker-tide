@@ -72,27 +72,26 @@ def backfill_8k_for_ticker(
     )
     filings = polygon_client.fetch_8k_filings(ticker, from_date, to_date)
 
-    count = 0
-    for filing in filings:
-        row = convert_polygon_filing_to_row(filing)
-        db_conn.execute(
+    rows = [convert_polygon_filing_to_row(filing) for filing in filings]
+    if rows:
+        db_conn.executemany(
             """
             INSERT OR REPLACE INTO filings_8k
                 (accession_number, ticker, filing_date, form_type, items_text,
                  filing_url, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                row["accession_number"], row["ticker"], row["filing_date"],
-                row["form_type"], row["items_text"], row["filing_url"],
-                row["fetched_at"],
-            ),
+            [
+                (row["accession_number"], row["ticker"], row["filing_date"],
+                 row["form_type"], row["items_text"], row["filing_url"],
+                 row["fetched_at"])
+                for row in rows
+            ],
         )
-        count += 1
 
     db_conn.commit()
-    logger.info(f"Backfilled {count} 8-K filings for ticker={ticker}")
-    return count
+    logger.info(f"Backfilled {len(rows)} 8-K filings for ticker={ticker}")
+    return len(rows)
 
 
 def backfill_all_filings(

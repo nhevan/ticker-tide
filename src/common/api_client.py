@@ -266,7 +266,9 @@ class PolygonClient:
 
         Extracts the first matching insight for the article's ticker from the
         'insights' array and promotes 'sentiment' and 'sentiment_reasoning'
-        to top-level keys.
+        to top-level keys. Mutates the article dict in-place to avoid the memory
+        cost of copying every article (which can number in the thousands for a
+        full news backfill).
 
         Args:
             article: A raw news article dict from the Polygon API.
@@ -276,18 +278,14 @@ class PolygonClient:
                 added as top-level keys (None if no insights found).
         """
         insights = article.get("insights", [])
-        sentiment = None
-        sentiment_reasoning = None
-
         if insights:
             first_insight = insights[0]
-            sentiment = first_insight.get("sentiment")
-            sentiment_reasoning = first_insight.get("sentiment_reasoning")
-
-        enriched = dict(article)
-        enriched["sentiment"] = sentiment
-        enriched["sentiment_reasoning"] = sentiment_reasoning
-        return enriched
+            article["sentiment"] = first_insight.get("sentiment")
+            article["sentiment_reasoning"] = first_insight.get("sentiment_reasoning")
+        else:
+            article["sentiment"] = None
+            article["sentiment_reasoning"] = None
+        return article
 
     def fetch_ticker_details(self, ticker: str) -> dict:
         """
@@ -313,6 +311,7 @@ class PolygonClient:
         ticker: str,
         from_date: str,
         to_date: str,
+        limit: int = 1000,
     ) -> list[dict]:
         """
         Fetch 8-K SEC filings for a ticker within a date range.
@@ -324,6 +323,8 @@ class PolygonClient:
             ticker: Stock ticker symbol, e.g. 'AAPL'.
             from_date: Start filing date in 'YYYY-MM-DD' format (inclusive).
             to_date: End filing date in 'YYYY-MM-DD' format (inclusive).
+            limit: Maximum results per page. Defaults to 1000 to minimise the
+                number of paginated requests.
 
         Returns:
             list[dict]: List of 8-K filing dicts. Returns [] if request fails.
@@ -333,6 +334,7 @@ class PolygonClient:
             "ticker": ticker,
             "filing_date.gte": from_date,
             "filing_date.lte": to_date,
+            "limit": limit,
         }
         self.logger.info(
             f"Fetching 8-K filings for ticker={ticker} from={from_date} to={to_date}"
