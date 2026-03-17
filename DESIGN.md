@@ -158,7 +158,58 @@ The calculator runs after the fetcher completes (`fetcher_done` event) and write
 
 All modules follow the same per-ticker error handling: catch specific exceptions, log with ticker+phase+date context, write to `alerts_log`, continue to next ticker.
 
-## 3. Data Sources
+### Calculator Orchestrator (`src/calculator/main.py`)
+
+`run_calculator` is the Phase 2b entry point, analogous to `run_full_backfill` for the backfiller.
+
+**Modes:**
+- `full` — recompute everything from scratch for all historical data (used after backfill)
+- `incremental` — compute only new data for the current day (used in the daily pipeline; gated on `fetcher_done` event)
+
+**Pre-flight checks:**
+1. Incremental mode verifies `fetcher_done` event exists for today; if missing, logs a warning and returns early.
+2. If `calculator_done` status is already `"completed"` for today, skips (idempotent). If `"failed"`, retries.
+3. Writes `calculator_done` with `status="processing"` before starting.
+
+**Processing order:**
+1. `run_calculator_for_etfs_and_benchmarks` — indicators + weekly only for all sector ETFs (XLK, XLF, etc.) and market benchmarks (SPY, QQQ); needed by the scorer for sector scoring and relative strength.
+2. Per stock ticker: `run_calculator_for_ticker` in dependency order (see below).
+3. `compute_all_profiles` — sector profile blending after all individual tickers finish (full mode or when profiles are stale).
+
+**Dependency order per ticker (`run_calculator_for_ticker`):**
+```
+Step 1: indicators          (CRITICAL — failure blocks steps 2, 6, 7, 8)
+Step 2: crossovers          depends on indicators
+Step 3: gaps                independent
+Step 4: swing_points        (failure blocks steps 5, 6, 7)
+Step 5: support_resistance  depends on swing_points
+Step 6: patterns            depends on indicators + swing_points + support_resistance
+Step 7: divergences         depends on indicators + swing_points
+Step 8: profiles            depends on indicators (weekly recompute, skipped if recent)
+Step 9: weekly              independent
+Step 10: news               independent
+```
+
+**Failure propagation:**
+- `indicators` fails → ticker marked `"failed"`, crossovers/patterns/divergences/profiles skipped.
+- `swing_points` fails → support_resistance and divergences skipped.
+- All other modules fail independently: logged to `alerts_log`, remaining modules continue.
+- Result status: `"success"` (no errors), `"partial"` (some modules failed), `"failed"` (indicators failed).
+
+**Profile recompute logic (`should_recompute_profiles`):**
+- Returns `True` if no profiles exist or latest `computed_at` is ≥ 7 days old.
+- In full mode the orchestrator always recomputes profiles regardless.
+
+**Post-flight:**
+- Updates `calculator_done` to `status="completed"`.
+- Writes `pipeline_runs` entry with phase, duration, tickers processed/failed, status.
+- Sends Telegram summary with per-module counts and duration.
+
+**Return value:** dict with keys: `tickers_processed`, `tickers_failed`, `duration_seconds`, `indicators_rows`, `patterns_found`, `divergences_found`, `weekly_candles`, `profiles_computed`, `news_summaries`.
+
+**Entry point script:** `scripts/run_calculator.py` with `--mode` (full/incremental), `--ticker` (optional), `--db-path` (optional).
+
+
 
 ### 3.1 Polygon.io (api.polygon.io)
 Base URL: https://api.polygon.io

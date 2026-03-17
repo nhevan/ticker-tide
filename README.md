@@ -135,7 +135,33 @@ python scripts/run_backfill.py --ticker AAPL --phase ohlcv
 python scripts/test_api_access.py
 ```
 
-### 4. Run the daily pipeline (or set up cron)
+### 4. Run the Calculator (Phase 2b — compute all indicators, patterns, and signals)
+
+After backfill completes, run the calculator to compute all technical indicators,
+patterns, divergences, swing points, support/resistance levels, profiles, and weekly data:
+
+```bash
+python scripts/run_calculator.py
+```
+
+**Modes:**
+- `full` (default) — recompute everything from scratch for all historical data
+- `incremental` — compute only new data for the current day (used in the daily pipeline)
+
+**Targeted runs:**
+```bash
+python scripts/run_calculator.py --mode incremental     # daily update only
+python scripts/run_calculator.py --ticker AAPL           # single ticker only
+python scripts/run_calculator.py --mode full --ticker AAPL  # full recompute for AAPL
+```
+
+The calculator processes tickers in this dependency order per ticker:
+indicators → crossovers, swing points → support/resistance → patterns, divergences → profiles.
+Weekly candles and news aggregation run independently.
+Sector ETFs and market benchmarks (SPY, QQQ, XLK, etc.) also get indicators + weekly data
+for sector scoring and relative strength computation.
+
+### 5. Run the daily pipeline (or set up cron)
 
 ```bash
 python scripts/run_daily.py
