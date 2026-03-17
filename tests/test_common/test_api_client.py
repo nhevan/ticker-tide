@@ -180,6 +180,64 @@ def test_polygon_pagination_follows_next_url() -> None:
     assert len(results) == 2
 
 
+def test_polygon_pagination_preserves_cursor_in_next_url() -> None:
+    """
+    Regression test: cursor in next_url must not be stripped by httpx.
+
+    httpx replaces a URL's query string when params= is provided. _follow_pagination
+    must embed the apiKey in the URL string directly and pass params=None so that
+    the cursor embedded in next_url is preserved on paginated requests.
+    """
+    client = PolygonClient(api_key="test_key", rate_limited=False)
+
+    cursor_url = "https://api.polygon.io/v2/reference/news?cursor=TESTCURSOR123ABC"
+    page1_response = {
+        "results": [{"id": "art1"}],
+        "next_url": cursor_url,
+        "status": "OK",
+    }
+    page2_response = {
+        "results": [{"id": "art2"}],
+        "next_url": None,
+        "status": "OK",
+    }
+
+    mock_resp1 = _make_mock_response(page1_response)
+    mock_resp2 = _make_mock_response(page2_response)
+
+    with patch.object(client.client, "get", side_effect=[mock_resp1, mock_resp2]) as mock_get:
+        client.fetch_news("NVDA", "2025-12-17", "2026-03-17")
+
+    assert mock_get.call_count == 2
+    second_call_url = mock_get.call_args_list[1][0][0]
+    assert "cursor=TESTCURSOR123ABC" in second_call_url, (
+        f"Cursor was stripped from next_url. Actual URL called: {second_call_url}"
+    )
+    assert "apiKey=test_key" in second_call_url
+
+
+def test_polygon_pagination_max_pages_limit() -> None:
+    """_follow_pagination should stop after max_pages and log a warning."""
+    client = PolygonClient(api_key="test_key", rate_limited=False)
+
+    # Every page returns a next_url — would loop forever without max_pages
+    endless_page = {
+        "results": [{"id": "art"}],
+        "next_url": "https://api.polygon.io/v2/reference/news?cursor=ENDLESS",
+        "status": "OK",
+    }
+
+    with patch.object(client.client, "get", return_value=_make_mock_response(endless_page)) as mock_get:
+        with patch.object(client.logger, "warning") as mock_warn:
+            results = client._follow_pagination("/v2/reference/news", {}, max_pages=3)
+
+    # 1 initial + 3 paginated = 4 total calls
+    assert mock_get.call_count == 4
+    assert len(results) == 4
+    mock_warn.assert_called_once()
+    assert "3" in mock_warn.call_args[0][0]
+
+
 def test_polygon_pagination_stops_without_next_url(mock_polygon_ohlcv_response: dict) -> None:
     """_follow_pagination should make only one request if the response has no next_url."""
     # Ensure next_url is None

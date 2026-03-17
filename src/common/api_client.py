@@ -7,7 +7,7 @@ Finnhub: Free tier — 60 calls/min, must enforce delays.
 
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
 
 import finnhub
 import httpx
@@ -89,7 +89,7 @@ class PolygonClient:
     def __exit__(self, *args: object) -> None:
         self.close()
 
-    def _execute_request(self, url: str, params: dict) -> dict:
+    def _execute_request(self, url: str, params: Optional[dict] = None) -> dict:
         """
         Execute a single GET request with retry logic for transient errors.
 
@@ -97,8 +97,12 @@ class PolygonClient:
         between 1 and 10 seconds, only for retryable HTTP errors.
 
         Args:
-            url: Full URL for the GET request.
-            params: Query parameters to include in the request.
+            url: Full URL for the GET request. Must already contain all required
+                query parameters when params is None (e.g. for paginated next_url
+                requests where the cursor is embedded in the URL string).
+            params: Query parameters to include in the request. When provided,
+                httpx replaces the URL's existing query string with these params.
+                Pass None to preserve the URL's existing query string unchanged.
 
         Returns:
             dict: Parsed JSON response body.
@@ -153,16 +157,24 @@ class PolygonClient:
             )
             return {}
 
-    def _follow_pagination(self, endpoint: str, params: dict) -> list:
+    def _follow_pagination(self, endpoint: str, params: dict, max_pages: int = 100) -> list:
         """
         Fetch all pages from a paginated Polygon API endpoint.
 
         Makes the initial request, then follows 'next_url' links until there
         are no more pages. Each page's 'results' list is concatenated.
 
+        IMPORTANT: httpx replaces a URL's query string when a non-None params
+        dict is passed to client.get(). Polygon's next_url already contains all
+        required query parameters (cursor, filters) as part of its query string.
+        To preserve them, the apiKey is appended to the next_url string directly
+        and _retrying_execute is called with params=None.
+
         Args:
             endpoint: API endpoint path for the first request.
             params: Query parameters for the first request (apiKey added automatically).
+            max_pages: Maximum number of additional pages to fetch after the first.
+                Defaults to 100. A warning is logged if this limit is reached.
 
         Returns:
             list: Combined results from all pages. Returns [] if initial request fails.
@@ -171,10 +183,27 @@ class PolygonClient:
         all_results = list(response.get("results", []))
 
         next_url = response.get("next_url")
+        pages_fetched = 0
         while next_url:
+            if pages_fetched >= max_pages:
+                self.logger.warning(
+                    f"Pagination limit of {max_pages} pages reached for endpoint "
+                    f"'{endpoint}' — stopping. {len(all_results)} results collected."
+                )
+                break
+
+            # Embed apiKey in the URL string rather than passing via params=.
+            # httpx replaces the entire query string when params= is provided,
+            # which would discard the cursor embedded in next_url.
+            auth_next_url = (
+                f"{next_url}&apiKey={self.api_key}"
+                if "apiKey=" not in next_url
+                else next_url
+            )
+
             self.logger.info(f"Following pagination next_url for endpoint '{endpoint}'")
             try:
-                page_data = self._retrying_execute(next_url, {"apiKey": self.api_key})
+                page_data = self._retrying_execute(auth_next_url, None)
             except Exception as exc:
                 self.logger.error(f"Pagination request failed: {exc!r}")
                 break
@@ -182,6 +211,7 @@ class PolygonClient:
             page_results = page_data.get("results", [])
             all_results.extend(page_results)
             next_url = page_data.get("next_url")
+            pages_fetched += 1
 
         return all_results
 
