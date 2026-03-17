@@ -126,11 +126,13 @@ Run after `run_full_backfill` via `python scripts/verify_backfill.py` to validat
 
 ## 2.2 Calculator Modules
 
-The calculator runs after the fetcher completes (`fetcher_done` event) and writes to four output tables.
+The calculator runs after the fetcher completes (`fetcher_done` event) and writes to its output tables.
 
 | Module | Computes | Output Table |
 |---|---|---|
-| `src/calculator/indicators.py` | 15 technical indicators (EMA, MACD, ADX, RSI, Stochastic, CCI, Williams %R, OBV, CMF, A/D, Bollinger, ATR, Keltner) + weekly variants | `indicators_daily`, `indicators_weekly` |
+| `src/calculator/indicators.py` | 15 technical indicators (EMA, MACD, ADX, RSI, Stochastic, CCI, Williams %R, OBV, CMF, A/D, Bollinger, ATR, Keltner) | `indicators_daily` |
+| `src/calculator/weekly.py` | Weekly OHLCV candles (open=Mon, high/low=week extremes, close=Fri, volume=sum); same 15 indicators on weekly candles | `weekly_candles`, `indicators_weekly` |
+| `src/calculator/profiles.py` | Per-stock percentile profiles (p5/p20/p50/p80/p95 + mean/std) over 504-day rolling window; blended with sector profile using α=min(0.85, days/756) | `indicator_profiles` |
 | `src/calculator/crossovers.py` | EMA 9/21, EMA 21/50, MACD signal line crossovers | `crossovers_daily` |
 | `src/calculator/gaps.py` | Gap up/down with Breakaway/Continuation/Exhaustion/Common classification | `gaps_daily` |
 | `src/calculator/swing_points.py` | Swing highs/lows (N candles dominant on both sides, default N=5) with strength | `swing_points` |
@@ -138,6 +140,8 @@ The calculator runs after the fetcher completes (`fetcher_done` event) and write
 | `src/calculator/patterns.py` | 7 candlestick patterns + 7 structural patterns (Double Top/Bottom, Bull/Bear Flag, Breakout, Breakdown, False Breakout) | `patterns_daily` |
 | `src/calculator/divergences.py` | Regular/Hidden Bullish/Bearish divergences across RSI, MACD histogram, OBV, Stochastic | `divergences_daily` |
 | `src/calculator/fibonacci.py` | Fibonacci retracement levels from most recent significant swing pair; on-the-fly computation | *(not stored — used by scorer)* |
+| `src/calculator/relative_strength.py` | RS_market = (1+r_ticker)/(1+r_SPY); RS_sector = (1+r_ticker)/(1+r_sector_ETF) over 20-day period | *(not stored — scorer calls on-the-fly)* |
+| `src/calculator/news_aggregator.py` | Aggregates news_articles into daily sentiment summaries (avg_score, counts, top_headline, filing_flag) | `news_daily_summary` |
 
 ### Entry Points
 - `detect_swing_points_for_ticker(db_conn, ticker, config)` → populates `swing_points`
@@ -145,6 +149,12 @@ The calculator runs after the fetcher completes (`fetcher_done` event) and write
 - `detect_all_patterns_for_ticker(db_conn, ticker, config)` → populates `patterns_daily` (candlestick + structural)
 - `detect_divergences_for_ticker(db_conn, ticker, config)` → populates `divergences_daily`
 - `compute_fibonacci_for_ticker(db_conn, ticker, config)` → returns result dict (scorer calls on-the-fly)
+- `compute_weekly_for_ticker(db_conn, ticker, config, mode)` → populates `weekly_candles` and `indicators_weekly`; supports `mode="full"` (rebuild all) and `mode="incremental"` (new weeks only)
+- `compute_profile_for_ticker(db_conn, ticker, config)` → populates `indicator_profiles`
+- `compute_all_profiles(db_conn, tickers, config)` → processes all tickers, computes sector profiles, blends stock+sector
+- `compute_relative_strength_for_ticker(db_conn, ticker, config)` → returns `{"rs_market": float|None, "rs_sector": float|None}`
+- `aggregate_news_for_ticker(db_conn, ticker, start_date, end_date)` → populates `news_daily_summary`
+- `aggregate_all_news(db_conn, tickers, start_date, end_date)` → processes all tickers
 
 All modules follow the same per-ticker error handling: catch specific exceptions, log with ticker+phase+date context, write to `alerts_log`, continue to next ticker.
 

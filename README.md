@@ -5,7 +5,8 @@ A daily stock signal generation engine that analyzes ~50 US stock tickers and pr
 ## What It Does
 
 - Fetches daily OHLCV price data, fundamentals, news, and macro data
-- Computes 15 technical indicators across daily and weekly timeframes
+- Computes 15 technical indicators across daily and weekly timeframes; builds per-stock percentile profiles calibrated to each ticker's own history
+- Aggregates news sentiment into daily summaries; computes relative strength vs SPY and sector ETFs
 - Detects candlestick patterns, support/resistance levels, divergences, and chart patterns
 - Scores each ticker across 9 weighted categories with adaptive regime detection
 - Generates AI reasoning via Claude API and delivers signals via Telegram
@@ -26,7 +27,7 @@ ticker-tide/
 │   ├── common/         # Shared utilities: DB connection, config loader, logging, validation, events, progress
 │   ├── backfiller/     # One-time historical data loader
 │   ├── fetcher/        # Daily data fetch (OHLCV, news, fundamentals, macro)
-│   ├── calculator/     # Technical indicator computation and pattern detection
+│   ├── calculator/     # Technical indicator computation, weekly candles, profiles, relative strength, news aggregation
 │   ├── scorer/         # Signal scoring engine
 │   ├── notifier/       # AI reasoning + Telegram delivery
 │   └── dashboard/      # (future) Web dashboard
