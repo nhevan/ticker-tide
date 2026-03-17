@@ -15,7 +15,7 @@ A daily stock signal generation engine that analyzes ~50 US stock tickers and pr
 ```
 ticker-tide/
 ├── config/             # JSON configuration files
-│   ├── tickers.json    # Ticker universe and sector ETF mappings
+│   ├── tickers.json    # Ticker universe, sector ETF mappings, and ticker aliases
 │   ├── backfiller.json # Historical data backfill settings
 │   ├── fetcher.json    # Daily fetch schedule and API rate limits
 │   ├── calculator.json # Indicator parameters and pattern detection thresholds
@@ -102,6 +102,16 @@ python scripts/run_backfill.py
 ```
 
 This loads up to 5 years of OHLCV data, fundamentals, earnings calendar, corporate actions (dividends, splits, short interest), news, and macro data for all tickers in `config/tickers.json`.
+
+**Ticker aliases (historical renames):** When a company changes its ticker symbol (e.g., Facebook `FB` → `META` on June 9, 2022), add `"former_symbol"` and `"symbol_since"` fields to the ticker entry in `tickers.json`. The OHLCV backfiller automatically splits the date range — fetching pre-rename history under the old symbol and storing everything under the current ticker:
+
+```json
+{
+  "symbol": "META",
+  "former_symbol": "FB",
+  "symbol_since": "2022-06-09"
+}
+```
 
 The backfill modules and their data sources:
 - `src/backfiller/ohlcv.py` — daily OHLCV bars from Polygon

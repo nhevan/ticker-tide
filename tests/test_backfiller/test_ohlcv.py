@@ -293,6 +293,146 @@ def test_backfill_ohlcv_returns_zero_on_failure(db_connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tests for former_symbol / ticker-alias support in backfill_ohlcv_for_ticker
+# ---------------------------------------------------------------------------
+
+def test_backfill_ohlcv_no_former_symbol_unchanged(
+    db_connection: sqlite3.Connection,
+    sample_polygon_bars: list[dict],
+) -> None:
+    """
+    When no former_symbol is provided, behaviour is identical to the baseline:
+    fetch_ohlcv is called exactly once with the current ticker symbol.
+    """
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    result = backfill_ohlcv_for_ticker(db_connection, mock_client, "AAPL", 1)
+
+    assert mock_client.fetch_ohlcv.call_count == 1
+    call_args = mock_client.fetch_ohlcv.call_args
+    assert call_args[0][0] == "AAPL"
+    assert result == len(sample_polygon_bars)
+
+
+def test_backfill_ohlcv_former_symbol_fetches_both_ranges(
+    db_connection: sqlite3.Connection,
+    sample_polygon_bars: list[dict],
+) -> None:
+    """
+    When former_symbol and symbol_since are provided and symbol_since falls
+    within the lookback window, fetch_ohlcv is called twice:
+      1. current ticker from symbol_since onwards
+      2. former ticker from from_date to day before symbol_since
+    All rows are stored under the current ticker name.
+    """
+    mock_client = MagicMock()
+    # Return 3 bars for the current-ticker fetch, 2 for the former-ticker fetch
+    current_bars = sample_polygon_bars[:3]
+    former_bars = sample_polygon_bars[3:]
+    mock_client.fetch_ohlcv.side_effect = [current_bars, former_bars]
+
+    # symbol_since ~9 months ago so it falls within a 1-year lookback
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+    symbol_since = (date.today() - relativedelta(months=9)).strftime("%Y-%m-%d")
+
+    result = backfill_ohlcv_for_ticker(
+        db_connection, mock_client, "META", 1,
+        former_symbol="FB",
+        symbol_since=symbol_since,
+    )
+
+    assert mock_client.fetch_ohlcv.call_count == 2
+    # First call: current ticker
+    first_call_ticker = mock_client.fetch_ohlcv.call_args_list[0][0][0]
+    assert first_call_ticker == "META"
+    # Second call: former ticker
+    second_call_ticker = mock_client.fetch_ohlcv.call_args_list[1][0][0]
+    assert second_call_ticker == "FB"
+
+    # All rows should be stored under META, none under FB
+    meta_count = db_connection.execute(
+        "SELECT COUNT(*) FROM ohlcv_daily WHERE ticker='META'"
+    ).fetchone()[0]
+    fb_count = db_connection.execute(
+        "SELECT COUNT(*) FROM ohlcv_daily WHERE ticker='FB'"
+    ).fetchone()[0]
+    assert meta_count == len(current_bars) + len(former_bars)
+    assert fb_count == 0
+    assert result == len(current_bars) + len(former_bars)
+
+
+def test_backfill_ohlcv_former_symbol_no_split_when_outside_range(
+    db_connection: sqlite3.Connection,
+    sample_polygon_bars: list[dict],
+) -> None:
+    """
+    When symbol_since is before the lookback from_date, all available history
+    is already under the current ticker. Only one fetch_ohlcv call is made.
+    """
+    mock_client = MagicMock()
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+
+    # symbol_since is 5 years ago; with lookback_years=1 it's outside the window
+    symbol_since = "2020-06-09"
+
+    result = backfill_ohlcv_for_ticker(
+        db_connection, mock_client, "META", 1,
+        former_symbol="FB",
+        symbol_since=symbol_since,
+    )
+
+    assert mock_client.fetch_ohlcv.call_count == 1
+    call_ticker = mock_client.fetch_ohlcv.call_args[0][0]
+    assert call_ticker == "META"
+    assert result == len(sample_polygon_bars)
+
+
+def test_backfill_all_tickers_passes_former_symbol_to_per_ticker(
+    db_connection: sqlite3.Connection,
+    sample_polygon_bars: list[dict],
+) -> None:
+    """
+    backfill_all_tickers forwards former_symbol and symbol_since from the
+    ticker config dict to backfill_ohlcv_for_ticker.
+
+    When a ticker has former_symbol/symbol_since, two fetch_ohlcv calls are
+    made for that ticker. Tickers without those fields are unaffected.
+    """
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+
+    symbol_since = (date.today() - relativedelta(months=9)).strftime("%Y-%m-%d")
+    tickers = [
+        {"symbol": "AAPL", "sector": "Technology", "sector_etf": "XLK", "added": "2026-01-01", "active": 1},
+        {
+            "symbol": "META",
+            "sector": "Communication Services",
+            "sector_etf": "XLC",
+            "added": "2026-01-01",
+            "active": 1,
+            "former_symbol": "FB",
+            "symbol_since": symbol_since,
+        },
+    ]
+    mock_client = MagicMock()
+    # AAPL: 1 call; META: 2 calls (current + former)
+    mock_client.fetch_ohlcv.return_value = sample_polygon_bars
+    config = {"ohlcv": {"lookback_years": 1}}
+
+    backfill_all_tickers(db_connection, mock_client, tickers, config)
+
+    assert mock_client.fetch_ohlcv.call_count == 3  # 1 (AAPL) + 2 (META+FB)
+
+    # Verify FB was queried for the META ticker
+    call_tickers = [c[0][0] for c in mock_client.fetch_ohlcv.call_args_list]
+    assert "AAPL" in call_tickers
+    assert "META" in call_tickers
+    assert "FB" in call_tickers
+
+
+# ---------------------------------------------------------------------------
 # Tests for backfill_all_tickers
 # ---------------------------------------------------------------------------
 

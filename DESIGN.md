@@ -57,6 +57,25 @@ Each module follows the same pattern: per-ticker function + batch function with 
 
 Phase failures are caught and logged; remaining phases continue. A `pipeline_runs` entry is written on completion. Supports `ticker_filter` (single ticker) and `phase_filter` (single phase) for targeted re-runs.
 
+### OHLCV Backfiller — Ticker Aliases (`src/backfiller/ohlcv.py`)
+
+When a company changes its Nasdaq/NYSE ticker symbol, Polygon stores historical OHLCV data under the **original** ticker. Querying the new ticker for dates before the change returns no data, creating a false gap.
+
+To handle renames, add `"former_symbol"` and `"symbol_since"` to the ticker's entry in `config/tickers.json`:
+
+```json
+{ "symbol": "META", "former_symbol": "FB", "symbol_since": "2022-06-09" }
+```
+
+`backfill_ohlcv_for_ticker` detects this and performs a **split fetch**:
+- Fetches `META` bars from `symbol_since` → today
+- Fetches `FB` bars from `from_date` → day before `symbol_since`
+- Stores **all rows under the current ticker** (`META`)
+
+If `symbol_since` predates the lookback window (i.e., all available history is already under the current ticker), a normal single fetch is performed.
+
+Currently configured aliases: `META` (former `FB`, since 2022-06-09).
+
 ### Earnings Backfiller (`src/backfiller/earnings.py`)
 
 - Uses yfinance `get_earnings_dates(limit=40)` to fetch ~50 earnings events per ticker

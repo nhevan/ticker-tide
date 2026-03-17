@@ -76,6 +76,8 @@ def backfill_ohlcv_for_ticker(
     polygon_client: object,
     ticker: str,
     lookback_years: int,
+    former_symbol: str | None = None,
+    symbol_since: str | None = None,
 ) -> int:
     """
     Fetch and store historical OHLCV data for a single ticker.
@@ -85,11 +87,26 @@ def backfill_ohlcv_for_ticker(
     ohlcv_daily using INSERT OR REPLACE for idempotency. Invalid rows are
     skipped with a warning alert logged to alerts_log.
 
+    When a ticker has a known historical name change (e.g. FB → META), supply
+    former_symbol and symbol_since. If symbol_since falls within the lookback
+    range, two Polygon fetches are made:
+      - current ticker: symbol_since → to_date
+      - former ticker:  from_date → day before symbol_since
+    Both sets of rows are stored under the current ticker symbol.
+
+    If symbol_since is before from_date (the change predates the lookback
+    window), all available history is already under the current ticker and a
+    single fetch is performed.
+
     Args:
         db_conn: Open SQLite connection with ohlcv_daily and alerts_log tables.
         polygon_client: PolygonClient instance with a fetch_ohlcv method.
-        ticker: Ticker symbol to backfill (e.g. 'AAPL').
+        ticker: Ticker symbol to backfill (e.g. 'META').
         lookback_years: Number of years of historical data to fetch.
+        former_symbol: Optional prior ticker symbol (e.g. 'FB'). Used only when
+            the ticker was renamed within the lookback window.
+        symbol_since: ISO date string (YYYY-MM-DD) on which the current ticker
+            symbol became active. Required when former_symbol is provided.
 
     Returns:
         Number of rows successfully inserted into ohlcv_daily.
@@ -102,9 +119,33 @@ def backfill_ohlcv_for_ticker(
         f"Starting OHLCV backfill for ticker={ticker} from={from_date} to={to_date}"
     )
 
-    bars = polygon_client.fetch_ohlcv(ticker, from_date, to_date)
+    use_split_fetch = (
+        former_symbol is not None
+        and symbol_since is not None
+        and symbol_since >= from_date
+    )
 
-    if not bars:
+    if use_split_fetch:
+        from datetime import timedelta
+        symbol_since_date = date.fromisoformat(symbol_since)
+        day_before = (symbol_since_date - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        logger.info(
+            f"Ticker {ticker} was formerly {former_symbol}; "
+            f"fetching {ticker} from {symbol_since} and {former_symbol} from {from_date} to {day_before}"
+        )
+
+        current_bars = polygon_client.fetch_ohlcv(ticker, symbol_since, to_date)
+        former_bars = polygon_client.fetch_ohlcv(former_symbol, from_date, day_before)
+        all_bars_with_ticker = (
+            [(ticker, bar) for bar in (current_bars or [])]
+            + [(ticker, bar) for bar in (former_bars or [])]
+        )
+    else:
+        bars = polygon_client.fetch_ohlcv(ticker, from_date, to_date)
+        all_bars_with_ticker = [(ticker, bar) for bar in (bars or [])]
+
+    if not all_bars_with_ticker:
         logger.warning(f"No OHLCV data returned for ticker={ticker}")
         log_alert(
             db_conn,
@@ -117,19 +158,19 @@ def backfill_ohlcv_for_ticker(
         return 0
 
     count = 0
-    for bar in bars:
-        row = convert_polygon_bar_to_ohlcv_row(ticker, bar)
+    for store_as_ticker, bar in all_bars_with_ticker:
+        row = convert_polygon_bar_to_ohlcv_row(store_as_ticker, bar)
         is_valid, reasons = validate_ohlcv_row(row)
 
         if not is_valid:
             for reason in reasons:
                 log_alert(
                     db_conn,
-                    ticker,
+                    store_as_ticker,
                     row.get("date", "unknown"),
                     "backfiller",
                     "warning",
-                    f"Invalid OHLCV row for ticker={ticker} date={row.get('date','unknown')}: {reason}",
+                    f"Invalid OHLCV row for ticker={store_as_ticker} date={row.get('date','unknown')}: {reason}",
                 )
             continue
 
@@ -198,13 +239,21 @@ def backfill_all_tickers(
     failed = 0
     total_rows = 0
 
-    for ticker in ticker_symbols:
+    for ticker_config in tickers:
+        ticker = ticker_config["symbol"]
+        former_symbol = ticker_config.get("former_symbol")
+        symbol_since = ticker_config.get("symbol_since")
+
         tracker.mark_processing(ticker)
         if msg_id:
             edit_telegram_message(bot_token, chat_id, msg_id, tracker.format_progress_message())
 
         try:
-            count = backfill_ohlcv_for_ticker(db_conn, polygon_client, ticker, lookback_years)
+            count = backfill_ohlcv_for_ticker(
+                db_conn, polygon_client, ticker, lookback_years,
+                former_symbol=former_symbol,
+                symbol_since=symbol_since,
+            )
             total_rows += count
             processed += 1
             tracker.mark_completed(ticker, details=f"{count:,} rows")
