@@ -28,7 +28,7 @@ The backfiller is a one-time historical data loader with the following modules:
 | `src/backfiller/ohlcv.py` | 5 years of daily OHLCV bars | Polygon |
 | `src/backfiller/macro.py` | Treasury yields, VIX | Polygon, yfinance |
 | `src/backfiller/fundamentals.py` | Quarterly income, ratios, YoY growth | yfinance |
-| `src/backfiller/earnings.py` | Earnings dates, EPS estimates/actuals | Finnhub |
+| `src/backfiller/earnings.py` | Earnings dates, EPS estimates/actuals (~50 events) | yfinance |
 | `src/backfiller/corporate_actions.py` | Dividends, splits, short interest | Polygon |
 | `src/backfiller/news.py` | News articles + AI sentiment (3 months) | Polygon + Finnhub |
 | `src/backfiller/filings.py` | 8-K SEC filings (6 months) | Polygon |
@@ -56,6 +56,19 @@ Each module follows the same pattern: per-ticker function + batch function with 
 8. `filings` — 8-K SEC filings
 
 Phase failures are caught and logged; remaining phases continue. A `pipeline_runs` entry is written on completion. Supports `ticker_filter` (single ticker) and `phase_filter` (single phase) for targeted re-runs.
+
+### Earnings Backfiller (`src/backfiller/earnings.py`)
+
+- Uses yfinance `get_earnings_dates(limit=40)` to fetch ~50 earnings events per ticker
+- Returns actual earnings announcement dates (not fiscal period end dates), EPS estimate, reported EPS, and absolute EPS surprise
+- `fiscal_quarter`, `fiscal_year`, `revenue_estimated`, `revenue_actual` stored as NULL (not available from yfinance `get_earnings_dates`)
+- No rate limiting required (no API key)
+
+### Periodic Earnings Refresh (`src/fetcher/earnings.py`)
+
+- `run_periodic_earnings` refreshes earnings for all tickers using yfinance
+- Reads `earnings_calendar_days` from `fetcher.json` (default: 7) to skip tickers with fresh data
+- Uses INSERT OR REPLACE for idempotent upserts
 
 ### News Backfiller (`src/backfiller/news.py`)
 
@@ -116,7 +129,7 @@ NOT authorized (use fallbacks):
 - /stocks/financials/v1/income-statements → yfinance
 - /stocks/financials/v1/balance-sheets → yfinance
 - /v2/aggs/ticker/I:SPX/... → SPY ETF via Polygon
-- /benzinga/v1/earnings → Finnhub
+- /benzinga/v1/earnings → yfinance (get_earnings_dates)
 
 Response pagination: if next_url is present, follow it to get more results.
 
@@ -127,11 +140,11 @@ No API key needed. Used for:
 - Financial ratios (P/E, P/B, D/E, ROA, ROE, etc.)
 - Market cap, EPS, revenue
 - VIX data (ticker: ^VIX)
+- Earnings calendar (announcement dates, EPS estimates/actuals, ~50 events per ticker)
 
 ### 3.3 Finnhub (finnhub.io)
 Free tier: 60 calls/min.
 Used for:
-- Earnings calendar
 - Supplementary company news
 
 ## 4. Database Schema
@@ -180,16 +193,16 @@ Enable WAL mode on connection.
 - fetched_at TEXT
 - UNIQUE(ticker, report_date, period)
 
-**earnings_calendar** — from Finnhub
+**earnings_calendar** — from yfinance
 - ticker TEXT NOT NULL
-- earnings_date TEXT NOT NULL
-- fiscal_quarter TEXT
-- fiscal_year INTEGER
+- earnings_date TEXT NOT NULL (earnings announcement date)
+- fiscal_quarter TEXT (NULL — not provided by yfinance)
+- fiscal_year INTEGER (NULL — not provided by yfinance)
 - estimated_eps REAL
 - actual_eps REAL
-- eps_surprise REAL
-- revenue_estimated REAL
-- revenue_actual REAL
+- eps_surprise REAL (actual_eps - estimated_eps)
+- revenue_estimated REAL (NULL — not provided by yfinance)
+- revenue_actual REAL (NULL — not provided by yfinance)
 - fetched_at TEXT
 - UNIQUE(ticker, earnings_date)
 

@@ -205,7 +205,7 @@ def run_full_backfill(
                 db_conn, tickers, backfiller_config, bot_token, chat_id
             ),
             "earnings": lambda: backfill_all_earnings(
-                db_conn, finnhub_client, tickers, backfiller_config, bot_token, chat_id
+                db_conn, tickers, bot_token, chat_id
             ),
             "corporate_actions": lambda: backfill_all_corporate_actions(
                 db_conn, polygon_client, tickers, bot_token, chat_id

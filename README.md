@@ -107,7 +107,7 @@ The backfill modules and their data sources:
 - `src/backfiller/ohlcv.py` — daily OHLCV bars from Polygon
 - `src/backfiller/macro.py` — treasury yields and VIX from Polygon/yfinance
 - `src/backfiller/fundamentals.py` — quarterly financials and ratios from yfinance
-- `src/backfiller/earnings.py` — earnings calendar (dates, EPS, revenue) from Finnhub
+- `src/backfiller/earnings.py` — earnings calendar (dates, EPS) from yfinance
 - `src/backfiller/corporate_actions.py` — dividends, splits, short interest from Polygon
 - `src/backfiller/news.py` — news articles + AI sentiment from Polygon (3 months) + Finnhub (1 month)
 - `src/backfiller/filings.py` — 8-K SEC filings from Polygon (6 months)
@@ -148,8 +148,8 @@ Tests mock all external API calls. No real API keys required to run the test sui
 | Source | Used For | Auth |
 |--------|----------|------|
 | Polygon.io | OHLCV, news, 8-K filings, dividends, splits, short interest, treasury yields | API key |
-| yfinance | Fundamentals, financial ratios, VIX | None |
-| Finnhub | Earnings calendar, supplementary news | API key |
+| yfinance | Fundamentals, financial ratios, VIX, earnings calendar | None |
+| Finnhub | Supplementary news | API key |
 | Anthropic Claude | AI signal reasoning | API key |
 | Telegram | Signal delivery | Bot token |
 

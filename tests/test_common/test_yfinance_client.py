@@ -220,8 +220,10 @@ def test_yfinance_ticker_not_found() -> None:
 # fetch_earnings_dates
 # ---------------------------------------------------------------------------
 
-def test_fetch_earnings_dates() -> None:
-    """fetch_earnings_dates should return a list of dicts with earnings_date field."""
+def test_fetch_earnings_dates_returns_schema_compatible_records() -> None:
+    """
+    fetch_earnings_dates should return dicts with all earnings_calendar schema keys.
+    """
     dates_index = pd.to_datetime(["2024-02-01", "2024-05-02", "2024-08-01"])
     mock_earnings_df = pd.DataFrame(
         {
@@ -231,7 +233,6 @@ def test_fetch_earnings_dates() -> None:
         },
         index=dates_index,
     )
-
     mock_ticker = MagicMock()
     mock_ticker.get_earnings_dates.return_value = mock_earnings_df
 
@@ -240,5 +241,118 @@ def test_fetch_earnings_dates() -> None:
 
     assert isinstance(result, list)
     assert len(result) == 3
+
+    expected_keys = {
+        "ticker", "earnings_date", "estimated_eps", "actual_eps",
+        "eps_surprise", "fiscal_quarter", "fiscal_year",
+        "revenue_estimated", "revenue_actual",
+    }
     for record in result:
-        assert "earnings_date" in record, "Missing 'earnings_date' in earnings record"
+        assert expected_keys == set(record.keys()), (
+            f"Record keys mismatch. Expected {expected_keys}, got {set(record.keys())}"
+        )
+
+
+def test_fetch_earnings_dates_maps_eps_fields_correctly() -> None:
+    """
+    EPS Estimate maps to estimated_eps and Reported EPS maps to actual_eps.
+    eps_surprise is computed as actual_eps - estimated_eps.
+    """
+    dates_index = pd.to_datetime(["2024-02-01"])
+    mock_earnings_df = pd.DataFrame(
+        {"EPS Estimate": [2.10], "Reported EPS": [2.18], "Surprise(%)": [3.81]},
+        index=dates_index,
+    )
+    mock_ticker = MagicMock()
+    mock_ticker.get_earnings_dates.return_value = mock_earnings_df
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = fetch_earnings_dates("AAPL")
+
+    record = result[0]
+    assert record["ticker"] == "AAPL"
+    assert record["earnings_date"] == "2024-02-01"
+    assert record["estimated_eps"] == pytest.approx(2.10)
+    assert record["actual_eps"] == pytest.approx(2.18)
+    assert record["eps_surprise"] == pytest.approx(0.08)
+
+
+def test_fetch_earnings_dates_handles_nan_actuals() -> None:
+    """
+    NaN actual EPS (upcoming earnings) is converted to None. eps_surprise is None.
+    """
+    import numpy as np
+
+    dates_index = pd.to_datetime(["2025-07-31"])
+    mock_earnings_df = pd.DataFrame(
+        {"EPS Estimate": [1.60], "Reported EPS": [np.nan], "Surprise(%)": [np.nan]},
+        index=dates_index,
+    )
+    mock_ticker = MagicMock()
+    mock_ticker.get_earnings_dates.return_value = mock_earnings_df
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = fetch_earnings_dates("AAPL")
+
+    record = result[0]
+    assert record["actual_eps"] is None
+    assert record["eps_surprise"] is None
+    assert record["estimated_eps"] == pytest.approx(1.60)
+
+
+def test_fetch_earnings_dates_fiscal_fields_are_none() -> None:
+    """
+    fiscal_quarter, fiscal_year, revenue_estimated, revenue_actual are always None.
+    """
+    dates_index = pd.to_datetime(["2024-02-01"])
+    mock_earnings_df = pd.DataFrame(
+        {"EPS Estimate": [2.10], "Reported EPS": [2.18], "Surprise(%)": [3.81]},
+        index=dates_index,
+    )
+    mock_ticker = MagicMock()
+    mock_ticker.get_earnings_dates.return_value = mock_earnings_df
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = fetch_earnings_dates("AAPL")
+
+    record = result[0]
+    assert record["fiscal_quarter"] is None
+    assert record["fiscal_year"] is None
+    assert record["revenue_estimated"] is None
+    assert record["revenue_actual"] is None
+
+
+def test_fetch_earnings_dates_uses_limit_40() -> None:
+    """
+    get_earnings_dates is called with limit=40.
+    """
+    mock_ticker = MagicMock()
+    mock_ticker.get_earnings_dates.return_value = pd.DataFrame()
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        fetch_earnings_dates("AAPL")
+
+    mock_ticker.get_earnings_dates.assert_called_once_with(limit=40)
+
+
+def test_fetch_earnings_dates_returns_empty_on_exception() -> None:
+    """
+    When yfinance raises an exception, an empty list is returned without crashing.
+    """
+    with patch("yfinance.Ticker", side_effect=Exception("network error")):
+        result = fetch_earnings_dates("AAPL")
+
+    assert result == []
+
+
+def test_fetch_earnings_dates_returns_empty_for_empty_df() -> None:
+    """
+    When yfinance returns an empty DataFrame, fetch_earnings_dates returns [].
+    """
+    mock_ticker = MagicMock()
+    mock_ticker.get_earnings_dates.return_value = pd.DataFrame()
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = fetch_earnings_dates("AAPL")
+
+    assert result == []

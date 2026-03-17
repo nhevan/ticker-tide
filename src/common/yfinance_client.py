@@ -344,19 +344,26 @@ def fetch_earnings_dates(ticker: str) -> list[dict]:
     Fetch upcoming and recent earnings dates for a ticker.
 
     Retrieves earnings date history including EPS estimates, reported EPS,
-    and surprise percentages from yfinance.
+    and surprise amounts from yfinance. Returns records in a format that
+    matches the earnings_calendar DB schema directly.
+
+    Uses limit=40 to retrieve approximately 50 earnings events (yfinance
+    returns more rows than the limit parameter suggests).
 
     Args:
         ticker: Stock ticker symbol, e.g. 'AAPL'.
 
     Returns:
-        list[dict]: List of earnings event dicts, each with keys:
-            earnings_date (ISO string), eps_estimate, reported_eps, surprise_pct.
+        list[dict]: List of earnings event dicts, each with keys matching
+            the earnings_calendar table schema:
+            ticker, earnings_date, estimated_eps, actual_eps, eps_surprise,
+            fiscal_quarter (always None), fiscal_year (always None),
+            revenue_estimated (always None), revenue_actual (always None).
             NaN values are converted to None. Returns [] on any exception.
     """
     try:
         yf_ticker = yfinance.Ticker(ticker)
-        earnings_df = yf_ticker.get_earnings_dates(limit=20)
+        earnings_df = yf_ticker.get_earnings_dates(limit=40)
 
         if earnings_df is None or earnings_df.empty:
             return []
@@ -368,11 +375,23 @@ def fetch_earnings_dates(ticker: str) -> list[dict]:
                 if hasattr(date_index, "strftime")
                 else str(date_index)
             )
+            estimated_eps = _safe_float(row.get("EPS Estimate"))
+            actual_eps = _safe_float(row.get("Reported EPS"))
+
+            eps_surprise = None
+            if estimated_eps is not None and actual_eps is not None:
+                eps_surprise = actual_eps - estimated_eps
+
             records.append({
+                "ticker": ticker,
                 "earnings_date": earnings_date,
-                "eps_estimate": _safe_float(row.get("EPS Estimate")),
-                "reported_eps": _safe_float(row.get("Reported EPS")),
-                "surprise_pct": _safe_float(row.get("Surprise(%)")),
+                "estimated_eps": estimated_eps,
+                "actual_eps": actual_eps,
+                "eps_surprise": eps_surprise,
+                "fiscal_quarter": None,
+                "fiscal_year": None,
+                "revenue_estimated": None,
+                "revenue_actual": None,
             })
 
         logger.info(f"Fetched {len(records)} earnings dates for ticker={ticker}")
