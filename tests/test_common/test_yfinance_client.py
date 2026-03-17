@@ -11,6 +11,7 @@ import pytest
 from src.common.yfinance_client import (
     fetch_earnings_dates,
     fetch_fundamentals,
+    fetch_fundamentals_history,
     fetch_vix_data,
 )
 
@@ -354,5 +355,129 @@ def test_fetch_earnings_dates_returns_empty_for_empty_df() -> None:
 
     with patch("yfinance.Ticker", return_value=mock_ticker):
         result = fetch_earnings_dates("AAPL")
+
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# fetch_fundamentals_history
+# ---------------------------------------------------------------------------
+
+def _make_income_stmt_two_quarters(eps: float = 2.0) -> pd.DataFrame:
+    """Build a two-quarter income_stmt with known values for history tests."""
+    dates = pd.to_datetime(["2024-09-30", "2024-06-30"])
+    data = {
+        dates[0]: {"Total Revenue": 100_000_000, "Net Income": 20_000_000, "Basic EPS": eps},
+        dates[1]: {"Total Revenue": 95_000_000, "Net Income": 19_000_000, "Basic EPS": eps * 0.9},
+    }
+    return pd.DataFrame(data)
+
+
+def _make_balance_sheet_two_quarters(
+    total_debt: float = 50_000_000,
+    equity: float = 100_000_000,
+) -> pd.DataFrame:
+    """Build a two-quarter balance_sheet with known values for history tests."""
+    dates = pd.to_datetime(["2024-09-30", "2024-06-30"])
+    data = {
+        dates[0]: {"Total Debt": total_debt, "Stockholders Equity": equity},
+        dates[1]: {"Total Debt": total_debt * 0.9, "Stockholders Equity": equity * 0.95},
+    }
+    return pd.DataFrame(data)
+
+
+def _make_price_history(close_on_date: float = 40.0) -> pd.DataFrame:
+    """Build a minimal price history DataFrame with a Close column."""
+    dates = pd.to_datetime(["2024-09-27", "2024-09-30", "2024-10-01"])
+    return pd.DataFrame({"Close": [close_on_date - 1, close_on_date, close_on_date + 1]}, index=dates)
+
+
+def test_fetch_fundamentals_history_returns_debt_to_equity_per_quarter() -> None:
+    """
+    fetch_fundamentals_history should compute debt_to_equity for each quarter
+    using the matching date column in quarterly_balance_sheet.
+    """
+    total_debt = 50_000_000.0
+    equity = 100_000_000.0
+
+    mock_ticker = MagicMock()
+    mock_ticker.quarterly_income_stmt = _make_income_stmt_two_quarters()
+    mock_ticker.quarterly_balance_sheet = _make_balance_sheet_two_quarters(total_debt=total_debt, equity=equity)
+    mock_ticker.history.return_value = pd.DataFrame()
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        records = fetch_fundamentals_history("AAPL")
+
+    assert len(records) == 2
+    first = records[0]
+    assert "debt_to_equity" in first
+    assert first["debt_to_equity"] is not None
+    expected_dte = total_debt / equity
+    assert abs(first["debt_to_equity"] - expected_dte) < 1e-6
+
+
+def test_fetch_fundamentals_history_returns_pe_ratio_per_quarter() -> None:
+    """
+    fetch_fundamentals_history should compute pe_ratio as close_price / (eps * 4)
+    using the closing price on or just before the report_date.
+    """
+    eps = 2.0
+    close_price = 40.0
+    expected_pe = close_price / (eps * 4)
+
+    mock_ticker = MagicMock()
+    mock_ticker.quarterly_income_stmt = _make_income_stmt_two_quarters(eps=eps)
+    mock_ticker.quarterly_balance_sheet = pd.DataFrame()
+    mock_ticker.history.return_value = _make_price_history(close_on_date=close_price)
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        records = fetch_fundamentals_history("AAPL")
+
+    assert len(records) >= 1
+    first = records[0]
+    assert "pe_ratio" in first
+    assert first["pe_ratio"] is not None
+    assert abs(first["pe_ratio"] - expected_pe) < 1e-6
+
+
+def test_fetch_fundamentals_history_pe_ratio_none_when_eps_nonpositive() -> None:
+    """
+    fetch_fundamentals_history should set pe_ratio to None when eps <= 0.
+    """
+    mock_ticker = MagicMock()
+    mock_ticker.quarterly_income_stmt = _make_income_stmt_two_quarters(eps=0.0)
+    mock_ticker.quarterly_balance_sheet = pd.DataFrame()
+    mock_ticker.history.return_value = _make_price_history(close_on_date=50.0)
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        records = fetch_fundamentals_history("AAPL")
+
+    assert len(records) >= 1
+    assert records[0]["pe_ratio"] is None
+
+
+def test_fetch_fundamentals_history_debt_to_equity_none_when_balance_sheet_missing() -> None:
+    """
+    fetch_fundamentals_history should set debt_to_equity to None when the balance
+    sheet is empty or does not have a matching date column.
+    """
+    mock_ticker = MagicMock()
+    mock_ticker.quarterly_income_stmt = _make_income_stmt_two_quarters()
+    mock_ticker.quarterly_balance_sheet = pd.DataFrame()
+    mock_ticker.history.return_value = pd.DataFrame()
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        records = fetch_fundamentals_history("AAPL")
+
+    assert len(records) >= 1
+    assert records[0]["debt_to_equity"] is None
+
+
+def test_fetch_fundamentals_history_returns_empty_on_exception() -> None:
+    """
+    fetch_fundamentals_history should return [] without crashing when yfinance raises.
+    """
+    with patch("yfinance.Ticker", side_effect=Exception("network error")):
+        result = fetch_fundamentals_history("AAPL")
 
     assert result == []

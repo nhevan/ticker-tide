@@ -154,6 +154,40 @@ def _compute_revenue_growth_yoy(income_stmt: pd.DataFrame) -> float | None:
     return (current_revenue - prior_year_revenue) / prior_year_revenue
 
 
+def _compute_debt_to_equity_for_date(balance_sheet: pd.DataFrame, date_col: Any) -> float | None:
+    """
+    Compute debt-to-equity ratio for a specific date column in a balance sheet.
+
+    Looks up Total Debt and Stockholders Equity at the given column (quarter-end date)
+    and returns their ratio. Returns None if either field is missing or equity is zero.
+
+    Args:
+        balance_sheet: quarterly_balance_sheet DataFrame from yfinance (rows=fields, cols=dates).
+        date_col: The column label (Timestamp) identifying the quarter to look up.
+
+    Returns:
+        float | None: Total Debt / Stockholders Equity for that date, or None if unavailable.
+    """
+    if balance_sheet is None or balance_sheet.empty:
+        return None
+    if date_col not in balance_sheet.columns:
+        return None
+
+    total_debt = None
+    equity = None
+
+    if "Total Debt" in balance_sheet.index:
+        total_debt = _safe_float(balance_sheet.loc["Total Debt", date_col])
+
+    if "Stockholders Equity" in balance_sheet.index:
+        equity = _safe_float(balance_sheet.loc["Stockholders Equity", date_col])
+
+    if total_debt is None or equity is None or equity == 0:
+        return None
+
+    return total_debt / equity
+
+
 def _compute_debt_to_equity(balance_sheet: pd.DataFrame) -> float | None:
     """
     Compute debt-to-equity ratio from the most recent quarterly balance sheet.
@@ -189,7 +223,11 @@ def fetch_fundamentals_history(ticker: str, lookback_years: int = 5) -> list[dic
 
     Returns one record per available quarter, up to lookback_years * 4 quarters.
     Each record includes the report date, fiscal period label, revenue, net income,
-    and EPS.
+    EPS, debt_to_equity, and pe_ratio.
+
+    debt_to_equity is computed from quarterly_balance_sheet using the matching
+    quarter-end date. pe_ratio is computed as close_price / (eps * 4) using the
+    closing price on or immediately before the report date.
 
     Args:
         ticker: Stock ticker symbol, e.g. 'AAPL'.
@@ -198,8 +236,9 @@ def fetch_fundamentals_history(ticker: str, lookback_years: int = 5) -> list[dic
 
     Returns:
         list[dict]: List of quarterly records, each with keys:
-            report_date (ISO string), period (e.g. 'Q1'), revenue, net_income, eps.
-            Returns [] on any exception.
+            report_date (ISO string), period (e.g. 'Q1'), revenue, net_income,
+            eps, debt_to_equity, pe_ratio.
+            Any unavailable field is None. Returns [] on any exception.
     """
     try:
         yf_ticker = yfinance.Ticker(ticker)
@@ -209,9 +248,30 @@ def fetch_fundamentals_history(ticker: str, lookback_years: int = 5) -> list[dic
             return []
 
         max_quarters = lookback_years * 4
+        date_cols = list(income_stmt.columns[:max_quarters])
+
+        # Fetch balance sheet once for D/E lookups
+        balance_sheet = yf_ticker.quarterly_balance_sheet
+
+        # Fetch full price history spanning all quarters for PE ratio lookups
+        close_series: pd.Series | None = None
+        if date_cols:
+            timestamps = [col for col in date_cols if hasattr(col, "strftime")]
+            if timestamps:
+                earliest_str = min(timestamps).strftime("%Y-%m-%d")
+                today_str = pd.Timestamp.today().strftime("%Y-%m-%d")
+                price_history = yf_ticker.history(
+                    start=earliest_str, end=today_str, auto_adjust=True
+                )
+                if price_history is not None and not price_history.empty and "Close" in price_history.columns:
+                    close_series = price_history["Close"].sort_index()
+                    # Normalize to timezone-naive for consistent .asof() lookups
+                    if close_series.index.tz is not None:
+                        close_series.index = close_series.index.tz_localize(None)
+
         records: list[dict] = []
 
-        for col_index, date_col in enumerate(income_stmt.columns[:max_quarters]):
+        for date_col in date_cols:
             report_date = date_col.strftime("%Y-%m-%d") if hasattr(date_col, "strftime") else str(date_col)
 
             revenue = None
@@ -230,12 +290,25 @@ def fetch_fundamentals_history(ticker: str, lookback_years: int = 5) -> list[dic
             month = date_col.month if hasattr(date_col, "month") else 1
             period = f"Q{(month - 1) // 3 + 1}"
 
+            # D/E from balance sheet for this specific quarter-end date
+            debt_to_equity = _compute_debt_to_equity_for_date(balance_sheet, date_col)
+
+            # PE ratio: close price on report_date divided by annualised EPS
+            pe_ratio = None
+            if close_series is not None and eps is not None and eps > 0:
+                date_ts = pd.Timestamp(report_date)
+                close_price = _safe_float(close_series.asof(date_ts))
+                if close_price is not None and close_price > 0:
+                    pe_ratio = close_price / (eps * 4)
+
             records.append({
                 "report_date": report_date,
                 "period": period,
                 "revenue": revenue,
                 "net_income": net_income,
                 "eps": eps,
+                "debt_to_equity": debt_to_equity,
+                "pe_ratio": pe_ratio,
             })
 
         logger.info(
