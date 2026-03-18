@@ -16,4 +16,5 @@ build/
 venv/
 
 # Pipeline logs
-logs/*.log
+logs/
+!logs/.gitkeep
