@@ -930,14 +930,26 @@ post-processing before saving with `fig.savefig()`.
 | Candlestick (bullish) | `ax.annotate()` arrow below candle Low; label e.g. "Hammer", "BullEng" | `#4fc3f7` |
 | Candlestick (bearish) | `ax.annotate()` arrow above candle High | `#f48fb1` |
 | Candlestick (neutral) | `ax.annotate()` at candle mid-price | `#aaaaaa` |
-| `double_top` | Dashed lines at `peak_price` + `neckline_price`; label "Double Top ⊗" | `#f48fb1` |
-| `double_bottom` | Dashed lines at `trough_price` + `neckline_price`; label "Double Bottom ⊕" | `#4fc3f7` |
-| `bull_flag` / `bear_flag` | Dashed lines at `pole_end_price` + `pole_start_price` | bull/bear color |
-| `breakout` | Dashed line at `level_price`; label "Breakout ↑" | `#4fc3f7` |
-| `breakdown` | Dashed line at `level_price`; label "Breakdown ↓" | `#f48fb1` |
-| `false_breakout` | Dashed line at `level_price`; label "False BO" | `#ffd700` |
+| `double_top` | M-shape `ax.plot()` through peak1 → neckline trough → peak2; dashed neckline `axhline`; `fill_between` α=0.08; "Neckline Break ▼" arrow; right-edge "Double Top ⊗" | `#ff9944` |
+| `double_bottom` | W-shape `ax.plot()` through trough1 → neckline peak → trough2; dashed neckline `axhline`; `fill_between` α=0.08; "Neckline Break ▲" arrow; right-edge "Double Bottom ⊕" | `#4fc3f7` |
+| `bull_flag` | Pole arrow via `ax.annotate()`; two parallel channel `ax.plot()` lines (upper/lower flag high→end high, low→end low); `fill_between` α=0.08; "Breakout ▲ Bullish" arrow at flag end; right-edge "Bull Flag" | `#66ff99` |
+| `bear_flag` | Mirror of bull_flag pointing down; "Breakdown ▼ Bearish" arrow | `#f48fb1` |
+| `breakout` | Dashed `axhline` at `level_price` + "Breakout ↑" directional arrow at candle date | `#4fc3f7` |
+| `breakdown` | Dashed `axhline` + "Breakdown ↓" arrow | `#f48fb1` |
+| `false_breakout` | Dashed `axhline` + "False BO" arrow | `#ffd700` |
 
-All patterns within the chart's date window are shown.
+All patterns within the chart's date window are shown. Trendlines require the enriched `details` JSON
+(see §6.5–6.6 for fields stored per pattern type). If date keys are absent, falls back to `axhline` only.
+
+**Structural pattern `details` fields** (stored by the calculator):
+
+| Pattern | Key date/position fields |
+|---|---|
+| `double_top` | `peak1_date`, `peak1_price`, `peak2_date`, `peak2_price`, `neckline_date`, `neckline_price`, `peak_price` (avg), `distance_days` |
+| `double_bottom` | `trough1_date`, `trough1_price`, `trough2_date`, `trough2_price`, `neckline_date`, `neckline_price`, `trough_price` (avg), `distance_days` |
+| `bull_flag` / `bear_flag` | `pole_start_date`, `pole_start_price`, `pole_end_date`, `pole_end_price`, `flag_start_date`, `flag_start_high`, `flag_end_high`, `flag_start_low`, `flag_end_low`, `flag_retracement_pct` |
+| `breakout` / `breakdown` / `false_breakout` | `level_price`, `volume_ratio` |
+
 
 **General:**
 - x-tick labels hidden on all panels except the bottom (MACD)

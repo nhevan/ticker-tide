@@ -454,7 +454,7 @@ def test_detect_double_bottom() -> None:
 
 
 def test_detect_double_top_stores_details() -> None:
-    """Double top details JSON includes neckline_price, peak_price, distance_days."""
+    """Double top details JSON includes neckline_price, peak_price, distance_days, and date keys."""
     swing_pts = [
         _swing_pt(10, "high", 105.0),
         _swing_pt(20, "low", 90.0),
@@ -468,6 +468,35 @@ def test_detect_double_top_stores_details() -> None:
     assert "neckline_price" in details
     assert "peak_price" in details
     assert "distance_days" in details
+    assert "peak1_date" in details
+    assert "peak1_price" in details
+    assert "peak2_date" in details
+    assert "peak2_price" in details
+    assert "neckline_date" in details
+    assert details["peak1_price"] == pytest.approx(105.0)
+    assert details["peak2_price"] == pytest.approx(105.5)
+
+
+def test_detect_double_bottom_stores_details() -> None:
+    """Double bottom details JSON includes trough dates, prices, and neckline_date."""
+    swing_pts = [
+        _swing_pt(10, "low", 90.0),
+        _swing_pt(20, "high", 108.0),
+        _swing_pt(30, "low", 90.5),
+    ]
+    ohlcv = pd.DataFrame([_candle(i, 100.0, 110.0, 89.0, 109.0) for i in range(35)])
+    patterns = detect_structural_patterns(ohlcv, pd.DataFrame(), swing_pts, [], _BASE_CONFIG)
+    db_patterns = [p for p in patterns if p["pattern_name"] == "double_bottom"]
+    assert len(db_patterns) >= 1
+    details = json.loads(db_patterns[0]["details"])
+    assert "trough1_date" in details
+    assert "trough1_price" in details
+    assert "trough2_date" in details
+    assert "trough2_price" in details
+    assert "neckline_date" in details
+    assert details["trough1_price"] == pytest.approx(90.0)
+    assert details["trough2_price"] == pytest.approx(90.5)
+
 
 
 def test_detect_bull_flag() -> None:
@@ -528,7 +557,7 @@ def test_detect_bear_flag() -> None:
 
 
 def test_detect_bull_flag_stores_details() -> None:
-    """Bull flag details JSON includes pole_start_price, pole_end_price, flag_retracement_pct."""
+    """Bull flag details JSON includes pole dates, prices, and flag channel endpoints."""
     records: list[dict] = []
     for i in range(20):
         records.append(_candle(i, 100.0, 101.0, 99.0, 100.0, 200_000.0))
@@ -551,6 +580,42 @@ def test_detect_bull_flag_stores_details() -> None:
     assert "pole_start_price" in details
     assert "pole_end_price" in details
     assert "flag_retracement_pct" in details
+    assert "pole_start_date" in details
+    assert "pole_end_date" in details
+    assert "flag_start_date" in details
+    assert "flag_start_high" in details
+    assert "flag_end_high" in details
+    assert "flag_start_low" in details
+    assert "flag_end_low" in details
+
+
+def test_detect_bear_flag_stores_details() -> None:
+    """Bear flag details JSON includes pole dates and flag channel endpoints."""
+    records: list[dict] = []
+    for i in range(20):
+        records.append(_candle(i, 120.0, 121.0, 119.0, 120.0, 200_000.0))
+    for i in range(8):
+        p = 120.0 - (i + 1) * 1.5
+        records.append(_candle(20 + i, p + 0.5, p + 1.0, p - 0.5, p, 300_000.0))
+    pole_low = records[-1]["close"]
+    pole_high = records[20]["open"]
+    pole_range = pole_high - pole_low
+    retrace_per_day = pole_range * 0.35 / 7
+    for i in range(7):
+        p = pole_low + retrace_per_day * (i + 1)
+        records.append(_candle(28 + i, p - 0.3, p + 0.3, p - 0.8, p, 150_000.0))
+
+    df = pd.DataFrame(records)
+    patterns = detect_structural_patterns(df, pd.DataFrame(), [], [], _BASE_CONFIG)
+    bf_patterns = [p for p in patterns if p["pattern_name"] == "bear_flag"]
+    assert len(bf_patterns) >= 1
+    details = json.loads(bf_patterns[0]["details"])
+    assert "pole_start_date" in details
+    assert "pole_end_date" in details
+    assert "flag_start_high" in details
+    assert "flag_end_high" in details
+    assert "flag_start_low" in details
+    assert "flag_end_low" in details
 
 
 def test_detect_breakout() -> None:

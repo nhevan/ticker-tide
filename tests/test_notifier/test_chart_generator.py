@@ -792,6 +792,160 @@ class TestAnnotateChart:
         self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)  # must not raise
         plt.close(fig)
 
+    def test_renders_double_top_trendlines(self) -> None:
+        """_annotate_chart draws M-shape trendline via ax.plot() for double_top with full details."""
+        import json as _json
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        peak1_date = ohlcv.index[4].strftime("%Y-%m-%d")
+        neckline_date = ohlcv.index[9].strftime("%Y-%m-%d")
+        peak2_date = ohlcv.index[14].strftime("%Y-%m-%d")
+        details = _json.dumps({
+            "peak_price": 105.0, "neckline_price": 95.0, "distance_days": 10,
+            "peak1_date": peak1_date, "peak1_price": 105.0,
+            "peak2_date": peak2_date, "peak2_price": 104.8,
+            "neckline_date": neckline_date,
+        })
+        patterns = [{
+            "date": ohlcv.index[-1].strftime("%Y-%m-%d"),
+            "pattern_name": "double_top",
+            "pattern_category": "structural",
+            "direction": "bearish",
+            "pattern_type": "reversal",
+            "strength": 4,
+            "confirmed": True,
+            "details": details,
+        }]
+        initial_line_count = len(axes[0].lines)
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)
+        plt.close(fig)
+
+        # M-shape: at least one extra line on the price panel (the trendline)
+        assert len(axes[0].lines) > initial_line_count
+
+    def test_renders_double_bottom_trendlines(self) -> None:
+        """_annotate_chart draws W-shape trendline via ax.plot() for double_bottom with full details."""
+        import json as _json
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        trough1_date = ohlcv.index[4].strftime("%Y-%m-%d")
+        neckline_date = ohlcv.index[9].strftime("%Y-%m-%d")
+        trough2_date = ohlcv.index[14].strftime("%Y-%m-%d")
+        details = _json.dumps({
+            "trough_price": 90.0, "neckline_price": 100.0, "distance_days": 10,
+            "trough1_date": trough1_date, "trough1_price": 90.0,
+            "trough2_date": trough2_date, "trough2_price": 90.3,
+            "neckline_date": neckline_date,
+        })
+        patterns = [{
+            "date": ohlcv.index[-1].strftime("%Y-%m-%d"),
+            "pattern_name": "double_bottom",
+            "pattern_category": "structural",
+            "direction": "bullish",
+            "pattern_type": "reversal",
+            "strength": 4,
+            "confirmed": True,
+            "details": details,
+        }]
+        initial_line_count = len(axes[0].lines)
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)
+        plt.close(fig)
+
+        assert len(axes[0].lines) > initial_line_count
+
+    def test_renders_bull_flag_pole_and_channel(self) -> None:
+        """_annotate_chart draws channel lines (ax.plot) for bull_flag with full details."""
+        import json as _json
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        details = _json.dumps({
+            "pole_start_price": 100.0, "pole_end_price": 112.0,
+            "flag_retracement_pct": 35.0,
+            "pole_start_date": ohlcv.index[3].strftime("%Y-%m-%d"),
+            "pole_end_date": ohlcv.index[8].strftime("%Y-%m-%d"),
+            "flag_start_date": ohlcv.index[9].strftime("%Y-%m-%d"),
+            "flag_start_high": 112.5, "flag_end_high": 110.0,
+            "flag_start_low": 111.0, "flag_end_low": 108.5,
+        })
+        flag_end_date = ohlcv.index[14].strftime("%Y-%m-%d")
+        patterns = [{
+            "date": flag_end_date,
+            "pattern_name": "bull_flag",
+            "pattern_category": "structural",
+            "direction": "bullish",
+            "pattern_type": "continuation",
+            "strength": 3,
+            "confirmed": False,
+            "details": details,
+        }]
+        initial_line_count = len(axes[0].lines)
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)
+        plt.close(fig)
+
+        # Two channel lines added (upper + lower)
+        assert len(axes[0].lines) >= initial_line_count + 2
+
+    def test_renders_breakout_arrow(self) -> None:
+        """_annotate_chart adds an arrow annotation for breakout at the candle date."""
+        import json as _json
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        pat_date = ohlcv.index[15].strftime("%Y-%m-%d")
+        details = _json.dumps({"level_price": 105.0, "volume_ratio": 2.0})
+        patterns = [{
+            "date": pat_date,
+            "pattern_name": "breakout",
+            "pattern_category": "structural",
+            "direction": "bullish",
+            "pattern_type": "continuation",
+            "strength": 3,
+            "confirmed": True,
+            "details": details,
+        }]
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)
+        plt.close(fig)
+
+        annotations = axes[0].get_children()
+        has_arrow = any(
+            hasattr(c, "arrowprops") or (hasattr(c, "arrow_patch") and c.arrow_patch is not None)
+            for c in annotations
+        )
+        assert has_arrow
+
+    def test_structural_fallback_without_date_keys(self) -> None:
+        """_annotate_chart draws axhline fallback when double_top details lack date keys."""
+        import json as _json
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        # Minimal details — no date keys (old format)
+        details = _json.dumps({"peak_price": 105.0, "neckline_price": 95.0, "distance_days": 14})
+        patterns = [{
+            "date": ohlcv.index[-1].strftime("%Y-%m-%d"),
+            "pattern_name": "double_top",
+            "pattern_category": "structural",
+            "direction": "bearish",
+            "pattern_type": "reversal",
+            "strength": 4,
+            "confirmed": True,
+            "details": details,
+        }]
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)  # must not raise
+        plt.close(fig)
+
+        # Neckline axhline should still be drawn
+        hlines = [line for line in axes[0].lines if line.get_linestyle() in ("--", "dashed")]
+        assert len(hlines) >= 1
+
 
 # ---------------------------------------------------------------------------
 # Tests: generate_chart

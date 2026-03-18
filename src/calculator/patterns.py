@@ -318,7 +318,8 @@ def _detect_double_patterns(
         trough_lows = [lo for lo in lows if peak1["date"] < lo["date"] < peak2["date"]]
         if not trough_lows:
             continue
-        neckline = min(trough_lows, key=lambda lo: lo["price"])["price"]
+        neckline_trough = min(trough_lows, key=lambda lo: lo["price"])
+        neckline = neckline_trough["price"]
 
         # Signal when price closes below neckline
         if last_close >= neckline:
@@ -337,6 +338,11 @@ def _detect_double_patterns(
                 "peak_price": peak_price,
                 "neckline_price": neckline,
                 "distance_days": distance_days,
+                "peak1_date": peak1["date"],
+                "peak1_price": peak1["price"],
+                "peak2_date": peak2["date"],
+                "peak2_price": peak2["price"],
+                "neckline_date": neckline_trough["date"],
             }),
         })
         break  # only the most recent qualifying formation
@@ -357,7 +363,8 @@ def _detect_double_patterns(
         peak_highs = [hi for hi in highs if trough1["date"] < hi["date"] < trough2["date"]]
         if not peak_highs:
             continue
-        neckline = max(peak_highs, key=lambda hi: hi["price"])["price"]
+        neckline_peak = max(peak_highs, key=lambda hi: hi["price"])
+        neckline = neckline_peak["price"]
 
         # Signal when price closes above neckline
         if last_close <= neckline:
@@ -376,6 +383,11 @@ def _detect_double_patterns(
                 "trough_price": trough_price,
                 "neckline_price": neckline,
                 "distance_days": distance_days,
+                "trough1_date": trough1["date"],
+                "trough1_price": trough1["price"],
+                "trough2_date": trough2["date"],
+                "trough2_price": trough2["price"],
+                "neckline_date": neckline_peak["date"],
             }),
         })
         break  # only the most recent qualifying formation
@@ -490,6 +502,13 @@ def _detect_flags(ohlcv_df: pd.DataFrame, patterns_cfg: dict) -> list[dict]:
                             "pole_start_price": float(df.iloc[pole_start]["open"]),
                             "pole_end_price": float(df.iloc[pole_end]["close"]),
                             "flag_retracement_pct": round(retracement_pct, 2),
+                            "pole_start_date": str(df.iloc[pole_start]["date"]),
+                            "pole_end_date": str(df.iloc[pole_end]["date"]),
+                            "flag_start_date": str(flag_candles.iloc[0]["date"]),
+                            "flag_start_high": float(flag_candles.iloc[0]["high"]),
+                            "flag_end_high": float(flag_candles.iloc[-1]["high"]),
+                            "flag_start_low": float(flag_candles.iloc[0]["low"]),
+                            "flag_end_low": float(flag_candles.iloc[-1]["low"]),
                         }),
                     })
                     found_bull = True
@@ -509,6 +528,13 @@ def _detect_flags(ohlcv_df: pd.DataFrame, patterns_cfg: dict) -> list[dict]:
                             "pole_start_price": float(df.iloc[pole_start]["open"]),
                             "pole_end_price": float(df.iloc[pole_end]["close"]),
                             "flag_retracement_pct": round(retracement_pct, 2),
+                            "pole_start_date": str(df.iloc[pole_start]["date"]),
+                            "pole_end_date": str(df.iloc[pole_end]["date"]),
+                            "flag_start_date": str(flag_candles.iloc[0]["date"]),
+                            "flag_start_high": float(flag_candles.iloc[0]["high"]),
+                            "flag_end_high": float(flag_candles.iloc[-1]["high"]),
+                            "flag_start_low": float(flag_candles.iloc[0]["low"]),
+                            "flag_end_low": float(flag_candles.iloc[-1]["low"]),
                         }),
                     })
                     found_bear = True

@@ -19,7 +19,7 @@ import logging
 import os
 import sqlite3
 import time
-from typing import Any
+from typing import Any, Optional
 
 import matplotlib.pyplot as plt
 import mplfinance as mpf
@@ -339,6 +339,298 @@ def prepare_divergence_lines(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Structural pattern drawing helpers (called from _annotate_chart Step G)
+# ---------------------------------------------------------------------------
+
+_FLAG_BULL_COLOR = "#66ff99"
+_DOUBLE_TOP_COLOR = "#ff9944"
+
+
+def _draw_double_top(
+    ax: Any,
+    details: dict,
+    date_to_idx: dict[str, int],
+    x_right: float,
+) -> None:
+    """
+    Draw a Double Top (M-shape) on the price panel.
+
+    Renders the two peaks connected through the neckline trough using ax.plot(),
+    a dashed neckline axhline, a semi-transparent fill, and a downward breakout arrow.
+    Falls back to a simple axhline if date keys are missing.
+
+    Parameters:
+        ax: Price panel Axes.
+        details: Parsed details dict from patterns_daily.
+        date_to_idx: Mapping of date string → integer x-index in the chart.
+        x_right: Right x-limit used to place the edge label.
+    """
+    color = _DOUBLE_TOP_COLOR
+    neckline = details.get("neckline_price")
+    if neckline is None:
+        return
+
+    peak1_x = date_to_idx.get(details.get("peak1_date", ""))
+    peak2_x = date_to_idx.get(details.get("peak2_date", ""))
+    neckline_x = date_to_idx.get(details.get("neckline_date", ""))
+
+    if peak1_x is not None and peak2_x is not None and neckline_x is not None:
+        p1 = details.get("peak1_price", neckline)
+        p2 = details.get("peak2_price", neckline)
+        ax.plot(
+            [peak1_x, neckline_x, peak2_x],
+            [p1, neckline, p2],
+            color=color, linewidth=1.3, zorder=4, alpha=0.9,
+        )
+        ax.fill_between(
+            [peak1_x, neckline_x, peak2_x],
+            [p1, neckline, p2],
+            neckline,
+            color=color, alpha=0.08, zorder=2,
+        )
+        ax.annotate(
+            "Neckline Break ▼",
+            xy=(peak2_x, neckline),
+            xytext=(5, -20),
+            textcoords="offset points",
+            color=color,
+            fontsize=8,
+            fontweight="bold",
+            arrowprops=dict(arrowstyle="->", color=color, lw=1.0),
+            bbox=dict(
+                boxstyle="round,pad=0.35",
+                facecolor=_LEGEND_BG, edgecolor=color, alpha=0.85,
+            ),
+            zorder=7,
+        )
+
+    ax.axhline(neckline, color=color, linestyle="--", linewidth=0.8, alpha=0.6, zorder=3)
+    ax.text(
+        x_right, neckline, " Double Top ⊗",
+        color=color, fontsize=7, fontweight="bold",
+        va="center", ha="left", clip_on=False, zorder=6,
+    )
+
+
+def _draw_double_bottom(
+    ax: Any,
+    details: dict,
+    date_to_idx: dict[str, int],
+    x_right: float,
+) -> None:
+    """
+    Draw a Double Bottom (W-shape) on the price panel.
+
+    Mirrors _draw_double_top: connects two troughs through the neckline peak,
+    adds a fill and an upward breakout arrow.
+
+    Parameters:
+        ax: Price panel Axes.
+        details: Parsed details dict from patterns_daily.
+        date_to_idx: Mapping of date string → integer x-index in the chart.
+        x_right: Right x-limit used to place the edge label.
+    """
+    color = _BULL_COLOR
+    neckline = details.get("neckline_price")
+    if neckline is None:
+        return
+
+    trough1_x = date_to_idx.get(details.get("trough1_date", ""))
+    trough2_x = date_to_idx.get(details.get("trough2_date", ""))
+    neckline_x = date_to_idx.get(details.get("neckline_date", ""))
+
+    if trough1_x is not None and trough2_x is not None and neckline_x is not None:
+        t1 = details.get("trough1_price", neckline)
+        t2 = details.get("trough2_price", neckline)
+        ax.plot(
+            [trough1_x, neckline_x, trough2_x],
+            [t1, neckline, t2],
+            color=color, linewidth=1.3, zorder=4, alpha=0.9,
+        )
+        ax.fill_between(
+            [trough1_x, neckline_x, trough2_x],
+            neckline,
+            [t1, neckline, t2],
+            color=color, alpha=0.08, zorder=2,
+        )
+        ax.annotate(
+            "Neckline Break ▲",
+            xy=(trough2_x, neckline),
+            xytext=(5, 12),
+            textcoords="offset points",
+            color=color,
+            fontsize=8,
+            fontweight="bold",
+            arrowprops=dict(arrowstyle="->", color=color, lw=1.0),
+            bbox=dict(
+                boxstyle="round,pad=0.35",
+                facecolor=_LEGEND_BG, edgecolor=color, alpha=0.85,
+            ),
+            zorder=7,
+        )
+
+    ax.axhline(neckline, color=color, linestyle="--", linewidth=0.8, alpha=0.6, zorder=3)
+    ax.text(
+        x_right, neckline, " Double Bottom ⊕",
+        color=color, fontsize=7, fontweight="bold",
+        va="center", ha="left", clip_on=False, zorder=6,
+    )
+
+
+def _draw_flag(
+    ax: Any,
+    name: str,
+    details: dict,
+    date_to_idx: dict[str, int],
+    pat_idx: Optional[int],
+    x_right: float,
+) -> None:
+    """
+    Draw a Bull Flag or Bear Flag on the price panel.
+
+    Renders the pole as an annotate arrow, two parallel channel lines across the
+    flag consolidation zone, and a breakout/breakdown arrow at the flag end candle.
+    Falls back to simple axhlines at pole_start / pole_end prices if date keys are missing.
+
+    Parameters:
+        ax: Price panel Axes.
+        name: 'bull_flag' or 'bear_flag'.
+        details: Parsed details dict from patterns_daily.
+        date_to_idx: Mapping of date string → integer x-index in the chart.
+        pat_idx: Chart x-index of the pattern detection date (flag end).
+        x_right: Right x-limit used to place the edge label.
+    """
+    is_bull = name == "bull_flag"
+    color = _FLAG_BULL_COLOR if is_bull else _BEAR_COLOR
+    edge_label = "Bull Flag" if is_bull else "Bear Flag"
+    breakout_label = "Breakout ▲ Bullish" if is_bull else "Breakdown ▼ Bearish"
+    arrow_dir = 1 if is_bull else -1
+
+    pole_start_price = details.get("pole_start_price")
+    pole_end_price = details.get("pole_end_price")
+
+    pole_start_x = date_to_idx.get(details.get("pole_start_date", ""))
+    pole_end_x = date_to_idx.get(details.get("pole_end_date", ""))
+    flag_start_x = date_to_idx.get(details.get("flag_start_date", ""))
+    flag_end_x = pat_idx  # flag end IS the pattern detection date
+
+    if (pole_start_x is not None and pole_end_x is not None
+            and pole_start_price is not None and pole_end_price is not None):
+        ax.annotate(
+            "",
+            xy=(pole_end_x, pole_end_price),
+            xytext=(pole_start_x, pole_start_price),
+            arrowprops=dict(
+                arrowstyle="->", color=color, lw=1.5,
+                connectionstyle="arc3,rad=0.0",
+            ),
+            zorder=5,
+        )
+
+    if (flag_start_x is not None and flag_end_x is not None
+            and "flag_start_high" in details and "flag_end_high" in details):
+        fsh = details["flag_start_high"]
+        feh = details["flag_end_high"]
+        fsl = details["flag_start_low"]
+        fel = details["flag_end_low"]
+        ax.plot(
+            [flag_start_x, flag_end_x], [fsh, feh],
+            color=color, linewidth=1.2, zorder=4, alpha=0.85,
+        )
+        ax.plot(
+            [flag_start_x, flag_end_x], [fsl, fel],
+            color=color, linewidth=1.2, zorder=4, alpha=0.85,
+        )
+        ax.fill_between(
+            [flag_start_x, flag_end_x], [fsh, feh], [fsl, fel],
+            color=color, alpha=0.08, zorder=2,
+        )
+        if flag_end_x is not None:
+            y_anchor = feh if is_bull else fel
+            ax.annotate(
+                breakout_label,
+                xy=(flag_end_x, y_anchor),
+                xytext=(5, 12 * arrow_dir),
+                textcoords="offset points",
+                color=color,
+                fontsize=8,
+                fontweight="bold",
+                arrowprops=dict(arrowstyle="->", color=color, lw=1.0),
+                bbox=dict(
+                    boxstyle="round,pad=0.35",
+                    facecolor=_LEGEND_BG, edgecolor=color, alpha=0.85,
+                ),
+                zorder=7,
+            )
+
+    if pole_end_price is not None:
+        ax.axhline(
+            pole_end_price, color=color, linestyle="--",
+            linewidth=0.7, alpha=0.5, zorder=3,
+        )
+        ax.text(
+            x_right, pole_end_price, f" {edge_label}",
+            color=color, fontsize=7, fontweight="bold",
+            va="center", ha="left", clip_on=False, zorder=6,
+        )
+
+
+def _draw_breakout_line(
+    ax: Any,
+    details: dict,
+    pat_idx: Optional[int],
+    x_right: float,
+    label: str,
+    arrow_dir: str,
+    color: str,
+) -> None:
+    """
+    Draw a breakout, breakdown, or false breakout on the price panel.
+
+    Renders a dashed axhline at the level price, a right-edge text label,
+    and a directional annotate arrow at the breakout candle.
+
+    Parameters:
+        ax: Price panel Axes.
+        details: Parsed details dict from patterns_daily.
+        pat_idx: Chart x-index of the pattern detection date.
+        x_right: Right x-limit used to place the edge label.
+        label: Text for the right-edge label and arrow annotation.
+        arrow_dir: 'up' for bullish breakout, 'down' for bearish.
+        color: Line and annotation color.
+    """
+    level = details.get("level_price")
+    if level is None:
+        return
+
+    ax.axhline(level, color=color, linestyle="--", linewidth=0.8, alpha=0.7, zorder=3)
+    ax.text(
+        x_right, level, f" {label}",
+        color=color, fontsize=7, fontweight="bold",
+        va="center", ha="left", clip_on=False, zorder=6,
+    )
+
+    if pat_idx is not None:
+        y_offset = 12 if arrow_dir == "up" else -14
+        ax.annotate(
+            label,
+            xy=(pat_idx, level),
+            xytext=(5, y_offset),
+            textcoords="offset points",
+            color=color,
+            fontsize=8,
+            fontweight="bold",
+            arrowprops=dict(arrowstyle="->", color=color, lw=1.0),
+            bbox=dict(
+                boxstyle="round,pad=0.35",
+                facecolor=_LEGEND_BG, edgecolor=color, alpha=0.85,
+            ),
+            zorder=7,
+        )
+
+
+
 def _annotate_chart(
     fig: Any,
     axlist: list,
@@ -349,7 +641,7 @@ def _annotate_chart(
     macd_hist: pd.Series,
     macd_line: pd.Series,
     macd_signal: pd.Series,
-    patterns: list[dict] | None = None,
+    patterns: Optional[list] = None,
 ) -> None:
     """
     Apply all visual styling, labels, legends, and annotations to the chart figure.
@@ -627,47 +919,23 @@ def _annotate_chart(
                 except (json.JSONDecodeError, TypeError):
                     details = {}
 
-                lines_to_draw: list[tuple[float, str]] = []
+                pat_idx = date_to_idx.get(pat_date)
 
                 if name == "double_top":
-                    if "peak_price" in details:
-                        lines_to_draw.append((details["peak_price"], f"Double Top ⊗"))
-                    if "neckline_price" in details:
-                        lines_to_draw.append((details["neckline_price"], ""))
+                    _draw_double_top(ax_price, details, date_to_idx, x_right_price)
                 elif name == "double_bottom":
-                    if "trough_price" in details:
-                        lines_to_draw.append((details["trough_price"], f"Double Bottom ⊕"))
-                    if "neckline_price" in details:
-                        lines_to_draw.append((details["neckline_price"], ""))
+                    _draw_double_bottom(ax_price, details, date_to_idx, x_right_price)
                 elif name in ("bull_flag", "bear_flag"):
-                    flag_label = "Bull Flag" if name == "bull_flag" else "Bear Flag"
-                    if "pole_end_price" in details:
-                        lines_to_draw.append((details["pole_end_price"], flag_label))
-                    if "pole_start_price" in details:
-                        lines_to_draw.append((details["pole_start_price"], ""))
+                    _draw_flag(ax_price, name, details, date_to_idx, pat_idx, x_right_price)
                 elif name == "breakout":
-                    if "level_price" in details:
-                        lines_to_draw.append((details["level_price"], "Breakout ↑"))
+                    _draw_breakout_line(ax_price, details, pat_idx, x_right_price,
+                                        label="Breakout ↑", arrow_dir="up", color=_BULL_COLOR)
                 elif name == "breakdown":
-                    if "level_price" in details:
-                        lines_to_draw.append((details["level_price"], "Breakdown ↓"))
+                    _draw_breakout_line(ax_price, details, pat_idx, x_right_price,
+                                        label="Breakdown ↓", arrow_dir="down", color=_BEAR_COLOR)
                 elif name == "false_breakout":
-                    line_color = "#ffd700"
-                    if "level_price" in details:
-                        lines_to_draw.append((details["level_price"], "False BO"))
-                    color = "#ffd700"
-
-                for price_level, line_label in lines_to_draw:
-                    ax_price.axhline(
-                        price_level, color=color, linestyle="--",
-                        linewidth=0.8, alpha=0.7, zorder=3,
-                    )
-                    if line_label:
-                        ax_price.text(
-                            x_right_price, price_level, f" {line_label}",
-                            color=color, fontsize=7, va="center",
-                            ha="left", clip_on=False, zorder=6,
-                        )
+                    _draw_breakout_line(ax_price, details, pat_idx, x_right_price,
+                                        label="False BO", arrow_dir="down", color="#ffd700")
 
 
 def generate_chart(
