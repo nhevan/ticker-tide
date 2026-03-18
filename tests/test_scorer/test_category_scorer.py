@@ -28,7 +28,11 @@ RANGING_WEIGHTS = {
 
 class TestRollupCategory:
     def test_rollup_trend_category(self) -> None:
-        """Average of ema_alignment=+80, macd=+60, adx=+40, crossover=+70 = 62.5."""
+        """Magnitude-weighted avg of ema_alignment=+80, macd=+60, adx=+40, crossover=+70.
+
+        abs_sum = 80+60+40+70 = 250
+        weighted = (80²+60²+40²+70²)/250 = 16500/250 = 66.0
+        """
         scores = {
             "ema_alignment": 80.0,
             "macd_histogram": 60.0,
@@ -36,19 +40,44 @@ class TestRollupCategory:
             "crossover_ema_9_21": 70.0,
         }
         result = rollup_category("trend", scores)
-        assert result == pytest.approx(62.5, abs=0.1)
+        assert result == pytest.approx(66.0, abs=0.1)
 
     def test_rollup_handles_missing_components(self) -> None:
-        """None values excluded from denominator."""
+        """None values excluded; magnitude-weighted avg of ema_alignment=80, adx=60.
+
+        abs_sum = 140; weighted = (6400+3600)/140 ≈ 71.43
+        """
         scores = {"ema_alignment": 80.0, "macd_histogram": None, "adx": 60.0}
         result = rollup_category("trend", scores)
-        assert result == pytest.approx(70.0, abs=0.1)
+        assert result == pytest.approx(71.43, abs=0.1)
 
     def test_rollup_all_components_none(self) -> None:
         """All scores None → 0 (no data for this category)."""
         scores = {"ema_alignment": None, "macd_histogram": None}
         result = rollup_category("trend", scores)
         assert result == 0
+
+    def test_rollup_all_components_zero(self) -> None:
+        """All scores zero → 0 (falls back on zero abs_sum guard)."""
+        scores = {"ema_alignment": 0.0, "macd_histogram": 0.0}
+        result = rollup_category("trend", scores)
+        assert result == 0.0
+
+    def test_rollup_strong_signal_dominates_weak_opposite(self) -> None:
+        """Strong bullish signals should dominate a weak bearish outlier.
+
+        RSI=+57, Stoch=+69, CCI=+75, Williams=+69, MACD_div=-9
+        Simple avg = +52.2; magnitude-weighted ≈ +65.6
+        """
+        scores = {
+            "rsi_14": 57.0,
+            "stoch_k": 69.0,
+            "cci_20": 75.0,
+            "williams_r": 69.0,
+            "divergence_macd": -9.0,
+        }
+        result = rollup_category("momentum", scores)
+        assert result > 60.0, "Strong bullish signals should dominate the weak bearish outlier"
 
     def test_rollup_result_clamped(self) -> None:
         """Category rollup result is clamped to [-100, +100]."""
@@ -57,7 +86,7 @@ class TestRollupCategory:
         assert result <= 100
 
     def test_rollup_negative_average_clamped(self) -> None:
-        """Very negative average is clamped to -100."""
+        """Very negative magnitude-weighted average is clamped to -100."""
         scores = {"a": -150.0, "b": -200.0}
         result = rollup_category("test", scores)
         assert result >= -100
@@ -116,13 +145,13 @@ class TestComputeAllCategoryScores:
 
 class TestApplyAdaptiveWeights:
     def test_apply_adaptive_weights_trending_uniform(self) -> None:
-        """All categories at +50, trending regime → weighted score = 50 (weights cancel)."""
+        """All categories at +50, trending regime, no expansion → weighted score = 50."""
         category_scores = {cat: 50.0 for cat in TRENDING_WEIGHTS}
         result = apply_adaptive_weights(category_scores, TRENDING_WEIGHTS)
         assert result == pytest.approx(50.0, abs=0.01)
 
     def test_apply_adaptive_weights_different_scores(self) -> None:
-        """trend=+80, momentum=+20, volume=+60, rest=0, trending weights → 33.0."""
+        """trend=+80, momentum=+20, volume=+60, rest=0, trending weights, no expansion → 33.0."""
         category_scores = {
             "trend": 80.0, "momentum": 20.0, "volume": 60.0,
             "volatility": 0.0, "candlestick": 0.0, "structural": 0.0,
@@ -131,6 +160,22 @@ class TestApplyAdaptiveWeights:
         # 0.30*80 + 0.15*20 + 0.10*60 + 0 + ... = 24 + 3 + 6 = 33
         result = apply_adaptive_weights(category_scores, TRENDING_WEIGHTS)
         assert result == pytest.approx(33.0, abs=0.01)
+
+    def test_apply_adaptive_weights_expansion_factor(self) -> None:
+        """expansion_factor=1.5 widens the score: 33.0 * 1.5 = 49.5."""
+        category_scores = {
+            "trend": 80.0, "momentum": 20.0, "volume": 60.0,
+            "volatility": 0.0, "candlestick": 0.0, "structural": 0.0,
+            "sentiment": 0.0, "fundamental": 0.0, "macro": 0.0,
+        }
+        result = apply_adaptive_weights(category_scores, TRENDING_WEIGHTS, expansion_factor=1.5)
+        assert result == pytest.approx(49.5, abs=0.01)
+
+    def test_apply_adaptive_weights_expansion_clamps_at_100(self) -> None:
+        """expansion_factor does not push the result beyond +100."""
+        category_scores = {cat: 80.0 for cat in TRENDING_WEIGHTS}
+        result = apply_adaptive_weights(category_scores, TRENDING_WEIGHTS, expansion_factor=2.0)
+        assert result == pytest.approx(100.0, abs=0.01)
 
     def test_apply_adaptive_weights_ranging_vs_trending(self) -> None:
         """Same scores → ranging regime produces different weighted score than trending."""

@@ -614,7 +614,8 @@ def score_ticker(
     )
 
     # 11. Apply adaptive weights → raw daily score
-    raw_daily = apply_adaptive_weights(category_scores, regime_weights)
+    expansion_factor = config.get("scoring", {}).get("score_expansion_factor", 1.0)
+    raw_daily = apply_adaptive_weights(category_scores, regime_weights, expansion_factor)
 
     # 12. Apply sector adjustment
     daily_score = apply_sector_adjustment(raw_daily, sector_etf_score, config)

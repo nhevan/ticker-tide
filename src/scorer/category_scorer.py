@@ -25,10 +25,15 @@ logger = logging.getLogger(__name__)
 
 def rollup_category(category_name: str, component_scores: dict) -> float:
     """
-    Average non-None component scores into a single category score.
+    Roll up non-None component scores into a single category score using
+    magnitude-weighted averaging.
 
-    None values are excluded from both numerator and denominator.
-    Returns 0 if all components are None (no data available).
+    Each component is weighted by its absolute value relative to the total
+    absolute value of all components. This prevents weak or neutral components
+    from diluting strong signals — e.g. RSI=+57, Stoch=+69, CCI=+75,
+    Williams=+69, MACD_divergence=-9 yields ~+65.6 rather than +52.2.
+
+    Falls back to 0 if all components are None or all are exactly zero.
     Result is clamped to [-100, +100].
 
     Parameters:
@@ -36,16 +41,25 @@ def rollup_category(category_name: str, component_scores: dict) -> float:
         component_scores: Dict mapping component name → score (float or None).
 
     Returns:
-        Float average score clamped to [-100, +100].
+        Float magnitude-weighted average score clamped to [-100, +100].
     """
     available = [v for v in component_scores.values() if v is not None]
     if not available:
         logger.debug(f"Category '{category_name}': all components None → returning 0")
         return 0.0
 
-    avg = sum(available) / len(available)
-    clamped = max(-100.0, min(100.0, avg))
-    logger.debug(f"Category '{category_name}': {len(available)} components, avg={avg:.1f}, clamped={clamped:.1f}")
+    abs_sum = sum(abs(s) for s in available)
+    if abs_sum == 0.0:
+        logger.debug(f"Category '{category_name}': all components zero → returning 0")
+        return 0.0
+
+    # weight_i = abs(score_i) / sum(abs(scores)), so weighted avg = sum(score_i * abs(score_i)) / abs_sum
+    weighted = sum(s * abs(s) for s in available) / abs_sum
+    clamped = max(-100.0, min(100.0, weighted))
+    logger.debug(
+        f"Category '{category_name}': {len(available)} components, "
+        f"magnitude-weighted={weighted:.1f}, clamped={clamped:.1f}"
+    )
     return clamped
 
 
@@ -149,16 +163,24 @@ def compute_all_category_scores(
     }
 
 
-def apply_adaptive_weights(category_scores: dict, regime_weights: dict) -> float:
+def apply_adaptive_weights(
+    category_scores: dict,
+    regime_weights: dict,
+    expansion_factor: float = 1.0,
+) -> float:
     """
     Apply regime-based adaptive weights to category scores and produce a composite score.
 
-    Multiplies each category score by its weight, sums the result, then clamps
-    to [-100, +100].
+    Multiplies each category score by its weight, sums the result, then applies
+    an optional expansion multiplier to widen the score distribution before
+    clamping to [-100, +100].
 
     Parameters:
         category_scores: Dict mapping category names to scores (-100 to +100).
         regime_weights: Dict mapping category names to float weights (sum should = 1.0).
+        expansion_factor: Multiplier applied to the weighted sum before clamping.
+                          Values > 1.0 widen the score distribution. Default 1.0
+                          (no expansion). Loaded from config['scoring']['score_expansion_factor'].
 
     Returns:
         Float weighted composite score clamped to [-100, +100].
@@ -168,4 +190,5 @@ def apply_adaptive_weights(category_scores: dict, regime_weights: dict) -> float
         score = category_scores.get(category, 0.0)
         weighted_sum += score * weight
 
-    return max(-100.0, min(100.0, weighted_sum))
+    expanded = weighted_sum * expansion_factor
+    return max(-100.0, min(100.0, expanded))
