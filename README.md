@@ -37,7 +37,7 @@ cd /home/ec2-user/ticker-tide
 `deploy.sh` creates `.venv`, installs dependencies, initialises the database, and runs all tests. If `.env` does not exist it is created from `.env.example`.
 
 ```bash
-nano .env   # set POLYGON_API_KEY, FINNHUB_API_KEY, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+nano .env   # set POLYGON_API_KEY, FINNHUB_API_KEY, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID
 source .venv/bin/activate
 python scripts/test_api_access.py          # verify all 5 API keys
 python scripts/run_backfill.py             # one-time: load 5 years of data (~30–60 min)

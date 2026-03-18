@@ -739,7 +739,7 @@ def run_scorer(
     """
     load_env()
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    telegram_chat_id = os.environ.get("TELEGRAM_ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID")
 
     resolved_db_path = _get_db_path(db_path)
     config = load_config("scorer")
@@ -913,7 +913,7 @@ def run_historical_scoring(
     """
     load_env()
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    telegram_chat_id = os.environ.get("TELEGRAM_ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID")
 
     resolved_db_path = _get_db_path(db_path)
     config = load_config("scorer")

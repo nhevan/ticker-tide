@@ -69,11 +69,13 @@ def test_load_config_scorer() -> None:
 
 
 def test_load_config_notifier() -> None:
-    """load_config('notifier') should return telegram section with confidence_threshold=70."""
+    """load_config('notifier') should return telegram section with expected keys."""
     config = load_config("notifier")
 
     assert "telegram" in config
-    assert config["telegram"]["confidence_threshold"] == 70
+    assert config["telegram"]["confidence_threshold"] == 40
+    assert "admin_chat_id" in config["telegram"]
+    assert "subscriber_chat_ids" in config["telegram"]
 
 
 def test_load_config_database() -> None:

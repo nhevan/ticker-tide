@@ -470,7 +470,7 @@ def run_calculator(
     create_all_tables(db_conn)
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
 
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
     started_at = datetime.now(tz=timezone.utc).isoformat()

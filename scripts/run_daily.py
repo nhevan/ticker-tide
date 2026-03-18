@@ -44,6 +44,7 @@ from src.fetcher.main import run_daily_fetch  # noqa: E402
 from src.fetcher.market_calendar import is_market_open_today  # noqa: E402
 from src.notifier.main import run_notifier  # noqa: E402
 from src.notifier.telegram import (  # noqa: E402
+    get_telegram_config,
     send_market_closed_notification,
     send_pipeline_error_alert,
 )
@@ -68,8 +69,10 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
     load_env()
     notifier_config = load_config("notifier")
 
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    tg_config = get_telegram_config(notifier_config)
+    bot_token = tg_config["bot_token"]
+    admin_chat_id = tg_config["admin_chat_id"]
+    subscriber_chat_ids = tg_config["subscriber_chat_ids"]
 
     pipeline_stats: dict = {
         "start_time": datetime.now(tz=timezone.utc).isoformat(),
@@ -100,7 +103,7 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
         # Step 1: Market calendar check
         if not is_market_open_today():
             today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-            send_market_closed_notification(today, bot_token, chat_id, notifier_config)
+            send_market_closed_notification(today, bot_token, subscriber_chat_ids, notifier_config)
             pipeline_stats["status"] = "market_closed"
             return 0
 
@@ -115,7 +118,7 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
             pipeline_stats["fetcher_duration"] = time.monotonic() - phase_start
             pipeline_stats["error"] = str(exc)
             pipeline_stats["status"] = "failed"
-            send_pipeline_error_alert("fetcher", str(exc), bot_token, chat_id, notifier_config)
+            send_pipeline_error_alert("fetcher", str(exc), bot_token, admin_chat_id, notifier_config)
             return 1
 
         # Step 2b: Calculator
@@ -128,7 +131,7 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
             pipeline_stats["calculator_duration"] = time.monotonic() - phase_start
             pipeline_stats["error"] = str(exc)
             pipeline_stats["status"] = "failed"
-            send_pipeline_error_alert("calculator", str(exc), bot_token, chat_id, notifier_config)
+            send_pipeline_error_alert("calculator", str(exc), bot_token, admin_chat_id, notifier_config)
             return 1
 
         # Step 3: Scorer
@@ -151,7 +154,7 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
             scorer_failed = True
             exit_code = 1
             pipeline_stats["error"] = str(exc)
-            send_pipeline_error_alert("scorer", str(exc), bot_token, chat_id, notifier_config)
+            send_pipeline_error_alert("scorer", str(exc), bot_token, admin_chat_id, notifier_config)
 
         # Step 4: Notifier (runs even if scorer failed)
         phase_start = time.monotonic()
@@ -166,7 +169,7 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
         except Exception as exc:
             pipeline_stats["notifier_duration"] = time.monotonic() - phase_start
             exit_code = 1
-            send_pipeline_error_alert("notifier", str(exc), bot_token, chat_id, notifier_config)
+            send_pipeline_error_alert("notifier", str(exc), bot_token, admin_chat_id, notifier_config)
 
         if not scorer_failed and exit_code == 0:
             pipeline_stats["status"] = "completed"
@@ -174,7 +177,7 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
     except Exception as exc:
         pipeline_stats["status"] = "failed"
         pipeline_stats["error"] = str(exc)
-        send_pipeline_error_alert("pipeline", str(exc), bot_token, chat_id, notifier_config)
+        send_pipeline_error_alert("pipeline", str(exc), bot_token, admin_chat_id, notifier_config)
         exit_code = 1
 
     finally:

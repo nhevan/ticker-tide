@@ -20,7 +20,6 @@ Flow:
 from __future__ import annotations
 
 import logging
-import os
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -38,7 +37,7 @@ from src.notifier.formatter import (
     format_heartbeat,
     format_no_signals_report,
 )
-from src.notifier.telegram import send_daily_report, send_heartbeat
+from src.notifier.telegram import get_telegram_config, send_daily_report, send_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -168,15 +167,17 @@ def run_notifier(
     Returns:
         Summary dict with keys: scoring_date, bullish_count, bearish_count,
         neutral_count, flips_count, tickers_reasoned, telegram_sent,
-        duration_seconds. Returns {"skipped": True, "reason": str} when
-        pre-flight checks prevent execution.
+        subscribers_notified, duration_seconds. Returns {"skipped": True,
+        "reason": str} when pre-flight checks prevent execution.
     """
     load_env()
     config = load_config("notifier")
     db_config = load_config("database")
 
-    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    tg_config = get_telegram_config(config)
+    bot_token = tg_config["bot_token"]
+    admin_chat_id = tg_config["admin_chat_id"]
+    subscriber_chat_ids = tg_config["subscriber_chat_ids"]
 
     resolved_db_path = db_path or db_config["path"]
     db_conn = get_connection(resolved_db_path)
@@ -241,13 +242,13 @@ def run_notifier(
             "display_timezone": config.get("telegram", {}).get("display_timezone", "Europe/Amsterdam"),
         }
 
-    # Format report
+    # Format report (without heartbeat — heartbeat goes separately to admin)
     has_signals = bool(results.get("bullish") or results.get("bearish") or results.get("flips"))
     if has_signals:
-        messages = format_full_report(results, pipeline_stats, config)
+        messages = format_full_report(results, pipeline_stats, config, include_heartbeat=False)
     else:
         messages = format_no_signals_report(
-            results.get("market_context_summary", ""), pipeline_stats, config
+            results.get("market_context_summary", ""), pipeline_stats, config, include_heartbeat=False
         )
 
     # Heartbeat (use final duration)
@@ -255,15 +256,25 @@ def run_notifier(
     heartbeat_stats = {**pipeline_stats, "notifier_duration": final_duration}
     heartbeat_text = format_heartbeat(heartbeat_stats)
 
-    # Send via Telegram
+    # Send signal report to all subscribers (without heartbeat)
+    send_result: dict = {"sent": 0, "failed": 0, "total_subscribers": 0}
     telegram_sent = False
     try:
-        telegram_sent = send_daily_report(messages, telegram_token, telegram_chat_id)
-        include_heartbeat = config.get("telegram", {}).get("include_heartbeat", True)
-        if include_heartbeat:
-            send_heartbeat(heartbeat_text, telegram_token, telegram_chat_id)
+        if not subscriber_chat_ids:
+            logger.warning("phase=notifier run_notifier: No subscribers configured — skipping signal report")
+        else:
+            send_result = send_daily_report(messages, bot_token, subscriber_chat_ids)
+            telegram_sent = send_result["sent"] > 0
     except Exception as exc:
         logger.error(f"phase=notifier date={scoring_date} Telegram send failed: {exc}")
+
+    # Send heartbeat to admin only
+    try:
+        include_heartbeat = config.get("telegram", {}).get("include_heartbeat", True)
+        if include_heartbeat and admin_chat_id:
+            send_heartbeat(heartbeat_text, bot_token, admin_chat_id)
+    except Exception as exc:
+        logger.error(f"phase=notifier date={scoring_date} Heartbeat send failed: {exc}")
 
     # Finalise
     completed_at = _utc_now_iso()
@@ -289,7 +300,7 @@ def run_notifier(
 
     logger.info(
         f"phase=notifier date={scoring_date} Completed in {total_duration:.1f}s "
-        f"telegram_sent={telegram_sent}"
+        f"telegram_sent={telegram_sent} subscribers_notified={send_result['sent']}"
     )
 
     return {
@@ -300,5 +311,6 @@ def run_notifier(
         "flips_count": len(results.get("flips", [])),
         "tickers_reasoned": len(results.get("bullish", [])) + len(results.get("bearish", [])),
         "telegram_sent": telegram_sent,
+        "subscribers_notified": send_result["sent"],
         "duration_seconds": total_duration,
     }

@@ -180,7 +180,7 @@ def run_full_backfill(
     polygon_api_key = os.getenv("POLYGON_API_KEY", "")
     finnhub_api_key = os.getenv("FINNHUB_API_KEY", "")
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
 
     finnhub_client = FinnhubClient(finnhub_api_key)
 

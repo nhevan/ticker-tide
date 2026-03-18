@@ -5,7 +5,9 @@
     "temperature": 0.3
   },
   "telegram": {
-    "confidence_threshold": 70,
+    "admin_chat_id": "",
+    "subscriber_chat_ids": [],
+    "confidence_threshold": 40,
     "always_include_flips": true,
     "max_tickers_per_section": 10,
     "include_heartbeat": true,

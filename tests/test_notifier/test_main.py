@@ -15,12 +15,20 @@ SCORING_DATE = "2025-01-15"
 SAMPLE_CONFIG = {
     "ai_reasoner": {"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "temperature": 0.3},
     "telegram": {
-        "confidence_threshold": 70,
+        "admin_chat_id": "admin-chat",
+        "subscriber_chat_ids": ["subscriber-chat"],
+        "confidence_threshold": 40,
         "always_include_flips": True,
         "max_tickers_per_section": 10,
         "include_heartbeat": True,
         "display_timezone": "Europe/Amsterdam",
     },
+}
+
+SAMPLE_TELEGRAM_CONFIG = {
+    "bot_token": "test-token",
+    "admin_chat_id": "admin-chat",
+    "subscriber_chat_ids": ["subscriber-chat"],
 }
 
 SAMPLE_RESULTS = {
@@ -91,13 +99,17 @@ def test_run_notifier_happy_path(db_connection, tmp_path, mocker):
     mocker.patch("src.notifier.main.load_env")
     mocker.patch("src.notifier.main.load_config", return_value=SAMPLE_CONFIG)
     mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
     mock_reasoner = mocker.patch(
         "src.notifier.main.reason_all_qualifying_tickers",
         return_value=SAMPLE_RESULTS,
     )
     mocker.patch("src.notifier.main.format_full_report", return_value=["Report text"])
     mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat text")
-    mock_send = mocker.patch("src.notifier.main.send_daily_report", return_value=True)
+    mock_send = mocker.patch(
+        "src.notifier.main.send_daily_report",
+        return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
+    )
     mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
     # Capture pipeline event writes so we can verify without the closed connection
     mock_write_event = mocker.patch("src.notifier.main.write_pipeline_event")
@@ -109,6 +121,7 @@ def test_run_notifier_happy_path(db_connection, tmp_path, mocker):
     assert mock_reasoner.called
     assert mock_send.called
     assert result.get("telegram_sent") is True
+    assert result.get("subscribers_notified") == 1
 
     # Verify notifier_done completed event was written
     completed_calls = [
@@ -132,6 +145,7 @@ def test_run_notifier_no_qualifying_tickers(db_connection, tmp_path, mocker):
     mocker.patch("src.notifier.main.load_env")
     mocker.patch("src.notifier.main.load_config", return_value=SAMPLE_CONFIG)
     mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
     mocker.patch(
         "src.notifier.main.reason_all_qualifying_tickers",
         return_value=EMPTY_RESULTS,
@@ -142,7 +156,10 @@ def test_run_notifier_no_qualifying_tickers(db_connection, tmp_path, mocker):
     )
     mock_full = mocker.patch("src.notifier.main.format_full_report")
     mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat")
-    mocker.patch("src.notifier.main.send_daily_report", return_value=True)
+    mocker.patch(
+        "src.notifier.main.send_daily_report",
+        return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
+    )
     mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
 
     from src.notifier.main import run_notifier
@@ -167,6 +184,7 @@ def test_run_notifier_ai_failure(db_connection, tmp_path, mocker):
     mocker.patch("src.notifier.main.load_env")
     mocker.patch("src.notifier.main.load_config", return_value=SAMPLE_CONFIG)
     mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
     mocker.patch(
         "src.notifier.main.reason_all_qualifying_tickers",
         side_effect=Exception("Claude API error"),
@@ -174,7 +192,10 @@ def test_run_notifier_ai_failure(db_connection, tmp_path, mocker):
     mocker.patch("src.notifier.main.format_no_signals_report", return_value=["Fallback."])
     mocker.patch("src.notifier.main.format_full_report", return_value=["Fallback."])
     mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat")
-    mock_send = mocker.patch("src.notifier.main.send_daily_report", return_value=True)
+    mock_send = mocker.patch(
+        "src.notifier.main.send_daily_report",
+        return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
+    )
     mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
 
     from src.notifier.main import run_notifier
@@ -200,13 +221,17 @@ def test_run_notifier_telegram_failure(db_connection, tmp_path, mocker):
     mocker.patch("src.notifier.main.load_env")
     mocker.patch("src.notifier.main.load_config", return_value=SAMPLE_CONFIG)
     mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
     mocker.patch(
         "src.notifier.main.reason_all_qualifying_tickers",
         return_value=SAMPLE_RESULTS,
     )
     mocker.patch("src.notifier.main.format_full_report", return_value=["Report"])
     mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat")
-    mocker.patch("src.notifier.main.send_daily_report", return_value=False)
+    mocker.patch(
+        "src.notifier.main.send_daily_report",
+        return_value={"sent": 0, "failed": 1, "total_subscribers": 1},
+    )
     mocker.patch("src.notifier.main.send_heartbeat", return_value=False)
     mock_write_event = mocker.patch("src.notifier.main.write_pipeline_event")
 
@@ -282,13 +307,17 @@ def test_run_notifier_logs_pipeline_run(db_connection, tmp_path, mocker):
     mocker.patch("src.notifier.main.load_env")
     mocker.patch("src.notifier.main.load_config", return_value=SAMPLE_CONFIG)
     mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
     mocker.patch(
         "src.notifier.main.reason_all_qualifying_tickers",
         return_value=SAMPLE_RESULTS,
     )
     mocker.patch("src.notifier.main.format_full_report", return_value=["Report"])
     mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat")
-    mocker.patch("src.notifier.main.send_daily_report", return_value=True)
+    mocker.patch(
+        "src.notifier.main.send_daily_report",
+        return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
+    )
     mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
     mock_log = mocker.patch("src.notifier.main.log_pipeline_run")
 

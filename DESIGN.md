@@ -805,12 +805,26 @@ Flip line format: `{TICKER}: {prev} → {new} ({confidence:.0f}%)`
 Wraps `send_telegram_message` from `src/common/progress.py` with report-specific helpers.
 Each chunk in a multi-message report is sent with a 0.5s delay to maintain ordering.
 
-| Function | Purpose |
-|---|---|
-| `send_daily_report(messages, bot_token, chat_id)` | Send a list of message chunks; returns True if all succeeded. |
-| `send_heartbeat(heartbeat_text, bot_token, chat_id)` | Send the heartbeat as a separate message. |
-| `send_market_closed_notification(date, bot_token, chat_id, config)` | Send market-closed notification. |
-| `send_pipeline_error_alert(phase, error, bot_token, chat_id, config)` | Send pipeline failure alert. |
+Chat IDs are loaded via `get_telegram_config(config)`, which checks environment variables first
+and falls back to `config/notifier.json` values. `TELEGRAM_CHAT_ID` is accepted as a
+backward-compatible alias for `TELEGRAM_ADMIN_CHAT_ID`.
+
+**Message routing:**
+
+| Message type | Recipients | Function |
+|---|---|---|
+| Daily signal report | All `subscriber_chat_ids` | `send_daily_report` |
+| Market closed notification | All `subscriber_chat_ids` | `send_market_closed_notification` |
+| Pipeline heartbeat | `admin_chat_id` only | `send_heartbeat` |
+| Pipeline error alerts | `admin_chat_id` only | `send_pipeline_error_alert` |
+
+| Function | Signature | Returns |
+|---|---|---|
+| `get_telegram_config(config)` | `config: dict` | `{bot_token, admin_chat_id, subscriber_chat_ids}` |
+| `send_daily_report(messages, bot_token, subscriber_chat_ids)` | Sends each message to all subscribers; 0.5s delay between chunks. | `{sent, failed, total_subscribers}` |
+| `send_heartbeat(heartbeat_text, bot_token, admin_chat_id)` | Sends heartbeat to admin only. | `bool` |
+| `send_market_closed_notification(date, bot_token, subscriber_chat_ids, config)` | Sends to all subscribers. | `{sent, failed}` |
+| `send_pipeline_error_alert(phase, error, bot_token, admin_chat_id, config)` | Sends to admin only. | `bool` |
 
 ### 13.4 Notifier Orchestrator (`src/notifier/main.py`)
 
@@ -823,7 +837,11 @@ Pre-flight checks: verifies `scorer_done` exists; skips if `notifier_done` alrea
 On AI failure (any exception), falls back to an empty results dict and still sends a minimal report.
 On Telegram failure, logs the error but writes `notifier_done=completed` anyway.
 
-Returns: `{scoring_date, bullish_count, bearish_count, neutral_count, flips_count, tickers_reasoned, telegram_sent, duration_seconds}`.
+Sends the signal report (without heartbeat) to all `subscriber_chat_ids`.
+Sends the heartbeat to `admin_chat_id` only.
+If no subscribers are configured, logs a warning but does not crash.
+
+Returns: `{scoring_date, bullish_count, bearish_count, neutral_count, flips_count, tickers_reasoned, telegram_sent, subscribers_notified, duration_seconds}`.
 
 ### 13.5 Daily Pipeline Script (`scripts/run_daily.py`)
 
@@ -831,8 +849,8 @@ The main cron entry point. Runs all 4 phases in sequence with the following erro
 - Fetcher or Calculator failure → stop pipeline, exit 1
 - Scorer failure → run notifier anyway (to report the error), exit 1
 - Notifier failure → log error, exit 1
-- Any phase failure → send Telegram alert via `send_pipeline_error_alert`
-- Market closed → send notification, exit 0
+- Any phase failure → send Telegram alert to `admin_chat_id` via `send_pipeline_error_alert`
+- Market closed → send notification to all `subscriber_chat_ids`, exit 0
 
 Timing stats are collected per phase and passed to `run_notifier` for the heartbeat message.
 

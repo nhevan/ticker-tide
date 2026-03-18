@@ -12,7 +12,10 @@ All config files live in `config/`. All thresholds, periods, and URLs are read f
 | `FINNHUB_API_KEY` | Yes | [finnhub.io](https://finnhub.io) → Dashboard → API Key |
 | `ANTHROPIC_API_KEY` | Yes | [console.anthropic.com](https://console.anthropic.com) → API Keys |
 | `TELEGRAM_BOT_TOKEN` | Yes | Telegram → @BotFather → `/newbot` |
-| `TELEGRAM_CHAT_ID` | Yes | Send a message to your bot, then call `https://api.telegram.org/bot<TOKEN>/getUpdates` and read `message.chat.id` |
+| `TELEGRAM_ADMIN_CHAT_ID` | Yes | Admin chat ID — receives heartbeats, error alerts, and progress updates. Send a message to your bot, then call `https://api.telegram.org/bot<TOKEN>/getUpdates` and read `message.chat.id` |
+| `TELEGRAM_SUBSCRIBER_CHAT_IDS` | No | Comma-separated list of chat IDs that receive the daily signal report and market-closed notifications (e.g. `"111,222,333"`). If omitted, only the admin receives the signal report. |
+
+**Backward compatibility:** `TELEGRAM_CHAT_ID` is still accepted as a fallback for `TELEGRAM_ADMIN_CHAT_ID`. Existing `.env` files without the new variables continue to work — the admin becomes the only subscriber.
 
 Template: `.env.example`
 
@@ -287,11 +290,26 @@ Applied to the base confidence value (`|final_score|`). Final confidence is clam
 | `ai_reasoner.model` | string | `"claude-sonnet-4-20250514"` | Anthropic model ID |
 | `ai_reasoner.max_tokens` | int | `4096` | Max tokens per Claude response |
 | `ai_reasoner.temperature` | float | `0.3` | Sampling temperature (lower = more deterministic) |
-| `telegram.confidence_threshold` | int | `70` | Minimum confidence to include a ticker in the Telegram report |
+| `telegram.admin_chat_id` | string | `""` | Chat ID that receives heartbeats, error alerts, and pipeline progress. Overridden by `TELEGRAM_ADMIN_CHAT_ID` env var. |
+| `telegram.subscriber_chat_ids` | array | `[]` | List of chat IDs that receive the daily signal report and market-closed notifications. Overridden by `TELEGRAM_SUBSCRIBER_CHAT_IDS` env var (comma-separated). If empty, `admin_chat_id` is used as the sole subscriber. |
+| `telegram.confidence_threshold` | int | `40` | Minimum confidence to include a ticker in the Telegram report |
 | `telegram.always_include_flips` | boolean | `true` | Always include signal flips regardless of confidence |
 | `telegram.max_tickers_per_section` | int | `10` | Max tickers per BULLISH/BEARISH/Flips section (controls API cost) |
-| `telegram.include_heartbeat` | boolean | `true` | Send a pipeline summary heartbeat message even when no signals qualify |
+| `telegram.include_heartbeat` | boolean | `true` | Send a pipeline summary heartbeat to `admin_chat_id` after each run |
 | `telegram.display_timezone` | string | `"Europe/Amsterdam"` | Timezone for timestamps shown in Telegram messages |
+
+**Message routing:**
+
+| Message type | Recipients |
+|---|---|
+| Daily signal report | All `subscriber_chat_ids` (without heartbeat section) |
+| Market closed notification | All `subscriber_chat_ids` |
+| Pipeline heartbeat | `admin_chat_id` only |
+| Progress updates (backfill, calculator) | `admin_chat_id` only |
+| Error alerts | `admin_chat_id` only |
+| Verification reports | `admin_chat_id` only |
+
+Note: include `admin_chat_id` in `subscriber_chat_ids` if the admin also wants to receive the signal report.
 
 ---
 

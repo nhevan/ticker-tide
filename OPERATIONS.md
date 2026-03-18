@@ -160,7 +160,7 @@ conn.close()
 | `fetcher_done` missing from `pipeline_events` | Polygon API down, key expired, or network issue | `python scripts/test_api_access.py`; check `alerts_log` for the error message |
 | `calculator_done` missing | OOM, corrupt OHLCV data, or `fetcher_done` missing | Check available RAM (`free -h`); if data issue run `python scripts/run_backfill.py --ticker <TICKER> --phase ohlcv --force` |
 | Scores all NEUTRAL | Signal thresholds too tight or score compression | Check `scorer.json signal_thresholds` (default `bullish: 20, bearish: -20`); also check `scoring.score_expansion_factor`; re-run `python scripts/run_scorer.py --historical` after changing |
-| No Telegram message received | Invalid bot token or wrong chat_id | `python scripts/test_api_access.py`; confirm `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`; send `/start` to the bot |
+| No Telegram message received | Invalid bot token or wrong admin chat ID | `python scripts/test_api_access.py`; confirm `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_CHAT_ID` in `.env`; send `/start` to the bot |
 | Pipeline skips with "already completed" | Phase already ran today | Add `--force` to the script: `python scripts/run_daily.py --force` |
 | `database is locked` error | Another process has the DB open | `lsof data/signals.db` to find the PID; kill it; WAL mode allows concurrent reads but only one writer |
 | New ticker shows no data after adding | Backfill not run for new ticker | See "Adding a Ticker" below |

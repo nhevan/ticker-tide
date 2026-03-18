@@ -290,3 +290,46 @@ def test_telegram_message_too_long_is_truncated(mocker):
     sent_text = payload.get("text", "")
     assert len(sent_text) <= 4096
     assert sent_text.endswith("...")
+
+
+# ---------------------------------------------------------------------------
+# Multi-subscriber routing — admin vs. subscriber distinction
+# ---------------------------------------------------------------------------
+
+
+def test_progress_tracker_uses_admin_chat_id(mocker):
+    """ProgressTracker progress messages should go to admin_chat_id, not subscriber list."""
+    mock_response = mocker.MagicMock()
+    mock_response.json.return_value = {"ok": True, "result": {"message_id": 77}}
+    mock_response.raise_for_status = mocker.MagicMock()
+    mocker.patch("httpx.post", return_value=mock_response)
+
+    admin_chat_id = "admin_only_chat"
+    subscriber_chat_ids = ["admin_only_chat", "sub_chat_1", "sub_chat_2"]
+
+    # ProgressTracker sends to a single chat_id — callers pass admin_chat_id
+    tracker = ProgressTracker(phase="backfill_ohlcv", tickers=TICKERS)
+    msg_id = send_telegram_message("token", admin_chat_id, tracker.format_progress_message())
+
+    import httpx
+    call_args = httpx.post.call_args
+    payload = call_args.kwargs.get("json", {})
+
+    # Message went to admin_chat_id, not to subscriber_chat_ids
+    assert payload.get("chat_id") == admin_chat_id
+    assert payload.get("chat_id") not in ["sub_chat_1", "sub_chat_2"]
+    assert msg_id == 77
+
+
+def test_send_telegram_message_still_works_with_single_chat_id(mocker):
+    """Low-level send_telegram_message accepts a single chat_id — no signature change."""
+    mock_response = mocker.MagicMock()
+    mock_response.json.return_value = {"ok": True, "result": {"message_id": 42}}
+    mock_response.raise_for_status = mocker.MagicMock()
+    mock_post = mocker.patch("httpx.post", return_value=mock_response)
+
+    result = send_telegram_message("bot_token", "single_chat_id", "Hello")
+
+    assert result == 42
+    payload = mock_post.call_args.kwargs.get("json", {})
+    assert payload["chat_id"] == "single_chat_id"

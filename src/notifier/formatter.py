@@ -324,19 +324,23 @@ def _split_sections_into_messages(sections: list[str]) -> list[str]:
     return messages or [""]
 
 
-def format_full_report(results: dict, pipeline_stats: dict, config: dict) -> list[str]:
+def format_full_report(
+    results: dict, pipeline_stats: dict, config: dict, include_heartbeat: bool = True
+) -> list[str]:
     """
     Assemble and return the full daily signal report as a list of Telegram messages.
 
     Sections are assembled in order: header, signal distribution, daily summary,
-    bullish, bearish, flips, market context, heartbeat. If the assembled text
-    exceeds 4096 characters it is split at section boundaries.
+    bullish, bearish, flips, market context, and optionally heartbeat. If the
+    assembled text exceeds 4096 characters it is split at section boundaries.
 
     Parameters:
         results: Dict from reason_all_qualifying_tickers with keys: bullish,
             bearish, flips, daily_summary, market_context_summary.
         pipeline_stats: Dict with timing and ticker counts.
         config: Notifier config dict (reads telegram.display_timezone).
+        include_heartbeat: When True (default), appends the pipeline heartbeat
+            section. Pass False to omit it (e.g. for subscriber-only messages).
 
     Returns:
         List of message strings, each at most 4096 characters.
@@ -384,8 +388,9 @@ def format_full_report(results: dict, pipeline_stats: dict, config: dict) -> lis
     if context_section:
         sections.append(context_section)
 
-    heartbeat = format_heartbeat(stats_with_tz)
-    sections.append(f"\n{heartbeat}")
+    if include_heartbeat:
+        heartbeat = format_heartbeat(stats_with_tz)
+        sections.append(f"\n{heartbeat}")
 
     full_text = "\n".join(s for s in sections if s)
     if len(full_text) <= MAX_TELEGRAM_LENGTH:
@@ -394,7 +399,9 @@ def format_full_report(results: dict, pipeline_stats: dict, config: dict) -> lis
     return _split_sections_into_messages(sections)
 
 
-def format_no_signals_report(market_context: str, pipeline_stats: dict, config: dict) -> list[str]:
+def format_no_signals_report(
+    market_context: str, pipeline_stats: dict, config: dict, include_heartbeat: bool = True
+) -> list[str]:
     """
     Format a minimal report for days with no qualifying signals or flips.
 
@@ -402,6 +409,8 @@ def format_no_signals_report(market_context: str, pipeline_stats: dict, config: 
         market_context: Market context summary text.
         pipeline_stats: Dict with timing and ticker counts.
         config: Notifier config dict.
+        include_heartbeat: When True (default), appends the pipeline heartbeat
+            section. Pass False to omit it (e.g. for subscriber-only messages).
 
     Returns:
         List of message strings (usually just one).
@@ -419,7 +428,6 @@ def format_no_signals_report(market_context: str, pipeline_stats: dict, config: 
     header = format_header(scoring_date, display_timezone)
     dist = format_signal_distribution(bullish_count, bearish_count, neutral_count)
     context_section = format_market_context_section(market_context)
-    heartbeat = format_heartbeat(stats_with_tz)
 
     parts = [
         f"{header}\n{dist}",
@@ -427,7 +435,10 @@ def format_no_signals_report(market_context: str, pipeline_stats: dict, config: 
     ]
     if context_section:
         parts.append(context_section)
-    parts.append(f"\n{heartbeat}")
+
+    if include_heartbeat:
+        heartbeat = format_heartbeat(stats_with_tz)
+        parts.append(f"\n{heartbeat}")
 
     full_text = "\n".join(parts)
     if len(full_text) <= MAX_TELEGRAM_LENGTH:

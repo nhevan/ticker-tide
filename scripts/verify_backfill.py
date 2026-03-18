@@ -115,10 +115,11 @@ def _print_report(report: VerificationReport, quiet: bool) -> None:
 
 def _send_telegram_report(report: VerificationReport) -> None:
     """
-    Send the verification report to Telegram if credentials are configured.
+    Send the verification report to the admin Telegram chat if credentials are configured.
 
-    Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from the environment. If
-    either is missing, logs a warning and skips the notification.
+    Reads TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_CHAT_ID (or TELEGRAM_CHAT_ID as a
+    backward-compatible fallback) from the environment. If either is missing, logs a
+    warning and skips the notification.
 
     Args:
         report: The VerificationReport to send.
@@ -127,11 +128,11 @@ def _send_telegram_report(report: VerificationReport) -> None:
     logger = logging.getLogger(__name__)
 
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    chat_id = os.environ.get("TELEGRAM_ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID")
 
     if not bot_token or not chat_id:
         logger.warning(
-            "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — skipping Telegram notification"
+            "TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID not set — skipping Telegram notification"
         )
         return
 
