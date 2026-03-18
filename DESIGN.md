@@ -727,6 +727,52 @@ All computed using the `ta` library from OHLCV data. Parameters configurable in 
 - Months 13-60: weekly scores
 
 ## 13. Notifier
-- Claude API (Anthropic) for AI reasoning
-- Telegram: confidence > 70% OR signal flips (always)
+
+### 13.1 AI Reasoner (`src/notifier/ai_reasoner.py`)
+
+The AI reasoning layer takes structured scoring output and generates human-readable analysis using the
+Claude API (Anthropic). Claude **reasons** about the signals — identifying confluences, flagging
+contradictions, and providing actionable insight — rather than just reformatting data.
+
+All config comes from `config/notifier.json → ai_reasoner` (model, max_tokens, temperature) and
+`config/notifier.json → telegram` (confidence_threshold, max_tickers_per_section).
+
+**Public functions:**
+
+| Function | Purpose |
+|---|---|
+| `build_ticker_context(db_conn, ticker, score, scoring_date)` | Queries all relevant DB data (indicators, patterns, divergences, crossovers, fundamentals, news, short interest, signal flips) and computes Fibonacci + RS on-the-fly. Returns a richly formatted string for Claude. |
+| `build_market_context(db_conn, scoring_date)` | Builds overall market context: VIX level/interpretation, SPY/QQQ trend, 10Y treasury yield, sector leaders/laggards. |
+| `build_prompt_for_ticker(ticker_context, market_context, is_flip)` | Assembles the full Claude prompt with system role, format instruction (2-4 sentences), and optional flip-change instruction. |
+| `build_prompt_for_daily_summary(bullish, bearish, flips, market_context)` | Builds prompt for a cohesive 3-5 sentence daily briefing covering all qualifying tickers. |
+| `call_claude(prompt, config)` | Calls `anthropic.Anthropic().messages.create()`; retries on `RateLimitError` (max 3 attempts, exponential backoff via tenacity); returns fallback string on any error — never crashes the pipeline. |
+| `generate_ticker_reasoning(db_conn, ticker, score, market_context, config, is_flip)` | Orchestrates context → prompt → Claude for one ticker. Returns Claude's analysis string. |
+| `generate_daily_summary(db_conn, bullish, bearish, flips, market_context, config)` | Calls Claude for the daily summary. Returns `"No significant signals today."` if no qualifying tickers. |
+| `get_qualifying_tickers(db_conn, scoring_date, config)` | Queries scores_daily and signal_flips. Buckets into bullish (≥ confidence threshold), bearish (≥ threshold), flips (always included). Caps each bucket at `max_tickers_per_section`. |
+| `reason_all_qualifying_tickers(db_conn, scoring_date, config)` | Orchestrates the full reasoning pass: market context once, per-ticker analysis for all qualifying tickers, daily summary. Returns structured dict. |
+
+**Return value of `reason_all_qualifying_tickers`:**
+```python
+{
+    "bullish": [{"ticker": str, "score": dict, "reasoning": str}, ...],
+    "bearish": [{"ticker": str, "score": dict, "reasoning": str}, ...],
+    "flips":   [{"ticker": str, "flip": dict, "score": dict, "reasoning": str}, ...],
+    "daily_summary": str,
+    "market_context_summary": str,
+}
+```
+
+**Error handling:** `call_claude` wraps all API calls in try/except. On `anthropic.APIError`,
+`anthropic.APIConnectionError`, or any other exception, it logs the error and returns
+`"AI analysis unavailable — see raw scores above."` so the pipeline always continues.
+
+**VIX interpretation thresholds (used in market context):**
+- calm: VIX < 15
+- normal: 15 ≤ VIX < 20
+- elevated: 20 ≤ VIX < 25
+- high: 25 ≤ VIX < 30
+- extreme: VIX ≥ 30
+
+### 13.2 Telegram Notifier
+- Confidence > 70% OR signal flips (always included)
 - Daily summary + pipeline heartbeat

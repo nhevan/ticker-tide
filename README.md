@@ -188,7 +188,47 @@ The scorer:
 5. Detects signal flips (direction changes) and records them in `signal_flips`
 6. Saves results to `scores_daily` and sends a Telegram summary
 
-### 6. Run the daily pipeline (or set up cron)
+### 6. AI Reasoning (Phase 4 — generate human-readable signal analysis)
+
+After the scorer completes, the AI reasoner calls Claude to explain each qualifying signal. It
+identifies confluences, flags contradictions, and produces actionable 2-4 sentence analyses.
+
+**Qualifying tickers** (controlled by `config/notifier.json`):
+- BULLISH or BEARISH with confidence ≥ 70% — individual per-ticker analysis
+- Signal flips — always included regardless of confidence
+- Each section capped at `max_tickers_per_section` (default 10) to control API costs
+
+**Output of `reason_all_qualifying_tickers()`:**
+```python
+{
+    "bullish": [{"ticker": str, "score": dict, "reasoning": str}, ...],
+    "bearish": [{"ticker": str, "score": dict, "reasoning": str}, ...],
+    "flips":   [{"ticker": str, "flip": dict, "score": dict, "reasoning": str}, ...],
+    "daily_summary": str,
+    "market_context_summary": str,
+}
+```
+
+**Config (`config/notifier.json`):**
+```json
+{
+  "ai_reasoner": {
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 4096,
+    "temperature": 0.3
+  },
+  "telegram": {
+    "confidence_threshold": 70,
+    "max_tickers_per_section": 10,
+    "always_include_flips": true
+  }
+}
+```
+
+**Error handling:** Claude API failures return `"AI analysis unavailable — see raw scores above."` —
+the pipeline never crashes due to an AI error.
+
+### 7. Run the daily pipeline (or set up cron)
 
 ```bash
 python scripts/run_daily.py
