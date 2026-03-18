@@ -118,7 +118,10 @@ src/
     ├── ai_reasoner.py
     ├── formatter.py
     ├── sentiment_enrichment.py  # Finnhub sentiment enrichment via Claude Haiku
-    └── telegram.py
+    ├── telegram.py
+    ├── chart_generator.py       # 4-panel mplfinance chart for /detail command
+    ├── detail_command.py        # /detail Telegram bot command handler
+    └── bot.py                   # Telegram bot long-polling listener
 
 scripts/
 ├── run_daily.py               # cron entry point — all 4 phases in sequence
@@ -126,6 +129,7 @@ scripts/
 ├── run_calculator.py
 ├── run_scorer.py
 ├── run_notifier.py
+├── run_bot.py                 # start the interactive Telegram bot listener
 ├── enrich_finnhub_sentiment.py  # backfill NULL-sentiment Finnhub articles
 ├── setup_db.py                # initialise schema (idempotent)
 ├── test_api_access.py         # verify all 5 API keys
@@ -145,6 +149,38 @@ scripts/
 | `yfinance` | Fundamentals, financial ratios, VIX, earnings calendar |
 | `finnhub-python` | Supplementary news (free tier, 60 calls/min) |
 | `anthropic` | Claude API for signal reasoning |
-| `python-telegram-bot` | Telegram message delivery |
+| `python-telegram-bot` | Telegram message delivery and interactive bot |
+| `mplfinance` | 4-panel technical chart generation for /detail command |
 | `sqlite3` | Database (stdlib, WAL mode) |
 | `pytest` / `pytest-mock` | Tests |
+
+## Telegram Bot (Interactive Commands)
+
+The pipeline sends daily reports automatically. A separate interactive bot process handles on-demand commands.
+
+### Available Commands
+
+| Command | Description |
+|---|---|
+| `/detail AAPL` | Deep analysis for AAPL with 30-day chart (default) |
+| `/detail AAPL 90` | Deep analysis with 90-day chart |
+| `/help` | List all available commands |
+
+### What `/detail` Returns
+
+Three messages sent in sequence:
+
+1. **Technical chart** (4-panel PNG): Candlestick + EMA 9/21/50 + Bollinger Bands + Fibonacci S/R levels | Volume | RSI + divergences | MACD
+2. **AI analyst take**: Claude-generated 3–4 paragraph deep analysis with specific price levels and triggers
+3. **Raw data breakdown**: Scoring chain, category scores, indicators, patterns, divergences, Fibonacci, sentiment, fundamentals, macro, key levels, signal triggers, 30-day signal history, earnings warning, and sector peer comparison
+
+### Starting the Bot
+
+```bash
+tmux new -s bot
+source .venv/bin/activate
+python scripts/run_bot.py
+# Ctrl+B, D to detach
+```
+
+See [OPERATIONS.md](OPERATIONS.md) for systemd service setup.

@@ -21,5 +21,14 @@
     "max_tickers_per_section": 10,
     "include_heartbeat": true,
     "display_timezone": "Europe/Amsterdam"
+  },
+  "detail_command": {
+    "default_chart_days": 30,
+    "max_chart_days": 180,
+    "chart_style": "nightclouds",
+    "chart_figsize": [14, 10],
+    "sr_levels_to_show": 3,
+    "signal_history_days": 30,
+    "peer_count": 5
   }
 }

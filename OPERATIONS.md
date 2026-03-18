@@ -391,3 +391,85 @@ To run a manual backfill inside the container:
 ```bash
 docker exec -it ticker-tide python scripts/run_backfill.py
 ```
+
+---
+
+## Telegram Bot
+
+The interactive bot handles on-demand `/detail` commands. It runs as a **separate long-polling process** — independent from the daily pipeline cron job.
+
+### Starting the Bot
+
+```bash
+tmux new -s bot
+source .venv/bin/activate
+python scripts/run_bot.py
+# Ctrl+B, D to detach
+```
+
+### Available Commands
+
+- `/detail AAPL` — deep analysis with 30-day chart (default)
+- `/detail AAPL 90` — deep analysis with 90-day chart (max: 180 days)
+- `/help` — list commands
+
+### Running as a Service (Optional)
+
+```bash
+sudo tee /etc/systemd/system/ticker-tide-bot.service << 'SERVICE'
+[Unit]
+Description=Ticker Tide Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/ticker-tide
+ExecStart=/home/ec2-user/ticker-tide/.venv/bin/python scripts/run_bot.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/ec2-user/ticker-tide/.env
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+sudo systemctl enable ticker-tide-bot
+sudo systemctl start ticker-tide-bot
+sudo systemctl status ticker-tide-bot
+```
+
+### Monitoring
+
+```bash
+# Check the bot process
+sudo systemctl status ticker-tide-bot
+
+# View logs
+journalctl -u ticker-tide-bot -f
+
+# Restart after a crash
+sudo systemctl restart ticker-tide-bot
+```
+
+### Chart Cleanup
+
+Charts are saved as temporary PNGs at `/tmp/ticker_tide_chart_{TICKER}_{timestamp}.png` and deleted automatically after each `/detail` command. If the process crashes mid-command, orphaned files can be cleaned with:
+
+```bash
+rm -f /tmp/ticker_tide_chart_*.png
+```
+
+### Configuration
+
+Bot behaviour is controlled by `config/notifier.json` under the `detail_command` key:
+
+| Key | Default | Description |
+|---|---|---|
+| `default_chart_days` | 30 | Days used when no day count provided |
+| `max_chart_days` | 180 | Upper bound; larger values are clamped |
+| `chart_style` | `nightclouds` | mplfinance dark style |
+| `chart_figsize` | `[14, 10]` | Chart width × height in inches |
+| `sr_levels_to_show` | 3 | Number of S/R levels drawn on chart |
+| `signal_history_days` | 30 | Days of signal history shown in breakdown |
+| `peer_count` | 5 | Max sector peers shown in breakdown |
