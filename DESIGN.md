@@ -773,6 +773,66 @@ All config comes from `config/notifier.json → ai_reasoner` (model, max_tokens,
 - high: 25 ≤ VIX < 30
 - extreme: VIX ≥ 30
 
-### 13.2 Telegram Notifier
-- Confidence > 70% OR signal flips (always included)
-- Daily summary + pipeline heartbeat
+### 13.2 Telegram Formatter (`src/notifier/formatter.py`)
+
+Formats the AI reasoner output into readable Telegram messages. Handles Telegram's 4096-character
+limit by splitting at section boundaries. Times are displayed in the configured timezone
+(default: `Europe/Amsterdam`).
+
+**Public functions:**
+
+| Function | Purpose |
+|---|---|
+| `format_duration(seconds)` | Human-readable duration: "45s", "2m 15s", "1h 2m 5s". |
+| `format_header(scoring_date, display_timezone)` | Report header with date and local time (e.g. "📊 Signal Report — March 16, 2026 • 01:23 CET"). |
+| `format_signal_distribution(bullish, bearish, neutral)` | Distribution summary line: "🟢 11 | 🔴 5 | 🟡 43". |
+| `format_daily_summary_section(daily_summary)` | "📋 Daily Summary" section; empty string if no signals. |
+| `format_bullish_section(tickers)` | "🟢 BULLISH" section sorted by confidence DESC; empty string if no tickers. |
+| `format_bearish_section(tickers)` | "🔴 BEARISH" section sorted by confidence DESC; empty string if no tickers. |
+| `format_flips_section(flips)` | "🔄 SIGNAL FLIPS" section; empty string if no flips. |
+| `format_market_context_section(market_context)` | "📉 Market Context" section. |
+| `format_heartbeat(pipeline_stats)` | Pipeline completion stats with per-phase timing and ticker counts. |
+| `format_full_report(results, pipeline_stats, config)` | Assembles full report and splits into `list[str]` chunks ≤ 4096 chars each. |
+| `format_no_signals_report(market_context, pipeline_stats, config)` | Minimal report for days with no qualifying signals. |
+| `format_market_closed_message(date, config)` | One-line market-closed notification. |
+| `format_pipeline_error_message(phase, error, config)` | Pipeline failure alert message. |
+
+Ticker line format: `{TICKER} — {confidence:.0f}% 📊 {final_score:+.1f}`
+Flip line format: `{TICKER}: {prev} → {new} ({confidence:.0f}%)`
+
+### 13.3 Telegram Sender (`src/notifier/telegram.py`)
+
+Wraps `send_telegram_message` from `src/common/progress.py` with report-specific helpers.
+Each chunk in a multi-message report is sent with a 0.5s delay to maintain ordering.
+
+| Function | Purpose |
+|---|---|
+| `send_daily_report(messages, bot_token, chat_id)` | Send a list of message chunks; returns True if all succeeded. |
+| `send_heartbeat(heartbeat_text, bot_token, chat_id)` | Send the heartbeat as a separate message. |
+| `send_market_closed_notification(date, bot_token, chat_id, config)` | Send market-closed notification. |
+| `send_pipeline_error_alert(phase, error, bot_token, chat_id, config)` | Send pipeline failure alert. |
+
+### 13.4 Notifier Orchestrator (`src/notifier/main.py`)
+
+Phase 4 entry point. Reads pipeline events, calls the AI reasoner, formats and sends the report,
+and records the pipeline run.
+
+**`run_notifier(db_path, pipeline_stats) -> dict`**
+
+Pre-flight checks: verifies `scorer_done` exists; skips if `notifier_done` already completed.
+On AI failure (any exception), falls back to an empty results dict and still sends a minimal report.
+On Telegram failure, logs the error but writes `notifier_done=completed` anyway.
+
+Returns: `{scoring_date, bullish_count, bearish_count, neutral_count, flips_count, tickers_reasoned, telegram_sent, duration_seconds}`.
+
+### 13.5 Daily Pipeline Script (`scripts/run_daily.py`)
+
+The main cron entry point. Runs all 4 phases in sequence with the following error policy:
+- Fetcher or Calculator failure → stop pipeline, exit 1
+- Scorer failure → run notifier anyway (to report the error), exit 1
+- Notifier failure → log error, exit 1
+- Any phase failure → send Telegram alert via `send_pipeline_error_alert`
+- Market closed → send notification, exit 0
+
+Timing stats are collected per phase and passed to `run_notifier` for the heartbeat message.
+

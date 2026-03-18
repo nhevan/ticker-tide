@@ -239,6 +239,51 @@ Recommended cron (runs at midnight UTC):
 0 0 * * * /path/to/.venv/bin/python /path/to/scripts/run_daily.py
 ```
 
+## Cron Setup (Daily Pipeline)
+
+The daily pipeline runs at 00:00 UTC (01:00 CET) after US market data settles.
+
+### Set up the cron job
+
+```bash
+# Open crontab editor
+crontab -e
+
+# Add this line (adjust paths to your installation):
+0 0 * * * cd /home/ec2-user/ticker-tide && /home/ec2-user/ticker-tide/.venv/bin/python scripts/run_daily.py >> logs/daily_$(date +\%Y\%m\%d).log 2>&1
+```
+
+What the cron line does:
+- `0 0 * * *` — runs at 00:00 UTC every day
+- `cd /home/ec2-user/ticker-tide` — changes to the project directory
+- `.venv/bin/python` — uses the project's virtual environment Python
+- `scripts/run_daily.py` — runs the daily pipeline
+- `>> logs/daily_YYYYMMDD.log 2>&1` — appends output to a dated log file
+
+### Verify cron is running
+
+```bash
+# List cron jobs
+crontab -l
+
+# Check cron service is active
+systemctl status crond
+
+# Check recent logs
+tail -f logs/daily_$(date +%Y%m%d).log
+```
+
+### Log rotation
+
+Add a weekly cleanup to crontab to prevent log buildup:
+
+```bash
+# Delete logs older than 30 days (runs weekly on Sunday)
+0 6 * * 0 find /home/ec2-user/ticker-tide/logs -name "daily_*.log" -mtime +30 -delete
+```
+
+The `logs/` directory is created automatically by the pipeline. It is excluded from version control via `.gitignore`.
+
 ## Running Tests
 
 ```bash

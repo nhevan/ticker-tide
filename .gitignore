@@ -14,3 +14,6 @@ dist/
 build/
 .venv/
 venv/
+
+# Pipeline logs
+logs/*.log
