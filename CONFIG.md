@@ -290,6 +290,13 @@ Applied to the base confidence value (`|final_score|`). Final confidence is clam
 | `ai_reasoner.model` | string | `"claude-sonnet-4-20250514"` | Anthropic model ID |
 | `ai_reasoner.max_tokens` | int | `4096` | Max tokens per Claude response |
 | `ai_reasoner.temperature` | float | `0.3` | Sampling temperature (lower = more deterministic) |
+| `sentiment_enrichment.enabled` | boolean | `true` | Master switch — set `false` to skip Finnhub sentiment enrichment entirely |
+| `sentiment_enrichment.model` | string | `"claude-haiku-4-5-20251001"` | Anthropic model used for classification (Haiku — cheapest, fastest) |
+| `sentiment_enrichment.max_tokens` | int | `512` | Max tokens per Claude response (20 articles × ~12 tokens/line; 512 gives safe headroom) |
+| `sentiment_enrichment.temperature` | float | `0.0` | Deterministic temperature — must stay at 0.0 for consistent results |
+| `sentiment_enrichment.batch_size` | int | `20` | Articles per Claude API call (batched prompt) |
+| `sentiment_enrichment.max_articles_per_run` | int | `500` | Safety cap: max articles processed per run (controls daily/backfill cost) |
+| `sentiment_enrichment.retry_failed` | boolean | `true` | Reserved for future retry logic — has no effect in current implementation |
 | `telegram.admin_chat_id` | string | `""` | Chat ID that receives heartbeats, error alerts, and pipeline progress. Overridden by `TELEGRAM_ADMIN_CHAT_ID` env var. |
 | `telegram.subscriber_chat_ids` | array | `[]` | List of chat IDs that receive the daily signal report and market-closed notifications. Overridden by `TELEGRAM_SUBSCRIBER_CHAT_IDS` env var (comma-separated). If empty, `admin_chat_id` is used as the sole subscriber. |
 | `telegram.confidence_threshold` | int | `40` | Minimum confidence to include a ticker in the Telegram report |
@@ -348,6 +355,10 @@ Note: include `admin_chat_id` in `subscriber_chat_ids` if the admin also wants t
 | `fundamentals.lookback_years` | `python scripts/run_backfill.py --phase fundamentals --force` |
 | `filings.lookback_months` | `python scripts/run_backfill.py --phase filings --force` |
 | `ai_reasoner.*` | None — applies on next run |
+| `sentiment_enrichment.enabled` | None — applies on next run |
+| `sentiment_enrichment.model` | None — applies on next run |
+| `sentiment_enrichment.batch_size` | None — applies on next run |
+| `sentiment_enrichment.max_articles_per_run` | None — applies on next run (run `enrich_finnhub_sentiment.py --all` to reprocess with new cap) |
 | `telegram.*` | None — applies on next run |
 | Adding ticker to `tickers.json` | See OPERATIONS.md → Adding a Ticker |
 | Setting `active: false` | None — ticker skipped on next run |

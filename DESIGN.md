@@ -95,6 +95,25 @@ Currently configured aliases: `META` (former `FB`, since 2022-06-09).
 - Finnhub: fetches last 1 month of articles per ticker; generates deterministic IDs via `generate_finnhub_article_id` (format: `finnhub_{ticker}_{datetime}_{sha256[:8]}`)
 - Both sources stored in `news_articles` with `source` column distinguishing them
 - Polygon and Finnhub are attempted independently per ticker — a Finnhub failure does not block Polygon data
+- **Finnhub articles have NULL sentiment** — they are enriched separately via `src/notifier/sentiment_enrichment.py` (see below)
+
+### Finnhub Sentiment Enrichment (`src/notifier/sentiment_enrichment.py`)
+
+Finnhub does not provide sentiment scores. This module uses Claude Haiku to classify each Finnhub article's sentiment post-hoc.
+
+**When it runs:**
+- **Daily**: as a post-processing step inside `run_daily_fetch()` after news is fetched. Processes up to `max_articles_per_run` new NULL-sentiment articles automatically.
+- **Backfill**: via `scripts/enrich_finnhub_sentiment.py --all` — processes all historical NULL-sentiment articles (~15,000 articles ≈ $1.50 at Haiku pricing).
+
+**Key design decisions:**
+- Uses Claude Haiku (`claude-haiku-4-20250514`) — 10× cheaper than Sonnet; classification is a simple task
+- `temperature=0.0` — deterministic, consistent results
+- `batch_size=20` — 20 articles per Claude API call (single batched prompt)
+- `max_articles_per_run=500` — safety cap to control daily cost (~$0.05/day for 50 articles)
+- `AND sentiment IS NULL` guard in UPDATE prevents overwriting Polygon sentiment (higher quality NLP pipeline)
+- After enrichment, `news_daily_summary` is recomputed for affected (ticker, date) pairs via `aggregate_news_for_ticker()` so the scorer immediately benefits from the updated `avg_sentiment_score`
+
+**Cost estimate:** ~$0.001 per article. Daily enrichment (~10–50 articles) is negligible.
 
 ### 8-K Filings Backfiller (`src/backfiller/filings.py`)
 

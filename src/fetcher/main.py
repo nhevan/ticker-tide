@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from src.common.config import load_config, load_env
 from src.common.db import get_connection
 from src.common.events import get_pipeline_event_status, write_pipeline_event
+from src.notifier.telegram import get_telegram_config
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,28 @@ def run_daily_fetch(db_path: str | None = None, force: bool = False) -> dict:
     logger.info(f"phase=fetcher date={today} Starting daily fetch")
 
     # TODO: wire up OHLCV, fundamentals, earnings, news, macro sub-modules
+
+    # Post-processing: Enrich Finnhub articles with Claude sentiment
+    try:
+        notifier_config = load_config("notifier")
+        se_config = notifier_config.get("sentiment_enrichment", {})
+        if se_config.get("enabled", False):
+            from src.notifier.sentiment_enrichment import run_sentiment_enrichment
+
+            tg_config = get_telegram_config(notifier_config)
+            enrichment_result = run_sentiment_enrichment(
+                db_conn,
+                notifier_config,
+                bot_token=tg_config.get("bot_token"),
+                admin_chat_id=tg_config.get("admin_chat_id"),
+            )
+            if enrichment_result and not enrichment_result.get("skipped"):
+                logger.info(
+                    f"phase=fetcher date={today} Sentiment enrichment: "
+                    f"{enrichment_result['enriched']} articles enriched"
+                )
+    except Exception as exc:
+        logger.warning(f"phase=fetcher date={today} Sentiment enrichment failed (non-critical): {exc}")
 
     duration = (datetime.now(tz=timezone.utc) - start_ts).total_seconds()
     write_pipeline_event(db_conn, "fetcher_done", today, "completed")

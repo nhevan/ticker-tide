@@ -101,6 +101,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/scorer/flip_detector.py` | Detects signal direction changes → `signal_flips` |
 | `src/notifier/main.py` | `run_notifier()` — queries scores, calls AI reasoner, formats, sends Telegram |
 | `src/notifier/ai_reasoner.py` | `reason_all_qualifying_tickers()` — Claude API calls per qualifying ticker |
+| `src/notifier/sentiment_enrichment.py` | Finnhub sentiment enrichment via Claude Haiku; `run_sentiment_enrichment()` + `enrich_batch()` |
 | `src/notifier/formatter.py` | Formats full report, heartbeat, and no-signals variants |
 | `src/notifier/telegram.py` | Telegram send/edit helpers |
 

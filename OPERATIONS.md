@@ -50,11 +50,43 @@ tail -50 /home/ec2-user/ticker-tide/logs/daily_$(date +%Y%m%d).log
 | `run_calculator.py` | Compute indicators, patterns, profiles | `--mode full\|incremental`, `--ticker AAPL`, `--db-path PATH` |
 | `run_scorer.py` | Generate BULLISH/BEARISH/NEUTRAL signals | `--ticker AAPL`, `--historical`, `--db-path PATH` |
 | `run_notifier.py` | Send Telegram report from latest scores | `--db-path PATH` |
+| `enrich_finnhub_sentiment.py` | Enrich Finnhub articles with Claude sentiment | `--all`, `--ticker AAPL`, `--dry-run`, `--db-path PATH` |
 | `setup_db.py` | Create/migrate schema (idempotent) | `(none)` |
 | `test_api_access.py` | Test all 5 API keys | `(none)` |
 | `verify_backfill.py` | Post-backfill data quality checks | `--ticker AAPL`, `--quiet`, `--no-telegram`, `--db-path PATH` |
 
 Valid `--phase` values for `run_backfill.py`: `ohlcv`, `macro`, `fundamentals`, `earnings`, `corporate_actions`, `news`, `filings`.
+
+### Finnhub Sentiment Enrichment
+
+Finnhub articles arrive without sentiment scores. `src/notifier/sentiment_enrichment.py` uses Claude Haiku (cheapest model) to classify them as `positive`, `negative`, or `neutral`.
+
+**Automatic (daily):** Runs as a post-processing step inside `run_daily_fetch()` after news is fetched. Processes up to `max_articles_per_run` new NULL-sentiment articles. Non-critical — a failure is logged as a warning and does not abort the fetcher.
+
+**Manual backfill:** Run `scripts/enrich_finnhub_sentiment.py` after the initial `run_backfill.py`:
+
+```bash
+# Preview what would be processed (no API calls)
+python scripts/enrich_finnhub_sentiment.py --dry-run
+
+# Process up to max_articles_per_run (from config/notifier.json)
+python scripts/enrich_finnhub_sentiment.py
+
+# Process ALL NULL-sentiment articles (no cap — full backfill)
+python scripts/enrich_finnhub_sentiment.py --all
+
+# Enrich only a specific ticker
+python scripts/enrich_finnhub_sentiment.py --ticker AAPL
+```
+
+After the backfill (`run_backfill.py`) completes, run the enrichment before the calculator to ensure `news_daily_summary` is computed with real sentiment values:
+
+```bash
+python scripts/run_backfill.py
+python scripts/enrich_finnhub_sentiment.py --all   # ~15,000 articles ≈ $1.50
+python scripts/run_calculator.py
+python scripts/run_scorer.py --historical
+```
 
 ---
 

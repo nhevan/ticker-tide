@@ -117,17 +117,19 @@ src/
     ├── main.py
     ├── ai_reasoner.py
     ├── formatter.py
+    ├── sentiment_enrichment.py  # Finnhub sentiment enrichment via Claude Haiku
     └── telegram.py
 
 scripts/
-├── run_daily.py       # cron entry point — all 4 phases in sequence
-├── run_backfill.py    # one-time historical loader
+├── run_daily.py               # cron entry point — all 4 phases in sequence
+├── run_backfill.py            # one-time historical loader
 ├── run_calculator.py
 ├── run_scorer.py
 ├── run_notifier.py
-├── setup_db.py        # initialise schema (idempotent)
-├── test_api_access.py # verify all 5 API keys
-└── verify_backfill.py # post-backfill data quality report
+├── enrich_finnhub_sentiment.py  # backfill NULL-sentiment Finnhub articles
+├── setup_db.py                # initialise schema (idempotent)
+├── test_api_access.py         # verify all 5 API keys
+└── verify_backfill.py         # post-backfill data quality report
 ```
 
 ## Tech Stack

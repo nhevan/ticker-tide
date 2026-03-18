@@ -4,6 +4,15 @@
     "max_tokens": 4096,
     "temperature": 0.3
   },
+  "sentiment_enrichment": {
+    "enabled": true,
+    "model": "claude-haiku-4-5-20251001",
+    "max_tokens": 512,
+    "temperature": 0.0,
+    "batch_size": 20,
+    "max_articles_per_run": 500,
+    "retry_failed": true
+  },
   "telegram": {
     "admin_chat_id": "",
     "subscriber_chat_ids": [],
