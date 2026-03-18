@@ -270,7 +270,9 @@ def _annotate_chart(
     Add legend entries and text annotations to the 4-panel chart figure.
 
     Operates on the matplotlib axes returned by mplfinance when returnfig=True.
-    Expected axis layout: [0] price, [1] volume, [2] RSI, [3] MACD.
+    mplfinance creates twin axes for each panel, so the list length is typically
+    double the number of panels. Panels are located by their y-axis label
+    ("RSI", "MACD") rather than by index to be robust against version differences.
 
     Labels added:
       - Price panel legend: EMA 9 / EMA 21 / EMA 50 / BB
@@ -287,16 +289,12 @@ def _annotate_chart(
     Returns:
         None
     """
-    _PANEL_PRICE = 0
-    _PANEL_RSI = 2
-    _PANEL_MACD = 3
-
-    if len(axlist) <= _PANEL_MACD:
+    if not axlist:
         return
 
-    ax_price = axlist[_PANEL_PRICE]
-    ax_rsi = axlist[_PANEL_RSI]
-    ax_macd = axlist[_PANEL_MACD]
+    ax_price = axlist[0]
+    ax_rsi = next((ax for ax in axlist if "RSI" in ax.get_ylabel()), None)
+    ax_macd = next((ax for ax in axlist if "MACD" in ax.get_ylabel()), None)
 
     price_legend_handles = [
         Line2D([0], [0], color="cyan", linewidth=0.8, label="EMA 9"),
@@ -314,16 +312,18 @@ def _annotate_chart(
             color=item["color"], fontsize=7, va="center", ha="left", clip_on=False,
         )
 
-    xlim_rsi = ax_rsi.get_xlim()
-    x_left = xlim_rsi[0]
-    ax_rsi.text(x_left, 70.5, " 70", color="dimgray", fontsize=7, va="bottom", ha="left")
-    ax_rsi.text(x_left, 30.5, " 30", color="dimgray", fontsize=7, va="bottom", ha="left")
+    if ax_rsi is not None:
+        xlim_rsi = ax_rsi.get_xlim()
+        x_left = xlim_rsi[0]
+        ax_rsi.text(x_left, 70.5, " 70", color="dimgray", fontsize=7, va="bottom", ha="left")
+        ax_rsi.text(x_left, 30.5, " 30", color="dimgray", fontsize=7, va="bottom", ha="left")
 
-    macd_legend_handles = [
-        Line2D([0], [0], color="cyan", label="MACD"),
-        Line2D([0], [0], color="orange", label="Signal"),
-    ]
-    ax_macd.legend(handles=macd_legend_handles, loc="upper left", fontsize=7, framealpha=0.3)
+    if ax_macd is not None:
+        macd_legend_handles = [
+            Line2D([0], [0], color="cyan", label="MACD"),
+            Line2D([0], [0], color="orange", label="Signal"),
+        ]
+        ax_macd.legend(handles=macd_legend_handles, loc="upper left", fontsize=7, framealpha=0.3)
 
 
 def generate_chart(

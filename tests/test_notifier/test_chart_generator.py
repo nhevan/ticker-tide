@@ -416,13 +416,17 @@ def _make_fake_plot(tmp_path_str: str):
 
     The returned callable creates the output PNG when fig.savefig is called,
     mirroring how generate_chart now uses returnfig=True + fig.savefig().
+    Mock axes set ylabel so _annotate_chart's label-based panel detection works.
     """
     def fake_plot(*args, **kwargs):
         mock_fig = MagicMock()
-        mock_axes = [MagicMock(), MagicMock(), MagicMock(), MagicMock()]
-        # Simulate xlim so _annotate_chart can call get_xlim() safely.
-        for ax in mock_axes:
+        ylabels = ["Price", "", "Volume", "", "RSI", "", "MACD", ""]
+        mock_axes = []
+        for label in ylabels:
+            ax = MagicMock()
+            ax.get_ylabel.return_value = label
             ax.get_xlim.return_value = (0.0, 30.0)
+            mock_axes.append(ax)
 
         def fake_savefig(path, **kw):
             with open(path, "wb") as fh:
@@ -447,6 +451,9 @@ class TestAnnotateChart:
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, axes = plt.subplots(4, 1, figsize=(14, 10))
+        axes[0].set_ylabel("Price")
+        axes[2].set_ylabel("RSI")
+        axes[3].set_ylabel("MACD")
         return fig, list(axes)
 
     def test_adds_ema_legend_to_price_panel(self) -> None:
@@ -533,13 +540,10 @@ class TestAnnotateChart:
         assert "Signal" in labels
 
     def test_no_crash_with_too_few_axes(self) -> None:
-        """_annotate_chart returns silently when axlist has fewer than 4 axes."""
-        import matplotlib.pyplot as plt
+        """_annotate_chart returns silently when axlist is empty."""
         from src.notifier.chart_generator import _annotate_chart
 
-        fig, axes = self._make_real_axes()
-        _annotate_chart(fig, axes[:2], [], [])  # only 2 axes — should not raise
-        plt.close(fig)
+        _annotate_chart(MagicMock(), [], [], [])  # empty axes list — should not raise
 
 
 # ---------------------------------------------------------------------------
