@@ -862,7 +862,52 @@ If no subscribers are configured, logs a warning but does not crash.
 
 Returns: `{scoring_date, bullish_count, bearish_count, neutral_count, flips_count, tickers_reasoned, telegram_sent, subscribers_notified, duration_seconds}`.
 
-### 13.5 Daily Pipeline Script (`scripts/run_daily.py`)
+### 13.5 Telegram Bot & /detail Command (`src/notifier/bot.py`, `src/notifier/detail_command.py`)
+
+An interactive Telegram bot (`python-telegram-bot`) that responds to subscriber commands.
+
+**Commands handled:**
+
+| Command | Description |
+|---|---|
+| `/detail <TICKER> [days]` | Sends a 4-panel technical chart image + AI summary for the ticker |
+| `/start` | Welcome message |
+| `/help` | Lists available commands |
+
+The `/detail` flow calls `generate_chart()` to produce the image, then `cleanup_chart()` to delete
+the temporary file after delivery.
+
+#### Chart Generator (`src/notifier/chart_generator.py`)
+
+Generates a 4-panel PNG using `mplfinance` with the `nightclouds` dark-mode style. The chart
+uses `returnfig=True` to retrieve the matplotlib figure and axes after mplfinance plots the
+candlestick data, then `_annotate_chart()` adds all labels before saving with `fig.savefig()`.
+
+**Panel layout:**
+
+| Panel | Height | Content |
+|---|---|---|
+| 0 — Price | 50% | Candlestick + EMA 9/21/50 + Bollinger Bands (upper/lower) + Fibonacci levels + S/R levels |
+| 1 — Volume | 12% | Green/red volume bars |
+| 2 — RSI | 19% | RSI(14) line + 70/30 reference zones |
+| 3 — MACD | 19% | MACD line + signal line + histogram |
+
+**Labels added by `_annotate_chart()`:**
+
+| Location | Type | Content |
+|---|---|---|
+| Price panel | Legend | EMA 9 (cyan), EMA 21 (yellow), EMA 50 (magenta), BB (gray dashed) |
+| Price panel right margin | Text | S/R labels: `"S $123.45"`, `"R $130.00 (strong)"` |
+| Price panel right margin | Text | Fibonacci labels: `"Fib 38.2%"`, `"Fib 61.8%"` |
+| RSI panel | Text | `"70"` and `"30"` on the reference lines |
+| MACD panel | Legend | MACD (cyan), Signal (orange) |
+
+Fibonacci and S/R labels are computed by `prepare_fibonacci_hlines()` / `prepare_sr_hlines()`
+and rendered as `ax.text()` calls at the right edge of the price axis. Chart config
+(`chart_style`, `chart_figsize`, `sr_levels_to_show`) comes from
+`config/notifier.json → detail_command`.
+
+### 13.6 Daily Pipeline Script (`scripts/run_daily.py`)
 
 The main cron entry point. Runs all 4 phases in sequence with the following error policy:
 - Fetcher or Calculator failure → stop pipeline, exit 1

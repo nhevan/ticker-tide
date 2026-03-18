@@ -407,6 +407,142 @@ class TestPrepareDivergenceLines:
 
 
 # ---------------------------------------------------------------------------
+# Helpers for generate_chart mocking
+# ---------------------------------------------------------------------------
+
+def _make_fake_plot(tmp_path_str: str):
+    """
+    Return a fake mpf.plot side_effect that simulates returnfig=True behaviour.
+
+    The returned callable creates the output PNG when fig.savefig is called,
+    mirroring how generate_chart now uses returnfig=True + fig.savefig().
+    """
+    def fake_plot(*args, **kwargs):
+        mock_fig = MagicMock()
+        mock_axes = [MagicMock(), MagicMock(), MagicMock(), MagicMock()]
+        # Simulate xlim so _annotate_chart can call get_xlim() safely.
+        for ax in mock_axes:
+            ax.get_xlim.return_value = (0.0, 30.0)
+
+        def fake_savefig(path, **kw):
+            with open(path, "wb") as fh:
+                fh.write(b"\x89PNG\r\n\x1a\n" + b"0" * 20_000)
+
+        mock_fig.savefig.side_effect = fake_savefig
+        return mock_fig, mock_axes
+
+    return fake_plot
+
+
+# ---------------------------------------------------------------------------
+# Tests: _annotate_chart
+# ---------------------------------------------------------------------------
+
+class TestAnnotateChart:
+    """Tests for the _annotate_chart helper that adds labels to the chart axes."""
+
+    def _make_real_axes(self):
+        """Create 4 real matplotlib Axes using the Agg backend (no display needed)."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(4, 1, figsize=(14, 10))
+        return fig, list(axes)
+
+    def test_adds_ema_legend_to_price_panel(self) -> None:
+        """_annotate_chart adds a legend with EMA 9, EMA 21, and EMA 50 entries."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+
+        fig, axes = self._make_real_axes()
+        _annotate_chart(fig, axes, [], [])
+        plt.close(fig)
+
+        legend = axes[0].get_legend()
+        assert legend is not None
+        labels = [t.get_text() for t in legend.get_texts()]
+        assert "EMA 9" in labels
+        assert "EMA 21" in labels
+        assert "EMA 50" in labels
+
+    def test_adds_bb_legend_to_price_panel(self) -> None:
+        """_annotate_chart includes a Bollinger Band entry in the price panel legend."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+
+        fig, axes = self._make_real_axes()
+        _annotate_chart(fig, axes, [], [])
+        plt.close(fig)
+
+        legend = axes[0].get_legend()
+        labels = [t.get_text() for t in legend.get_texts()]
+        assert "BB" in labels
+
+    def test_adds_sr_text_annotations(self) -> None:
+        """_annotate_chart writes S/R label text onto the price panel."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+
+        fig, axes = self._make_real_axes()
+        sr = [{"price": 123.45, "label": "S $123.45", "color": "lime", "linestyle": "dotted"}]
+        _annotate_chart(fig, axes, [], sr)
+        plt.close(fig)
+
+        texts = [t.get_text() for t in axes[0].texts]
+        assert any("S $123.45" in t for t in texts)
+
+    def test_adds_fib_text_annotations(self) -> None:
+        """_annotate_chart writes Fibonacci label text onto the price panel."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+
+        fig, axes = self._make_real_axes()
+        fib = [{"price": 250.0, "label": "Fib 38.2%", "color": "gold", "linestyle": "dashed"}]
+        _annotate_chart(fig, axes, fib, [])
+        plt.close(fig)
+
+        texts = [t.get_text() for t in axes[0].texts]
+        assert any("Fib 38.2%" in t for t in texts)
+
+    def test_adds_rsi_level_labels(self) -> None:
+        """_annotate_chart adds '70' and '30' text labels to the RSI panel."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+
+        fig, axes = self._make_real_axes()
+        _annotate_chart(fig, axes, [], [])
+        plt.close(fig)
+
+        rsi_texts = [t.get_text() for t in axes[2].texts]
+        assert any("70" in t for t in rsi_texts)
+        assert any("30" in t for t in rsi_texts)
+
+    def test_adds_macd_legend(self) -> None:
+        """_annotate_chart adds a legend with MACD and Signal entries to the MACD panel."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+
+        fig, axes = self._make_real_axes()
+        _annotate_chart(fig, axes, [], [])
+        plt.close(fig)
+
+        legend = axes[3].get_legend()
+        assert legend is not None
+        labels = [t.get_text() for t in legend.get_texts()]
+        assert "MACD" in labels
+        assert "Signal" in labels
+
+    def test_no_crash_with_too_few_axes(self) -> None:
+        """_annotate_chart returns silently when axlist has fewer than 4 axes."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+
+        fig, axes = self._make_real_axes()
+        _annotate_chart(fig, axes[:2], [], [])  # only 2 axes — should not raise
+        plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Tests: generate_chart
 # ---------------------------------------------------------------------------
 
@@ -426,20 +562,11 @@ class TestGenerateChart:
 
         with patch("src.notifier.chart_generator._CHART_DIR", str(tmp_path)):
             with patch("mplfinance.plot") as mock_plot:
-                with patch("mplfinance.make_mpf_style") as mock_style:
-                    with patch("mplfinance.make_addplot") as mock_addplot:
-                        mock_addplot.return_value = MagicMock()
-                        mock_style.return_value = MagicMock()
-
-                        def fake_plot(*args, **kwargs):
-                            savefig = kwargs.get("savefig")
-                            if savefig:
-                                with open(savefig, "wb") as fh:
-                                    fh.write(b"\x89PNG\r\n\x1a\n" + b"0" * 20_000)
-
-                        mock_plot.side_effect = fake_plot
-
-                        file_path = generate_chart(db_connection, "AAPL", 30, SAMPLE_CONFIG, calc_config)
+                with patch("mplfinance.make_mpf_style", return_value=MagicMock()):
+                    with patch("mplfinance.make_addplot", return_value=MagicMock()):
+                        with patch("src.notifier.chart_generator.plt") as mock_plt:
+                            mock_plot.side_effect = _make_fake_plot(str(tmp_path))
+                            file_path = generate_chart(db_connection, "AAPL", 30, SAMPLE_CONFIG, calc_config)
 
         assert file_path is not None
         assert os.path.exists(file_path)
@@ -460,20 +587,36 @@ class TestGenerateChart:
             with patch("mplfinance.plot") as mock_plot:
                 with patch("mplfinance.make_mpf_style", return_value=MagicMock()):
                     with patch("mplfinance.make_addplot", return_value=MagicMock()):
-
-                        def fake_plot(*args, **kwargs):
-                            savefig = kwargs.get("savefig")
-                            if savefig:
-                                with open(savefig, "wb") as fh:
-                                    fh.write(b"\x89PNG\r\n\x1a\n" + b"0" * 20_000)
-
-                        mock_plot.side_effect = fake_plot
-
-                        generate_chart(db_connection, "AAPL", 30, SAMPLE_CONFIG, calc_config)
+                        with patch("src.notifier.chart_generator.plt"):
+                            mock_plot.side_effect = _make_fake_plot(str(tmp_path))
+                            generate_chart(db_connection, "AAPL", 30, SAMPLE_CONFIG, calc_config)
 
         call_kwargs = mock_plot.call_args.kwargs if mock_plot.call_args else {}
         assert "panel_ratios" in call_kwargs
         assert call_kwargs["panel_ratios"] == (50, 12, 19, 19)
+
+    def test_generate_chart_uses_returnfig(self, db_connection: sqlite3.Connection, tmp_path) -> None:
+        """generate_chart passes returnfig=True to mplfinance so it can annotate the figure."""
+        from src.notifier.chart_generator import generate_chart
+
+        _insert_ohlcv(db_connection, "AAPL", 30)
+        _insert_indicators(db_connection, "AAPL", 30)
+
+        calc_config = {
+            "fibonacci": {"levels": [0.236, 0.382, 0.5, 0.618, 0.786], "proximity_pct": 1.0, "min_range_pct": 5.0}
+        }
+
+        with patch("src.notifier.chart_generator._CHART_DIR", str(tmp_path)):
+            with patch("mplfinance.plot") as mock_plot:
+                with patch("mplfinance.make_mpf_style", return_value=MagicMock()):
+                    with patch("mplfinance.make_addplot", return_value=MagicMock()):
+                        with patch("src.notifier.chart_generator.plt"):
+                            mock_plot.side_effect = _make_fake_plot(str(tmp_path))
+                            generate_chart(db_connection, "AAPL", 30, SAMPLE_CONFIG, calc_config)
+
+        call_kwargs = mock_plot.call_args.kwargs if mock_plot.call_args else {}
+        assert call_kwargs.get("returnfig") is True
+        assert "savefig" not in call_kwargs
 
     def test_generate_chart_handles_insufficient_data(
         self, db_connection: sqlite3.Connection, tmp_path
@@ -492,16 +635,9 @@ class TestGenerateChart:
             with patch("mplfinance.plot") as mock_plot:
                 with patch("mplfinance.make_mpf_style", return_value=MagicMock()):
                     with patch("mplfinance.make_addplot", return_value=MagicMock()):
-
-                        def fake_plot(*args, **kwargs):
-                            savefig = kwargs.get("savefig")
-                            if savefig:
-                                with open(savefig, "wb") as fh:
-                                    fh.write(b"\x89PNG\r\n\x1a\n" + b"0" * 5_000)
-
-                        mock_plot.side_effect = fake_plot
-
-                        file_path = generate_chart(db_connection, "AAPL", 5, SAMPLE_CONFIG, calc_config)
+                        with patch("src.notifier.chart_generator.plt"):
+                            mock_plot.side_effect = _make_fake_plot(str(tmp_path))
+                            file_path = generate_chart(db_connection, "AAPL", 5, SAMPLE_CONFIG, calc_config)
 
         assert file_path is not None
 

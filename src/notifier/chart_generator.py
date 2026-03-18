@@ -18,9 +18,12 @@ import logging
 import os
 import sqlite3
 import time
+from typing import Any
 
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
+from matplotlib.lines import Line2D
 
 from src.calculator.fibonacci import compute_fibonacci_for_ticker
 
@@ -257,6 +260,72 @@ def prepare_divergence_lines(
     return result
 
 
+def _annotate_chart(
+    fig: Any,
+    axlist: list,
+    fib_hlines: list[dict],
+    sr_hlines: list[dict],
+) -> None:
+    """
+    Add legend entries and text annotations to the 4-panel chart figure.
+
+    Operates on the matplotlib axes returned by mplfinance when returnfig=True.
+    Expected axis layout: [0] price, [1] volume, [2] RSI, [3] MACD.
+
+    Labels added:
+      - Price panel legend: EMA 9 / EMA 21 / EMA 50 / BB
+      - Price panel right-margin text: S/R and Fibonacci level labels
+      - RSI panel inline text: "70" and "30" reference line labels
+      - MACD panel legend: MACD / Signal
+
+    Parameters:
+        fig: The matplotlib Figure object.
+        axlist: List of Axes as returned by mplfinance returnfig=True.
+        fib_hlines: Fibonacci hline specs (price, label, color, linestyle).
+        sr_hlines: S/R hline specs (price, label, color, linestyle).
+
+    Returns:
+        None
+    """
+    _PANEL_PRICE = 0
+    _PANEL_RSI = 2
+    _PANEL_MACD = 3
+
+    if len(axlist) <= _PANEL_MACD:
+        return
+
+    ax_price = axlist[_PANEL_PRICE]
+    ax_rsi = axlist[_PANEL_RSI]
+    ax_macd = axlist[_PANEL_MACD]
+
+    price_legend_handles = [
+        Line2D([0], [0], color="cyan", linewidth=0.8, label="EMA 9"),
+        Line2D([0], [0], color="yellow", linewidth=0.8, label="EMA 21"),
+        Line2D([0], [0], color="magenta", linewidth=0.8, label="EMA 50"),
+        Line2D([0], [0], color="gray", linewidth=0.5, linestyle="dashed", label="BB"),
+    ]
+    ax_price.legend(handles=price_legend_handles, loc="upper left", fontsize=7, framealpha=0.3)
+
+    xlim = ax_price.get_xlim()
+    x_right = xlim[1]
+    for item in sr_hlines + fib_hlines:
+        ax_price.text(
+            x_right, item["price"], f" {item['label']}",
+            color=item["color"], fontsize=7, va="center", ha="left", clip_on=False,
+        )
+
+    xlim_rsi = ax_rsi.get_xlim()
+    x_left = xlim_rsi[0]
+    ax_rsi.text(x_left, 70.5, " 70", color="dimgray", fontsize=7, va="bottom", ha="left")
+    ax_rsi.text(x_left, 30.5, " 30", color="dimgray", fontsize=7, va="bottom", ha="left")
+
+    macd_legend_handles = [
+        Line2D([0], [0], color="cyan", label="MACD"),
+        Line2D([0], [0], color="orange", label="Signal"),
+    ]
+    ax_macd.legend(handles=macd_legend_handles, loc="upper left", fontsize=7, framealpha=0.3)
+
+
 def generate_chart(
     db_conn: sqlite3.Connection,
     ticker: str,
@@ -369,14 +438,17 @@ def generate_chart(
         "panel_ratios": (50, 12, 19, 19),
         "figsize": tuple(figsize),
         "title": f"{ticker} — {days} Day Technical Analysis",
-        "savefig": output_path,
+        "returnfig": True,
         "warn_too_much_data": len(ohlcv_df) + 1,
     }
     if hlines_cfg:
         plot_kwargs["hlines"] = hlines_cfg
 
     try:
-        mpf.plot(ohlcv_df, **plot_kwargs)
+        fig, axlist = mpf.plot(ohlcv_df, **plot_kwargs)
+        _annotate_chart(fig, axlist, fib_hlines, sr_hlines)
+        fig.savefig(output_path, bbox_inches="tight", dpi=150)
+        plt.close(fig)
     except (ValueError, TypeError, OSError) as exc:
         logger.error("ticker=%s phase=chart_generator chart generation failed: %s", ticker, exc)
         return None
