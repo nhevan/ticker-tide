@@ -22,6 +22,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import mplfinance as mpf
+import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 
@@ -30,6 +31,60 @@ from src.calculator.fibonacci import compute_fibonacci_for_ticker
 logger = logging.getLogger(__name__)
 
 _CHART_DIR = "/tmp"
+
+# ---------------------------------------------------------------------------
+# Color palette
+# ---------------------------------------------------------------------------
+_BULL_COLOR = "#4fc3f7"
+_BEAR_COLOR = "#f48fb1"
+_BG_DARK = "#0d0d0d"
+_BG_PANEL = "#111111"
+_GRID_COLOR = "#2a2a2a"
+_SPINE_COLOR = "#333333"
+_TICK_COLOR = "#aaaaaa"
+_LEGEND_BG = "#1e1e1e"
+_MA9_COLOR = "#66ff99"
+_MA21_COLOR = "#ff6ec7"
+_MA50_COLOR = "#ffd700"
+_BB_COLOR = "#888888"
+_RSI_OB_COLOR = "#ff6666"
+_RSI_OS_COLOR = "#66ff99"
+_MACD_LINE_COLOR = "#00e5ff"
+_MACD_SIGNAL_COLOR = "#ff9800"
+_VOL_SPIKE_MULTIPLIER = 1.5
+
+
+def _build_chart_style() -> Any:
+    """
+    Build a fully custom dark-mode mplfinance style.
+
+    Candles use _BULL_COLOR / _BEAR_COLOR. Figure and panel backgrounds are
+    near-black. Grid lines are subtle dark gray.
+
+    Returns:
+        mplfinance style object.
+    """
+    mc = mpf.make_marketcolors(
+        up=_BULL_COLOR,
+        down=_BEAR_COLOR,
+        edge={"up": _BULL_COLOR, "down": _BEAR_COLOR},
+        wick={"up": _BULL_COLOR, "down": _BEAR_COLOR},
+        volume={"up": _BULL_COLOR, "down": _BEAR_COLOR},
+    )
+    return mpf.make_mpf_style(
+        base_mpf_style="nightclouds",
+        marketcolors=mc,
+        facecolor=_BG_DARK,
+        figcolor=_BG_DARK,
+        gridcolor=_GRID_COLOR,
+        gridstyle="--",
+        gridaxis="both",
+        rc={
+            "axes.labelcolor": _TICK_COLOR,
+            "xtick.color": _TICK_COLOR,
+            "ytick.color": _TICK_COLOR,
+        },
+    )
 
 
 def load_chart_data(
@@ -263,28 +318,32 @@ def prepare_divergence_lines(
 def _annotate_chart(
     fig: Any,
     axlist: list,
+    ohlcv_df: pd.DataFrame,
     fib_hlines: list[dict],
     sr_hlines: list[dict],
+    rsi: pd.Series,
+    macd_hist: pd.Series,
+    macd_line: pd.Series,
+    macd_signal: pd.Series,
 ) -> None:
     """
-    Add legend entries and text annotations to the 4-panel chart figure.
+    Apply all visual styling, labels, legends, and annotations to the chart figure.
 
     Operates on the matplotlib axes returned by mplfinance when returnfig=True.
-    mplfinance creates twin axes for each panel, so the list length is typically
-    double the number of panels. Panels are located by their y-axis label
-    ("RSI", "MACD") rather than by index to be robust against version differences.
-
-    Labels added:
-      - Price panel legend: EMA 9 / EMA 21 / EMA 50 / BB
-      - Price panel right-margin text: S/R and Fibonacci level labels
-      - RSI panel inline text: "70" and "30" reference line labels
-      - MACD panel legend: MACD / Signal
+    Panels are located by their y-axis label ("RSI", "MACD", "Volume") to be
+    robust against mplfinance version differences in axes ordering.
 
     Parameters:
         fig: The matplotlib Figure object.
         axlist: List of Axes as returned by mplfinance returnfig=True.
+        ohlcv_df: OHLCV DataFrame indexed by date (used for volume spike detection
+            and integer x-coordinate mapping).
         fib_hlines: Fibonacci hline specs (price, label, color, linestyle).
         sr_hlines: S/R hline specs (price, label, color, linestyle).
+        rsi: RSI series aligned to ohlcv_df.index.
+        macd_hist: MACD histogram series aligned to ohlcv_df.index.
+        macd_line: MACD line series aligned to ohlcv_df.index.
+        macd_signal: MACD signal series aligned to ohlcv_df.index.
 
     Returns:
         None
@@ -293,17 +352,58 @@ def _annotate_chart(
         return
 
     ax_price = axlist[0]
+    ax_vol = next((ax for ax in axlist if "Volume" in ax.get_ylabel()), None)
     ax_rsi = next((ax for ax in axlist if "RSI" in ax.get_ylabel()), None)
     ax_macd = next((ax for ax in axlist if "MACD" in ax.get_ylabel()), None)
 
-    price_legend_handles = [
-        Line2D([0], [0], color="cyan", linewidth=0.8, label="EMA 9"),
-        Line2D([0], [0], color="yellow", linewidth=0.8, label="EMA 21"),
-        Line2D([0], [0], color="magenta", linewidth=0.8, label="EMA 50"),
-        Line2D([0], [0], color="gray", linewidth=0.5, linestyle="dashed", label="BB"),
-    ]
-    ax_price.legend(handles=price_legend_handles, loc="upper left", fontsize=7, framealpha=0.3)
+    n = len(ohlcv_df)
+    x = np.arange(n)
 
+    # ------------------------------------------------------------------
+    # A. Dark theme — applied to every axis
+    # ------------------------------------------------------------------
+    fig.patch.set_facecolor(_BG_DARK)
+    for ax in axlist:
+        ax.set_facecolor(_BG_PANEL)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(_SPINE_COLOR)
+        ax.tick_params(colors=_TICK_COLOR, labelsize=8)
+        ax.yaxis.label.set_color(_TICK_COLOR)
+        ax.yaxis.label.set_fontsize(9)
+        ax.grid(True, color=_GRID_COLOR, linestyle="--", linewidth=0.5, zorder=0)
+
+    # ------------------------------------------------------------------
+    # B. Price panel
+    # ------------------------------------------------------------------
+    price_handles = [
+        Line2D([0], [0], color=_MA9_COLOR, linewidth=0.9, label="EMA 9"),
+        Line2D([0], [0], color=_MA21_COLOR, linewidth=0.9, label="EMA 21"),
+        Line2D([0], [0], color=_MA50_COLOR, linewidth=0.9, label="EMA 50"),
+        Line2D([0], [0], color=_BB_COLOR, linewidth=0.6, linestyle="dashed", label="BB"),
+    ]
+    ax_price.legend(
+        handles=price_handles, loc="upper right", fontsize=7,
+        facecolor=_LEGEND_BG, edgecolor=_SPINE_COLOR, framealpha=0.9,
+    )
+
+    bb_lower_vals = [item["price"] for item in fib_hlines if "Fib" not in item.get("label", "")]
+    # BB fill — look up bb_upper/bb_lower from the ohlcv_df is not needed;
+    # we receive them implicitly via the add_plot lines. Instead, extract from
+    # the line artists already drawn on ax_price.
+    bb_lines = [
+        line for line in ax_price.lines
+        if line.get_linestyle() in ("--", "dashed")
+        and line.get_color() in (_BB_COLOR, "#888888")
+    ]
+    if len(bb_lines) >= 2:
+        upper_data = bb_lines[0].get_ydata()
+        lower_data = bb_lines[1].get_ydata()
+        ax_price.fill_between(
+            np.arange(len(upper_data)), lower_data, upper_data,
+            alpha=0.05, color=_BB_COLOR, zorder=1,
+        )
+
+    # S/R and Fib right-edge text labels
     xlim = ax_price.get_xlim()
     x_right = xlim[1]
     for item in sr_hlines + fib_hlines:
@@ -312,18 +412,136 @@ def _annotate_chart(
             color=item["color"], fontsize=7, va="center", ha="left", clip_on=False,
         )
 
+    # Volume spike event arrows on price panel
+    vol_mean = ohlcv_df["Volume"].rolling(20, min_periods=1).mean()
+    spike_mask = ohlcv_df["Volume"] > vol_mean * _VOL_SPIKE_MULTIPLIER
+    for i, (dt, is_spike) in enumerate(spike_mask.items()):
+        if not is_spike:
+            continue
+        is_bull = float(ohlcv_df.loc[dt, "Close"]) >= float(ohlcv_df.loc[dt, "Open"])
+        y_anchor = float(ohlcv_df.loc[dt, "High"] if not is_bull else ohlcv_df.loc[dt, "Low"])
+        label = "Sell" if not is_bull else "Buy"
+        color = _BEAR_COLOR if not is_bull else _BULL_COLOR
+        y_offset = 12 if not is_bull else -12
+        ax_price.annotate(
+            label,
+            xy=(i, y_anchor),
+            xytext=(0, y_offset),
+            textcoords="offset points",
+            color=color,
+            fontsize=6,
+            ha="center",
+            arrowprops=dict(arrowstyle="->", color=color, lw=0.8),
+            bbox=dict(boxstyle="round,pad=0.2", facecolor=_LEGEND_BG, edgecolor=color, alpha=0.8),
+            zorder=5,
+        )
+
+    # ------------------------------------------------------------------
+    # C. Volume panel
+    # ------------------------------------------------------------------
+    if ax_vol is not None:
+        vol_patches = [p for p in ax_vol.patches if hasattr(p, "get_width") and p.get_width() > 0]
+        for patch in vol_patches:
+            patch.set_alpha(0.75)
+
+        spike_indices = [i for i, v in enumerate(spike_mask) if v]
+        for idx in spike_indices:
+            ax_vol.axvline(x=idx, color=_TICK_COLOR, linestyle=":", linewidth=0.8, zorder=3)
+
+    # ------------------------------------------------------------------
+    # D. RSI panel
+    # ------------------------------------------------------------------
     if ax_rsi is not None:
+        ax_rsi.axhline(70, color=_RSI_OB_COLOR, linestyle="--", linewidth=0.8, zorder=2)
+        ax_rsi.axhline(30, color=_RSI_OS_COLOR, linestyle="--", linewidth=0.8, zorder=2)
+        ax_rsi.axhline(50, color="#555555", linestyle=":", linewidth=0.6, zorder=2)
+
+        rsi_vals = rsi.values
+        ax_rsi.fill_between(x, rsi_vals, 70, where=(rsi_vals > 70),
+                            color=_RSI_OB_COLOR, alpha=0.15, zorder=1)
+        ax_rsi.fill_between(x, rsi_vals, 30, where=(rsi_vals < 30),
+                            color=_RSI_OS_COLOR, alpha=0.15, zorder=1)
+
         xlim_rsi = ax_rsi.get_xlim()
-        x_left = xlim_rsi[0]
-        ax_rsi.text(x_left, 70.5, " 70", color="dimgray", fontsize=7, va="bottom", ha="left")
-        ax_rsi.text(x_left, 30.5, " 30", color="dimgray", fontsize=7, va="bottom", ha="left")
+        x_rsi_right = xlim_rsi[1] + 0.2
+        ax_rsi.text(x_rsi_right, 70, "OB 70", color=_RSI_OB_COLOR,
+                    fontsize=7, va="center", ha="left", clip_on=False)
+        ax_rsi.text(x_rsi_right, 30, "OS 30", color=_RSI_OS_COLOR,
+                    fontsize=7, va="center", ha="left", clip_on=False)
+        ax_rsi.text(x_rsi_right, 50, "50", color="#555555",
+                    fontsize=7, va="center", ha="left", clip_on=False)
+
+        ax_rsi.legend(
+            handles=[Line2D([0], [0], color="white", linewidth=0.9, label="RSI (14)")],
+            loc="upper left", fontsize=7,
+            facecolor=_LEGEND_BG, edgecolor=_SPINE_COLOR, framealpha=0.9,
+        )
+
+    # ------------------------------------------------------------------
+    # E. MACD panel
+    # ------------------------------------------------------------------
+    if ax_macd is not None:
+        # Recolor histogram bar patches
+        bar_patches = [p for p in ax_macd.patches
+                       if hasattr(p, "get_width") and p.get_width() > 0]
+        for patch, val in zip(bar_patches, macd_hist.values):
+            patch.set_facecolor(_BULL_COLOR if val >= 0 else _BEAR_COLOR)
+            patch.set_alpha(0.6)
+
+        ax_macd.axhline(0, color="#555555", linewidth=0.8, zorder=2)
+
+        # Crossover annotations
+        diff = (macd_line - macd_signal).values
+        for i in range(1, len(diff)):
+            prev, curr = diff[i - 1], diff[i]
+            if np.isnan(prev) or np.isnan(curr):
+                continue
+            if prev < 0 and curr >= 0:
+                cross_type = "bullish"
+            elif prev > 0 and curr <= 0:
+                cross_type = "bearish"
+            else:
+                continue
+            color = _BULL_COLOR if cross_type == "bullish" else _BEAR_COLOR
+            arrow_label = "↑" if cross_type == "bullish" else "↓"
+            y_anchor = float(macd_line.iloc[i])
+            y_offset = 8 if cross_type == "bullish" else -8
+            ax_macd.annotate(
+                arrow_label,
+                xy=(i, y_anchor),
+                xytext=(0, y_offset),
+                textcoords="offset points",
+                color=color,
+                fontsize=8,
+                ha="center",
+                arrowprops=dict(arrowstyle="->", color=color, lw=0.8),
+                zorder=5,
+            )
+
+        macd_handles = [
+            Line2D([0], [0], color=_MACD_LINE_COLOR, linewidth=0.9, label="MACD (12/26)"),
+            Line2D([0], [0], color=_MACD_SIGNAL_COLOR, linewidth=0.9, label="Signal (9)"),
+        ]
+        ax_macd.legend(
+            handles=macd_handles, loc="upper left", fontsize=7,
+            facecolor=_LEGEND_BG, edgecolor=_SPINE_COLOR, framealpha=0.9,
+        )
+
+    # ------------------------------------------------------------------
+    # F. X-axis: hide on non-bottom panels, format bottom panel
+    # ------------------------------------------------------------------
+    for ax in axlist:
+        if ax is not ax_macd:
+            ax.tick_params(labelbottom=False)
 
     if ax_macd is not None:
-        macd_legend_handles = [
-            Line2D([0], [0], color="cyan", label="MACD"),
-            Line2D([0], [0], color="orange", label="Signal"),
-        ]
-        ax_macd.legend(handles=macd_legend_handles, loc="upper left", fontsize=7, framealpha=0.3)
+        valid_ticks = [int(t) for t in ax_macd.get_xticks() if 0 <= t < n]
+        if valid_ticks:
+            ax_macd.set_xticks(valid_ticks)
+            ax_macd.set_xticklabels(
+                [ohlcv_df.index[t].strftime("%b %d") for t in valid_ticks],
+                rotation=45, ha="right", color=_TICK_COLOR, fontsize=8,
+            )
 
 
 def generate_chart(
@@ -353,7 +571,6 @@ def generate_chart(
         Absolute file path of the saved PNG, or None on failure.
     """
     detail_cfg = config.get("detail_command", {})
-    chart_style = detail_cfg.get("chart_style", "nightclouds")
     figsize = detail_cfg.get("chart_figsize", [14, 10])
     max_sr = detail_cfg.get("sr_levels_to_show", 3)
 
@@ -391,21 +608,16 @@ def generate_chart(
     macd_signal = _aligned_series("macd_signal", fill=0.0)
     macd_hist = _aligned_series("macd_histogram", fill=0.0)
 
-    rsi_70 = pd.Series([70.0] * len(ohlcv_df), index=ohlcv_df.index)
-    rsi_30 = pd.Series([30.0] * len(ohlcv_df), index=ohlcv_df.index)
-
     add_plots = [
-        mpf.make_addplot(ema_9, color="cyan", width=0.8, panel=0),
-        mpf.make_addplot(ema_21, color="yellow", width=0.8, panel=0),
-        mpf.make_addplot(ema_50, color="magenta", width=0.8, panel=0),
-        mpf.make_addplot(bb_upper, color="gray", width=0.5, linestyle="dashed", panel=0),
-        mpf.make_addplot(bb_lower, color="gray", width=0.5, linestyle="dashed", panel=0),
+        mpf.make_addplot(ema_9, color=_MA9_COLOR, width=0.9, panel=0),
+        mpf.make_addplot(ema_21, color=_MA21_COLOR, width=0.9, panel=0),
+        mpf.make_addplot(ema_50, color=_MA50_COLOR, width=0.9, panel=0),
+        mpf.make_addplot(bb_upper, color=_BB_COLOR, width=0.6, linestyle="dashed", panel=0),
+        mpf.make_addplot(bb_lower, color=_BB_COLOR, width=0.6, linestyle="dashed", panel=0),
         mpf.make_addplot(rsi, color="white", panel=2, ylabel="RSI"),
-        mpf.make_addplot(rsi_70, color="dimgray", width=0.5, panel=2),
-        mpf.make_addplot(rsi_30, color="dimgray", width=0.5, panel=2),
-        mpf.make_addplot(macd_line, color="cyan", panel=3, ylabel="MACD"),
-        mpf.make_addplot(macd_signal, color="orange", panel=3),
-        mpf.make_addplot(macd_hist, type="bar", color="dimgray", panel=3),
+        mpf.make_addplot(macd_line, color=_MACD_LINE_COLOR, panel=3, ylabel="MACD"),
+        mpf.make_addplot(macd_signal, color=_MACD_SIGNAL_COLOR, panel=3),
+        mpf.make_addplot(macd_hist, type="bar", color=_BB_COLOR, alpha=0.4, panel=3),
     ]
 
     hlines_prices = [item["price"] for item in fib_hlines + sr_hlines]
@@ -421,10 +633,7 @@ def generate_chart(
             "linewidths": [0.5] * len(hlines_prices),
         }
 
-    try:
-        style = mpf.make_mpf_style(base_mpf_style=chart_style)
-    except (ValueError, KeyError):
-        style = mpf.make_mpf_style(base_mpf_style="nightclouds")
+    style = _build_chart_style()
 
     timestamp = int(time.time())
     output_path = os.path.join(_CHART_DIR, f"ticker_tide_chart_{ticker}_{timestamp}.png")
@@ -446,7 +655,11 @@ def generate_chart(
 
     try:
         fig, axlist = mpf.plot(ohlcv_df, **plot_kwargs)
-        _annotate_chart(fig, axlist, fib_hlines, sr_hlines)
+        _annotate_chart(
+            fig, axlist, ohlcv_df,
+            fib_hlines, sr_hlines,
+            rsi, macd_hist, macd_line, macd_signal,
+        )
         fig.savefig(output_path, bbox_inches="tight", dpi=150)
         plt.close(fig)
     except (ValueError, TypeError, OSError) as exc:

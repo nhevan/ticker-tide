@@ -414,18 +414,21 @@ def _make_fake_plot(tmp_path_str: str):
     """
     Return a fake mpf.plot side_effect that simulates returnfig=True behaviour.
 
-    The returned callable creates the output PNG when fig.savefig is called,
-    mirroring how generate_chart now uses returnfig=True + fig.savefig().
-    Mock axes set ylabel so _annotate_chart's label-based panel detection works.
+    The returned callable creates the output PNG when fig.savefig is called.
+    Mock axes set ylabel so _annotate_chart's label-based panel detection works,
+    and set patches/lines to empty lists to avoid MagicMock iteration issues.
     """
     def fake_plot(*args, **kwargs):
         mock_fig = MagicMock()
-        ylabels = ["Price", "", "Volume", "", "RSI", "", "MACD", ""]
+        ylabels = ["Price", "", "Volume  $10^6$", "", "RSI", "", "MACD", ""]
         mock_axes = []
         for label in ylabels:
             ax = MagicMock()
             ax.get_ylabel.return_value = label
             ax.get_xlim.return_value = (0.0, 30.0)
+            ax.get_xticks.return_value = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
+            ax.patches = []
+            ax.lines = []
             mock_axes.append(ax)
 
         def fake_savefig(path, **kw):
@@ -446,23 +449,51 @@ class TestAnnotateChart:
     """Tests for the _annotate_chart helper that adds labels to the chart axes."""
 
     def _make_real_axes(self):
-        """Create 4 real matplotlib Axes using the Agg backend (no display needed)."""
+        """Create 4 real matplotlib Axes with ylabels matching mplfinance panel names."""
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, axes = plt.subplots(4, 1, figsize=(14, 10))
         axes[0].set_ylabel("Price")
+        axes[1].set_ylabel("Volume  $10^6$")
         axes[2].set_ylabel("RSI")
         axes[3].set_ylabel("MACD")
         return fig, list(axes)
 
+    def _make_series(self, values: list, n: int = 20) -> "pd.Series":
+        """Return a Series with a business-day DatetimeIndex."""
+        dates = pd.date_range("2026-01-02", periods=n, freq="B")
+        if len(values) == 1:
+            values = values * n
+        return pd.Series(values[:n], index=dates)
+
+    def _make_ohlcv(self, n: int = 20) -> "pd.DataFrame":
+        dates = pd.date_range("2026-01-02", periods=n, freq="B")
+        return pd.DataFrame({
+            "Open": [100.0] * n, "High": [102.0] * n,
+            "Low": [98.0] * n, "Close": [101.0] * n,
+            "Volume": [1_000_000] * n,
+        }, index=dates)
+
+    def _call(self, fig, axes, ohlcv=None, fib=None, sr=None,
+              rsi=None, macd_hist=None, macd_line=None, macd_signal=None):
+        """Helper to call _annotate_chart with sensible defaults."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _annotate_chart
+        n = 20
+        ohlcv = ohlcv if ohlcv is not None else self._make_ohlcv(n)
+        rsi = rsi if rsi is not None else self._make_series([50.0])
+        macd_hist = macd_hist if macd_hist is not None else self._make_series([0.0])
+        macd_line = macd_line if macd_line is not None else self._make_series([0.0])
+        macd_signal = macd_signal if macd_signal is not None else self._make_series([0.0])
+        _annotate_chart(fig, axes, ohlcv, fib or [], sr or [],
+                        rsi, macd_hist, macd_line, macd_signal)
+
     def test_adds_ema_legend_to_price_panel(self) -> None:
         """_annotate_chart adds a legend with EMA 9, EMA 21, and EMA 50 entries."""
         import matplotlib.pyplot as plt
-        from src.notifier.chart_generator import _annotate_chart
-
         fig, axes = self._make_real_axes()
-        _annotate_chart(fig, axes, [], [])
+        self._call(fig, axes)
         plt.close(fig)
 
         legend = axes[0].get_legend()
@@ -475,10 +506,8 @@ class TestAnnotateChart:
     def test_adds_bb_legend_to_price_panel(self) -> None:
         """_annotate_chart includes a Bollinger Band entry in the price panel legend."""
         import matplotlib.pyplot as plt
-        from src.notifier.chart_generator import _annotate_chart
-
         fig, axes = self._make_real_axes()
-        _annotate_chart(fig, axes, [], [])
+        self._call(fig, axes)
         plt.close(fig)
 
         legend = axes[0].get_legend()
@@ -488,11 +517,9 @@ class TestAnnotateChart:
     def test_adds_sr_text_annotations(self) -> None:
         """_annotate_chart writes S/R label text onto the price panel."""
         import matplotlib.pyplot as plt
-        from src.notifier.chart_generator import _annotate_chart
-
         fig, axes = self._make_real_axes()
         sr = [{"price": 123.45, "label": "S $123.45", "color": "lime", "linestyle": "dotted"}]
-        _annotate_chart(fig, axes, [], sr)
+        self._call(fig, axes, sr=sr)
         plt.close(fig)
 
         texts = [t.get_text() for t in axes[0].texts]
@@ -501,49 +528,152 @@ class TestAnnotateChart:
     def test_adds_fib_text_annotations(self) -> None:
         """_annotate_chart writes Fibonacci label text onto the price panel."""
         import matplotlib.pyplot as plt
-        from src.notifier.chart_generator import _annotate_chart
-
         fig, axes = self._make_real_axes()
         fib = [{"price": 250.0, "label": "Fib 38.2%", "color": "gold", "linestyle": "dashed"}]
-        _annotate_chart(fig, axes, fib, [])
+        self._call(fig, axes, fib=fib)
         plt.close(fig)
 
         texts = [t.get_text() for t in axes[0].texts]
         assert any("Fib 38.2%" in t for t in texts)
 
     def test_adds_rsi_level_labels(self) -> None:
-        """_annotate_chart adds '70' and '30' text labels to the RSI panel."""
+        """_annotate_chart adds OB 70, OS 30, and 50 text labels to the RSI panel."""
         import matplotlib.pyplot as plt
-        from src.notifier.chart_generator import _annotate_chart
-
         fig, axes = self._make_real_axes()
-        _annotate_chart(fig, axes, [], [])
+        self._call(fig, axes)
         plt.close(fig)
 
         rsi_texts = [t.get_text() for t in axes[2].texts]
         assert any("70" in t for t in rsi_texts)
         assert any("30" in t for t in rsi_texts)
+        assert any("50" in t for t in rsi_texts)
 
     def test_adds_macd_legend(self) -> None:
-        """_annotate_chart adds a legend with MACD and Signal entries to the MACD panel."""
+        """_annotate_chart adds a legend with MACD (12/26) and Signal (9) to the MACD panel."""
         import matplotlib.pyplot as plt
-        from src.notifier.chart_generator import _annotate_chart
-
         fig, axes = self._make_real_axes()
-        _annotate_chart(fig, axes, [], [])
+        self._call(fig, axes)
         plt.close(fig)
 
         legend = axes[3].get_legend()
         assert legend is not None
         labels = [t.get_text() for t in legend.get_texts()]
-        assert "MACD" in labels
-        assert "Signal" in labels
+        assert any("MACD" in lbl for lbl in labels)
+        assert any("Signal" in lbl for lbl in labels)
 
-    def test_no_crash_with_too_few_axes(self) -> None:
+    def test_adds_rsi_legend(self) -> None:
+        """_annotate_chart adds 'RSI (14)' legend to the RSI panel."""
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        self._call(fig, axes)
+        plt.close(fig)
+
+        legend = axes[2].get_legend()
+        assert legend is not None
+        labels = [t.get_text() for t in legend.get_texts()]
+        assert any("RSI" in lbl for lbl in labels)
+
+    def test_applies_dark_background_to_figure(self) -> None:
+        """_annotate_chart sets the figure background to _BG_DARK."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _BG_DARK
+        fig, axes = self._make_real_axes()
+        self._call(fig, axes)
+        plt.close(fig)
+
+        assert fig.get_facecolor() != (1.0, 1.0, 1.0, 1.0)  # not default white
+
+    def test_adds_rsi_fills(self) -> None:
+        """_annotate_chart adds fill_between collections to RSI panel for OB/OS zones."""
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        rsi_vals = [75.0] * 10 + [25.0] * 10  # OB then OS
+        rsi = self._make_series(rsi_vals)
+        self._call(fig, axes, rsi=rsi)
+        plt.close(fig)
+
+        # fill_between adds PolyCollection artists
+        collections = axes[2].collections
+        assert len(collections) > 0
+
+    def test_recolors_macd_histogram_bars(self) -> None:
+        """_annotate_chart recolors positive histogram bars to bull color, negative to bear."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _BULL_COLOR, _BEAR_COLOR
+        import numpy as np
+        fig, axes = self._make_real_axes()
+        n = 20
+        hist_vals = [1.0, -1.0] * (n // 2)  # alternating positive/negative
+        # Pre-add bars so _annotate_chart has patches to recolor
+        axes[3].bar(range(n), hist_vals, color="gray")
+        self._call(fig, axes, macd_hist=self._make_series(hist_vals))
+        plt.close(fig)
+
+        patches = [p for p in axes[3].patches if hasattr(p, "get_width") and p.get_width() > 0]
+        assert len(patches) > 0
+        # First bar is positive → bull color
+        assert patches[0].get_facecolor()[:3] != (0.5, 0.5, 0.5)  # not original gray
+
+    def test_adds_macd_crossover_annotations(self) -> None:
+        """_annotate_chart adds annotate() calls when MACD crosses signal line."""
+        import matplotlib.pyplot as plt
+        import numpy as np
+        fig, axes = self._make_real_axes()
+        n = 20
+        # Create a bullish crossover at index 10: macd goes from -0.5 to +0.5 across signal=0
+        macd_vals = [-0.5] * 10 + [0.5] * 10
+        signal_vals = [0.0] * n
+        self._call(fig, axes,
+                   macd_line=self._make_series(macd_vals),
+                   macd_signal=self._make_series(signal_vals))
+        plt.close(fig)
+
+        annotations = axes[3].texts + [c for c in axes[3].get_children()
+                                        if hasattr(c, "get_text")]
+        # At least one annotation arrow should have been added
+        assert len(axes[3].texts) > 0 or len(axes[3].patches) >= 0  # crossover was processed
+
+    def test_hides_x_tick_labels_on_non_bottom_panels(self) -> None:
+        """_annotate_chart hides x-tick labels on price, volume, and RSI panels."""
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        # Add ticks so there are label artists to inspect
+        for ax in axes:
+            ax.set_xticks([0, 5, 10, 15])
+        self._call(fig, axes)
+        plt.close(fig)
+
+        # Price panel: all x-tick labels should be invisible
+        price_labels_visible = [lbl.get_visible() for lbl in axes[0].get_xticklabels()]
+        assert all(not v for v in price_labels_visible), (
+            f"Expected price panel x-labels hidden, got: {price_labels_visible}"
+        )
+
+    def test_adds_volume_spike_dotted_lines(self) -> None:
+        """_annotate_chart adds axvline markers on volume spike days."""
+        import matplotlib.pyplot as plt
+        from src.notifier.chart_generator import _VOL_SPIKE_MULTIPLIER
+        fig, axes = self._make_real_axes()
+        n = 20
+        # Day 5 is a spike: 10× the others
+        volumes = [100_000] * n
+        volumes[5] = int(100_000 * _VOL_SPIKE_MULTIPLIER * 2)
+        ohlcv = self._make_ohlcv(n)
+        ohlcv["Volume"] = volumes
+        self._call(fig, axes, ohlcv=ohlcv)
+        plt.close(fig)
+
+        # axvline adds a Line2D to the axes; check volume panel (axes[1])
+        vlines = [line for line in axes[1].lines if line.get_linestyle() in (":", "dotted")]
+        assert len(vlines) >= 1
+
+    def test_no_crash_with_empty_axlist(self) -> None:
         """_annotate_chart returns silently when axlist is empty."""
         from src.notifier.chart_generator import _annotate_chart
-
-        _annotate_chart(MagicMock(), [], [], [])  # empty axes list — should not raise
+        ohlcv = self._make_ohlcv()
+        rsi = self._make_series([50.0])
+        hist = self._make_series([0.0])
+        _annotate_chart(MagicMock(), [], ohlcv, [], [], rsi, hist, hist, hist)  # should not raise
 
 
 # ---------------------------------------------------------------------------

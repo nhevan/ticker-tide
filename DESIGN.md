@@ -879,32 +879,56 @@ the temporary file after delivery.
 
 #### Chart Generator (`src/notifier/chart_generator.py`)
 
-Generates a 4-panel PNG using `mplfinance` with the `nightclouds` dark-mode style. The chart
-uses `returnfig=True` to retrieve the matplotlib figure and axes after mplfinance plots the
-candlestick data, then `_annotate_chart()` adds all labels before saving with `fig.savefig()`.
+Generates a 4-panel PNG using `mplfinance` with a fully custom dark-mode style.
+The chart uses `returnfig=True` to retrieve the matplotlib figure and axes after
+mplfinance plots the candlestick data, then `_annotate_chart()` applies all
+post-processing before saving with `fig.savefig()`.
+
+**Color palette:**
+
+| Element | Color |
+|---|---|
+| Figure / panel background | `#0d0d0d` / `#111111` |
+| Grid lines | `#2a2a2a` dashed |
+| Spines / borders | `#333333` |
+| Tick / axis label | `#aaaaaa` |
+| Bullish candles | `#4fc3f7` (light blue) |
+| Bearish candles | `#f48fb1` (soft pink) |
+| EMA 9 / 21 / 50 | `#66ff99` / `#ff6ec7` / `#ffd700` |
+| Bollinger Bands | `#888888` dashed |
+| RSI OB line | `#ff6666` |
+| RSI OS line | `#66ff99` |
+| MACD line / Signal | `#00e5ff` / `#ff9800` |
 
 **Panel layout:**
 
 | Panel | Height | Content |
 |---|---|---|
-| 0 — Price | 50% | Candlestick + EMA 9/21/50 + Bollinger Bands (upper/lower) + Fibonacci levels + S/R levels |
-| 1 — Volume | 12% | Green/red volume bars |
-| 2 — RSI | 19% | RSI(14) line + 70/30 reference zones |
-| 3 — MACD | 19% | MACD line + signal line + histogram |
+| 0 — Price | 50% | Candlestick + EMA 9/21/50 + Bollinger Bands (dashed + 5% alpha fill) + Fibonacci levels + S/R levels + volume-spike event arrows |
+| 1 — Volume | 12% | Bull/bear colored bars (alpha 0.75) + dotted vertical lines on spike days |
+| 2 — RSI | 19% | RSI(14) white line + OB/OS colored axhlines (70/30) + subtle 50 line + red/green alpha fills + "OB 70" / "OS 30" / "50" right-edge labels + legend |
+| 3 — MACD | 19% | MACD line + signal line + conditional-color histogram (positive=`#4fc3f7`, negative=`#f48fb1`) + zero axhline + crossover arrows + legend |
 
 **Labels added by `_annotate_chart()`:**
 
 | Location | Type | Content |
 |---|---|---|
-| Price panel | Legend | EMA 9 (cyan), EMA 21 (yellow), EMA 50 (magenta), BB (gray dashed) |
-| Price panel right margin | Text | S/R labels: `"S $123.45"`, `"R $130.00 (strong)"` |
-| Price panel right margin | Text | Fibonacci labels: `"Fib 38.2%"`, `"Fib 61.8%"` |
-| RSI panel | Text | `"70"` and `"30"` on the reference lines |
-| MACD panel | Legend | MACD (cyan), Signal (orange) |
+| Price panel | Legend (upper right) | EMA 9 / EMA 21 / EMA 50 / BB |
+| Price panel right margin | Text | S/R: `"S $123.45"`, `"R $130.00 (strong)"`; Fib: `"Fib 38.2%"` |
+| Price panel | Annotate arrows | Spike days: "Buy" (bull spike) / "Sell" (bear spike) pointing to candle |
+| Volume panel | Dotted axvline | One per volume spike day (volume > 1.5× 20-day rolling average) |
+| RSI panel | Text (right edge) | "OB 70", "OS 30", "50" |
+| RSI panel | Legend | RSI (14) |
+| RSI panel | fill_between | Red (RSI > 70) / green (RSI < 30) alpha fills |
+| MACD panel | Legend | MACD (12/26), Signal (9) |
+| MACD panel | Annotate arrows | ↑/↓ on all MACD/signal crossovers |
 
-Fibonacci and S/R labels are computed by `prepare_fibonacci_hlines()` / `prepare_sr_hlines()`
-and rendered as `ax.text()` calls at the right edge of the price axis. Chart config
-(`chart_style`, `chart_figsize`, `sr_levels_to_show`) comes from
+**General:**
+- x-tick labels hidden on all panels except the bottom (MACD)
+- Bottom panel x-ticks formatted as "Mon DD" (e.g. "Feb 17"), rotated 45°
+- All y-labels in `#aaaaaa`, fontsize 9
+
+Chart config (`chart_figsize`, `sr_levels_to_show`) comes from
 `config/notifier.json → detail_command`.
 
 ### 13.6 Daily Pipeline Script (`scripts/run_daily.py`)
