@@ -5,6 +5,7 @@ Entry point to run only the Notifier phase (Phase 4).
 Usage:
   python scripts/run_notifier.py                    # run notifier for latest scores
   python scripts/run_notifier.py --db-path /path    # override database path
+  python scripts/run_notifier.py --force            # re-run even if already completed today
 
 Useful for testing the Telegram output without re-running the full pipeline.
 """
@@ -38,6 +39,7 @@ def main() -> int:
 Examples:
   python scripts/run_notifier.py
   python scripts/run_notifier.py --db-path /custom/path/signals.db
+  python scripts/run_notifier.py --force
         """,
     )
     parser.add_argument(
@@ -45,10 +47,15 @@ Examples:
         metavar="PATH",
         help="Override the database file path from config/database.json.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run even if notifier_done is already completed for today.",
+    )
     args = parser.parse_args()
 
     try:
-        result = run_notifier(db_path=args.db_path)
+        result = run_notifier(db_path=args.db_path, force=args.force)
 
         if result.get("skipped"):
             print(f"Notifier skipped: {result.get('reason', 'unknown')}")

@@ -162,6 +162,7 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
             notifier_result = run_notifier(
                 db_path=db_path,
                 pipeline_stats=pipeline_stats,
+                force=force,
             )
             pipeline_stats["notifier_duration"] = time.monotonic() - phase_start
             if not notifier_result.get("skipped"):

@@ -155,6 +155,7 @@ def _build_pipeline_stats(
 def run_notifier(
     db_path: Optional[str] = None,
     pipeline_stats: Optional[dict] = None,
+    force: bool = False,
 ) -> dict:
     """
     Orchestrate Phase 4: AI reasoning + Telegram delivery.
@@ -163,6 +164,8 @@ def run_notifier(
         db_path: Optional override for the database file path.
         pipeline_stats: Optional pre-built stats dict from the daily pipeline.
             When omitted, stats are queried from pipeline_runs.
+        force: When True, bypass the "already completed" check and re-run
+            even if notifier_done is already completed for the scoring date.
 
     Returns:
         Summary dict with keys: scoring_date, bullish_count, bearish_count,
@@ -195,12 +198,14 @@ def run_notifier(
         db_conn.close()
         return {"skipped": True, "reason": "scorer_done not found"}
 
-    # Pre-flight: skip if already done
+    # Pre-flight: skip if already done (unless forced)
     notifier_status = get_pipeline_event_status(db_conn, "notifier_done", scoring_date)
-    if notifier_status == "completed":
-        logger.info(f"notifier: already completed for {scoring_date} — skipping")
+    if notifier_status == "completed" and not force:
+        logger.info(f"notifier: already completed for {scoring_date} — skipping (use --force to override)")
         db_conn.close()
         return {"skipped": True, "reason": "already completed"}
+    if force and notifier_status == "completed":
+        logger.info(f"notifier: force=True, re-running {scoring_date} despite completed status")
 
     write_pipeline_event(db_conn, "notifier_done", scoring_date, "processing")
     started_at = _utc_now_iso()
