@@ -904,7 +904,7 @@ post-processing before saving with `fig.savefig()`.
 
 | Panel | Height | Content |
 |---|---|---|
-| 0 — Price | 50% | Candlestick + EMA 9/21/50 + Bollinger Bands (dashed + 5% alpha fill) + Fibonacci levels + S/R levels + volume-spike event arrows |
+| 0 — Price | 50% | Candlestick + EMA 9/21/50 + Bollinger Bands (dashed + 5% alpha fill) + Fibonacci levels + S/R levels + volume-spike event arrows + **candlestick pattern markers** + **structural pattern lines** |
 | 1 — Volume | 12% | Bull/bear colored bars (alpha 0.75) + dotted vertical lines on spike days |
 | 2 — RSI | 19% | RSI(14) white line + OB/OS colored axhlines (70/30) + subtle 50 line + red/green alpha fills + "OB 70" / "OS 30" / "50" right-edge labels + legend |
 | 3 — MACD | 19% | MACD line + signal line + conditional-color histogram (positive=`#4fc3f7`, negative=`#f48fb1`) + zero axhline + crossover arrows + legend |
@@ -922,6 +922,22 @@ post-processing before saving with `fig.savefig()`.
 | RSI panel | fill_between | Red (RSI > 70) / green (RSI < 30) alpha fills |
 | MACD panel | Legend | MACD (12/26), Signal (9) |
 | MACD panel | Annotate arrows | ↑/↓ on all MACD/signal crossovers |
+
+**Pattern overlays** (all on price panel, sourced from `patterns_daily`):
+
+| Category | Rendering | Color |
+|---|---|---|
+| Candlestick (bullish) | `ax.annotate()` arrow below candle Low; label e.g. "Hammer", "BullEng" | `#4fc3f7` |
+| Candlestick (bearish) | `ax.annotate()` arrow above candle High | `#f48fb1` |
+| Candlestick (neutral) | `ax.annotate()` at candle mid-price | `#aaaaaa` |
+| `double_top` | Dashed lines at `peak_price` + `neckline_price`; label "Double Top ⊗" | `#f48fb1` |
+| `double_bottom` | Dashed lines at `trough_price` + `neckline_price`; label "Double Bottom ⊕" | `#4fc3f7` |
+| `bull_flag` / `bear_flag` | Dashed lines at `pole_end_price` + `pole_start_price` | bull/bear color |
+| `breakout` | Dashed line at `level_price`; label "Breakout ↑" | `#4fc3f7` |
+| `breakdown` | Dashed line at `level_price`; label "Breakdown ↓" | `#f48fb1` |
+| `false_breakout` | Dashed line at `level_price`; label "False BO" | `#ffd700` |
+
+All patterns within the chart's date window are shown.
 
 **General:**
 - x-tick labels hidden on all panels except the bottom (MACD)

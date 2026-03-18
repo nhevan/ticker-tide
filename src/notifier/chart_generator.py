@@ -14,6 +14,7 @@ Charts are saved as temporary PNG files and cleaned up after sending.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -52,6 +53,17 @@ _RSI_OS_COLOR = "#66ff99"
 _MACD_LINE_COLOR = "#00e5ff"
 _MACD_SIGNAL_COLOR = "#ff9800"
 _VOL_SPIKE_MULTIPLIER = 1.5
+
+# Short display labels for each candlestick pattern name
+_CANDLESTICK_LABELS: dict[str, str] = {
+    "doji": "Doji",
+    "hammer": "Hammer",
+    "shooting_star": "ShStar",
+    "bullish_engulfing": "BullEng",
+    "bearish_engulfing": "BearEng",
+    "morning_star": "MornStar",
+    "evening_star": "EveStar",
+}
 
 
 def _build_chart_style() -> Any:
@@ -94,7 +106,8 @@ def load_chart_data(
     Load all data required for the 4-panel chart.
 
     Queries ohlcv_daily, indicators_daily, support_resistance, divergences_daily,
-    and swing_points for the given ticker over the most recent ``days`` trading days.
+    swing_points, and patterns_daily for the given ticker over the most recent
+    ``days`` trading days.
 
     Parameters:
         db_conn: Open SQLite connection with row_factory=sqlite3.Row.
@@ -108,6 +121,7 @@ def load_chart_data(
           sr_levels (list[dict]) — support/resistance levels
           divergences (list[dict]) — divergence records
           swing_points (list[dict]) — swing point records
+          patterns (list[dict]) — detected candlestick and structural patterns
     """
     ohlcv_rows = db_conn.execute(
         "SELECT date, open, high, low, close, volume FROM ohlcv_daily "
@@ -122,6 +136,7 @@ def load_chart_data(
             "sr_levels": [],
             "divergences": [],
             "swing_points": [],
+            "patterns": [],
         }
 
     ohlcv_df = pd.DataFrame([dict(r) for r in reversed(ohlcv_rows)])
@@ -161,12 +176,21 @@ def load_chart_data(
     ).fetchall()
     swing_points = [dict(r) for r in sp_rows]
 
+    pat_rows = db_conn.execute(
+        "SELECT date, pattern_name, pattern_category, pattern_type, direction, "
+        "strength, confirmed, details "
+        "FROM patterns_daily WHERE ticker = ? AND date >= ? AND date <= ? ORDER BY date ASC",
+        (ticker, date_min, date_max),
+    ).fetchall()
+    patterns = [dict(r) for r in pat_rows]
+
     return {
         "ohlcv": ohlcv_df,
         "indicators": indicators_df,
         "sr_levels": sr_levels,
         "divergences": divergences,
         "swing_points": swing_points,
+        "patterns": patterns,
     }
 
 
@@ -325,6 +349,7 @@ def _annotate_chart(
     macd_hist: pd.Series,
     macd_line: pd.Series,
     macd_signal: pd.Series,
+    patterns: list[dict] | None = None,
 ) -> None:
     """
     Apply all visual styling, labels, legends, and annotations to the chart figure.
@@ -344,6 +369,8 @@ def _annotate_chart(
         macd_hist: MACD histogram series aligned to ohlcv_df.index.
         macd_line: MACD line series aligned to ohlcv_df.index.
         macd_signal: MACD signal series aligned to ohlcv_df.index.
+        patterns: Detected candlestick and structural patterns from patterns_daily.
+            Optional — if None or empty, no pattern overlays are drawn.
 
     Returns:
         None
@@ -543,6 +570,105 @@ def _annotate_chart(
                 rotation=45, ha="right", color=_TICK_COLOR, fontsize=8,
             )
 
+    # ------------------------------------------------------------------
+    # G. Pattern overlays
+    # ------------------------------------------------------------------
+    if patterns:
+        date_to_idx = {
+            dt.strftime("%Y-%m-%d"): i for i, dt in enumerate(ohlcv_df.index)
+        }
+        xlim_price = ax_price.get_xlim()
+        x_right_price = xlim_price[1]
+
+        for pat in patterns:
+            pat_date = pat.get("date", "")
+            direction = pat.get("direction", "neutral")
+            category = pat.get("pattern_category", "")
+            name = pat.get("pattern_name", "")
+            color = _BULL_COLOR if direction == "bullish" else (
+                _BEAR_COLOR if direction == "bearish" else _TICK_COLOR
+            )
+
+            if category == "candlestick":
+                idx = date_to_idx.get(pat_date)
+                if idx is None:
+                    continue
+                label = _CANDLESTICK_LABELS.get(name, name[:8])
+                if direction == "bullish":
+                    y_anchor = float(ohlcv_df["Low"].iloc[idx])
+                    y_offset = -14
+                elif direction == "bearish":
+                    y_anchor = float(ohlcv_df["High"].iloc[idx])
+                    y_offset = 14
+                else:
+                    y_anchor = float(
+                        (ohlcv_df["High"].iloc[idx] + ohlcv_df["Low"].iloc[idx]) / 2
+                    )
+                    y_offset = 10
+                ax_price.annotate(
+                    label,
+                    xy=(idx, y_anchor),
+                    xytext=(0, y_offset),
+                    textcoords="offset points",
+                    color=color,
+                    fontsize=6,
+                    ha="center",
+                    arrowprops=dict(arrowstyle="->", color=color, lw=0.7),
+                    bbox=dict(
+                        boxstyle="round,pad=0.15", facecolor=_LEGEND_BG,
+                        edgecolor=color, alpha=0.85,
+                    ),
+                    zorder=6,
+                )
+
+            elif category == "structural":
+                try:
+                    details: dict = json.loads(pat.get("details") or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    details = {}
+
+                lines_to_draw: list[tuple[float, str]] = []
+
+                if name == "double_top":
+                    if "peak_price" in details:
+                        lines_to_draw.append((details["peak_price"], f"Double Top ⊗"))
+                    if "neckline_price" in details:
+                        lines_to_draw.append((details["neckline_price"], ""))
+                elif name == "double_bottom":
+                    if "trough_price" in details:
+                        lines_to_draw.append((details["trough_price"], f"Double Bottom ⊕"))
+                    if "neckline_price" in details:
+                        lines_to_draw.append((details["neckline_price"], ""))
+                elif name in ("bull_flag", "bear_flag"):
+                    flag_label = "Bull Flag" if name == "bull_flag" else "Bear Flag"
+                    if "pole_end_price" in details:
+                        lines_to_draw.append((details["pole_end_price"], flag_label))
+                    if "pole_start_price" in details:
+                        lines_to_draw.append((details["pole_start_price"], ""))
+                elif name == "breakout":
+                    if "level_price" in details:
+                        lines_to_draw.append((details["level_price"], "Breakout ↑"))
+                elif name == "breakdown":
+                    if "level_price" in details:
+                        lines_to_draw.append((details["level_price"], "Breakdown ↓"))
+                elif name == "false_breakout":
+                    line_color = "#ffd700"
+                    if "level_price" in details:
+                        lines_to_draw.append((details["level_price"], "False BO"))
+                    color = "#ffd700"
+
+                for price_level, line_label in lines_to_draw:
+                    ax_price.axhline(
+                        price_level, color=color, linestyle="--",
+                        linewidth=0.8, alpha=0.7, zorder=3,
+                    )
+                    if line_label:
+                        ax_price.text(
+                            x_right_price, price_level, f" {line_label}",
+                            color=color, fontsize=7, va="center",
+                            ha="left", clip_on=False, zorder=6,
+                        )
+
 
 def generate_chart(
     db_conn: sqlite3.Connection,
@@ -659,6 +785,7 @@ def generate_chart(
             fig, axlist, ohlcv_df,
             fib_hlines, sr_hlines,
             rsi, macd_hist, macd_line, macd_signal,
+            patterns=chart_data.get("patterns"),
         )
         fig.savefig(output_path, bbox_inches="tight", dpi=150)
         plt.close(fig)

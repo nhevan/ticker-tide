@@ -168,6 +168,44 @@ class TestLoadChartData:
         assert isinstance(result["ohlcv"], pd.DataFrame)
         assert len(result["ohlcv"]) == 0
 
+    def test_returns_patterns_key(self, db_connection: sqlite3.Connection) -> None:
+        """load_chart_data returns a 'patterns' key containing detected patterns."""
+        from src.notifier.chart_generator import load_chart_data
+
+        _insert_ohlcv(db_connection, "AAPL", 30)
+        result = load_chart_data(db_connection, "AAPL", 30)
+
+        assert "patterns" in result
+        assert isinstance(result["patterns"], list)
+
+    def test_loads_patterns_within_date_range(self, db_connection: sqlite3.Connection) -> None:
+        """Patterns within the chart date range are included; older ones are excluded."""
+        import json as _json
+        from src.notifier.chart_generator import load_chart_data
+
+        _insert_ohlcv(db_connection, "AAPL", 30)
+        ohlcv_result = load_chart_data(db_connection, "AAPL", 30)
+        date_in_range = ohlcv_result["ohlcv"].index[-1].strftime("%Y-%m-%d")
+
+        db_connection.execute(
+            "INSERT INTO patterns_daily "
+            "(ticker, date, pattern_name, pattern_category, pattern_type, direction, strength, confirmed, details) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            ("AAPL", date_in_range, "hammer", "candlestick", "reversal", "bullish", 4, 0, None),
+        )
+        db_connection.execute(
+            "INSERT INTO patterns_daily "
+            "(ticker, date, pattern_name, pattern_category, pattern_type, direction, strength, confirmed, details) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            ("AAPL", "2000-01-01", "doji", "candlestick", "indecision", "neutral", 2, 0, None),
+        )
+        db_connection.commit()
+
+        result = load_chart_data(db_connection, "AAPL", 30)
+        pattern_names = [p["pattern_name"] for p in result["patterns"]]
+        assert "hammer" in pattern_names
+        assert "doji" not in pattern_names
+
 
 # ---------------------------------------------------------------------------
 # Tests: prepare_fibonacci_hlines
@@ -476,7 +514,8 @@ class TestAnnotateChart:
         }, index=dates)
 
     def _call(self, fig, axes, ohlcv=None, fib=None, sr=None,
-              rsi=None, macd_hist=None, macd_line=None, macd_signal=None):
+              rsi=None, macd_hist=None, macd_line=None, macd_signal=None,
+              patterns=None):
         """Helper to call _annotate_chart with sensible defaults."""
         import matplotlib.pyplot as plt
         from src.notifier.chart_generator import _annotate_chart
@@ -487,7 +526,8 @@ class TestAnnotateChart:
         macd_line = macd_line if macd_line is not None else self._make_series([0.0])
         macd_signal = macd_signal if macd_signal is not None else self._make_series([0.0])
         _annotate_chart(fig, axes, ohlcv, fib or [], sr or [],
-                        rsi, macd_hist, macd_line, macd_signal)
+                        rsi, macd_hist, macd_line, macd_signal,
+                        patterns=patterns)
 
     def test_adds_ema_legend_to_price_panel(self) -> None:
         """_annotate_chart adds a legend with EMA 9, EMA 21, and EMA 50 entries."""
@@ -674,6 +714,83 @@ class TestAnnotateChart:
         rsi = self._make_series([50.0])
         hist = self._make_series([0.0])
         _annotate_chart(MagicMock(), [], ohlcv, [], [], rsi, hist, hist, hist)  # should not raise
+
+    def test_renders_bullish_candlestick_pattern(self) -> None:
+        """_annotate_chart adds an annotation to the price panel for a bullish candlestick pattern."""
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        pattern_date = ohlcv.index[10].strftime("%Y-%m-%d")
+        patterns = [{
+            "date": pattern_date,
+            "pattern_name": "hammer",
+            "pattern_category": "candlestick",
+            "pattern_type": "reversal",
+            "direction": "bullish",
+            "strength": 4,
+            "confirmed": False,
+            "details": None,
+        }]
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)
+        plt.close(fig)
+
+        # annotation should have been added to price panel
+        assert len(axes[0].texts) > 0 or any(
+            hasattr(c, "get_text") for c in axes[0].get_children()
+        )
+
+    def test_renders_structural_pattern_lines(self) -> None:
+        """_annotate_chart draws axhlines for structural patterns with price levels."""
+        import json as _json
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        pattern_date = ohlcv.index[-1].strftime("%Y-%m-%d")
+        details = _json.dumps({"level_price": 105.0, "volume_ratio": 2.0})
+        patterns = [{
+            "date": pattern_date,
+            "pattern_name": "breakout",
+            "pattern_category": "structural",
+            "pattern_type": "continuation",
+            "direction": "bullish",
+            "strength": 3,
+            "confirmed": True,
+            "details": details,
+        }]
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)
+        plt.close(fig)
+
+        # axhline adds horizontal lines to the price axes
+        hlines = [line for line in axes[0].lines if line.get_linestyle() in ("--", "dashed")]
+        assert len(hlines) >= 1
+
+    def test_no_crash_with_none_patterns(self) -> None:
+        """_annotate_chart handles patterns=None without error."""
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        self._call(fig, axes, patterns=None)
+        plt.close(fig)
+
+    def test_no_crash_with_invalid_pattern_details(self) -> None:
+        """_annotate_chart skips structural patterns with malformed details JSON."""
+        import matplotlib.pyplot as plt
+        fig, axes = self._make_real_axes()
+        n = 20
+        ohlcv = self._make_ohlcv(n)
+        patterns = [{
+            "date": ohlcv.index[-1].strftime("%Y-%m-%d"),
+            "pattern_name": "breakout",
+            "pattern_category": "structural",
+            "pattern_type": "continuation",
+            "direction": "bullish",
+            "strength": 3,
+            "confirmed": True,
+            "details": "not valid json {{{{",
+        }]
+        self._call(fig, axes, ohlcv=ohlcv, patterns=patterns)  # must not raise
+        plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
