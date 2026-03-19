@@ -233,6 +233,28 @@ printf "${BOLD}║  Tests:    %-34s║${RESET}\n" "${TEST_COUNT} passed"
 printf "${BOLD}║  Cron:     %-34s║${RESET}\n" "3 jobs installed"
 echo -e "${BOLD}╚══════════════════════════════════════════════╝${RESET}"
 
+# ─── Telegram deploy notification ──────────────────────────────────────────────
+_TG_BOT_TOKEN="$(grep '^TELEGRAM_BOT_TOKEN=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2-)"
+_TG_CHAT_ID="$(grep '^TELEGRAM_ADMIN_CHAT_ID=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2-)"
+
+if [[ -n "$_TG_BOT_TOKEN" && -n "$_TG_CHAT_ID" ]]; then
+    _DEPLOY_MSG="🚀 *Ticker-Tide deployed successfully*
+• Host: $(hostname)
+• Python: ${PYTHON_VERSION}
+• Tests: ${TEST_COUNT} passed
+• Time: $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+    curl -s -X POST "https://api.telegram.org/bot${_TG_BOT_TOKEN}/sendMessage" \
+        --data-urlencode "chat_id=${_TG_CHAT_ID}" \
+        --data-urlencode "text=${_DEPLOY_MSG}" \
+        --data-urlencode "parse_mode=Markdown" \
+        -o /dev/null \
+        && echo -e "${GREEN}✅ Telegram notification sent${RESET}" \
+        || echo -e "${YELLOW}⚠️  Telegram notification failed (non-fatal)${RESET}"
+else
+    echo -e "${YELLOW}⚠️  Telegram notification skipped (TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID not set)${RESET}"
+fi
+
 if [[ "$NEEDS_ENV_EDIT" == "true" ]]; then
     echo ""
     echo -e "${YELLOW}⚠️  ACTION REQUIRED:${RESET}"
