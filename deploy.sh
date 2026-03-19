@@ -124,7 +124,7 @@ REQUIRED_KEYS=(
     "FINNHUB_API_KEY"
     "ANTHROPIC_API_KEY"
     "TELEGRAM_BOT_TOKEN"
-    "TELEGRAM_CHAT_ID"
+    "TELEGRAM_ADMIN_CHAT_ID"
 )
 
 if [[ ! -f "${PROJECT_DIR}/.env" ]]; then
@@ -241,7 +241,7 @@ if [[ "$NEEDS_ENV_EDIT" == "true" ]]; then
     echo -e "${YELLOW}   - FINNHUB_API_KEY${RESET}"
     echo -e "${YELLOW}   - ANTHROPIC_API_KEY${RESET}"
     echo -e "${YELLOW}   - TELEGRAM_BOT_TOKEN${RESET}"
-    echo -e "${YELLOW}   - TELEGRAM_CHAT_ID${RESET}"
+    echo -e "${YELLOW}   - TELEGRAM_ADMIN_CHAT_ID${RESET}"
     echo ""
     echo -e "${YELLOW}   Then run: python scripts/test_api_access.py${RESET}"
 fi
