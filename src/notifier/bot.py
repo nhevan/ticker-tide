@@ -24,11 +24,13 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from src.common.config import get_active_tickers, load_config
 from src.common.db import get_connection
 from src.notifier.detail_command import handle_detail_command, send_photo_to_chat
+from src.notifier.tickers_command import handle_tickers_command
 
 logger = logging.getLogger(__name__)
 
 _HELP_TEXT = (
     "📋 Available Commands:\n"
+    "  /tickers          — list all watched tickers by sector\n"
     "  /detail AAPL      — deep analysis for a ticker (30 days)\n"
     "  /detail AAPL 90   — deep analysis with 90-day chart\n"
     "  /help             — show this message"
@@ -124,6 +126,7 @@ def start_bot(config: dict) -> None:
     application = Application.builder().token(bot_token).build()
 
     application.add_handler(CommandHandler("detail", handle_detail_command_wrapper))
+    application.add_handler(CommandHandler("tickers", handle_tickers_command))
     application.add_handler(CommandHandler("help", handle_help_command))
 
     logger.info("phase=bot Telegram bot started, listening for commands...")

@@ -124,6 +124,7 @@ src/
     ├── telegram.py
     ├── chart_generator.py       # 4-panel mplfinance chart for /detail command
     ├── detail_command.py        # /detail Telegram bot command handler
+    ├── tickers_command.py       # /tickers Telegram bot command handler
     └── bot.py                   # Telegram bot long-polling listener
 
 scripts/
@@ -188,6 +189,7 @@ The pipeline sends daily reports automatically. A separate interactive bot proce
 
 | Command | Description |
 |---|---|
+| `/tickers` | List all watched tickers grouped by sector |
 | `/detail AAPL` | Deep analysis for AAPL with 30-day chart (default) |
 | `/detail AAPL 90` | Deep analysis with 90-day chart |
 | `/help` | List all available commands |
