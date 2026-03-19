@@ -158,6 +158,28 @@ scripts/
 | `sqlite3` | Database (stdlib, WAL mode) |
 | `pytest` / `pytest-mock` | Tests |
 
+## CI/CD — Automated Deployment
+
+Every push to `main` triggers `.github/workflows/deploy.yml`, which SSHes into the EC2 instance and runs `./deploy.sh`.
+
+`deploy.sh` is idempotent and handles:
+- `git pull origin main` — fetch latest code
+- Python 3.9+ detection and venv setup
+- `pip install -r requirements.txt`
+- `.env` key validation
+- Database initialisation (`scripts/setup_db.py`)
+- Full test suite (`pytest tests/ -v`) — deployment aborts on test failure
+
+### Required Repository Secrets
+
+Configure these under **Settings → Secrets → Actions** in the GitHub repository:
+
+| Secret | Description |
+|---|---|
+| `EC2_HOST` | Public IP or hostname of the EC2 instance |
+| `EC2_USER` | SSH username (e.g. `ec2-user`) |
+| `EC2_SSH_KEY` | PEM private key with access to the EC2 instance |
+
 ## Telegram Bot (Interactive Commands)
 
 The pipeline sends daily reports automatically. A separate interactive bot process handles on-demand commands.
