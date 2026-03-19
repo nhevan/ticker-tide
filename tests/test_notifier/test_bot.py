@@ -1,56 +1,20 @@
 """
 Tests for src/notifier/bot.py — Telegram bot command handlers and message logging.
 
-The python-telegram-bot library and other optional packages are stubbed out at
-module level so bot.py can be imported without the real libraries installed.
+Stubs for python-telegram-bot and mplfinance are installed by the directory-level
+conftest.py before this module is imported.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sqlite3
-import sys
-from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
-# ---------------------------------------------------------------------------
-# Stub out optional packages before any src.notifier.bot import
-# ---------------------------------------------------------------------------
-
-def _stub_if_missing(module_name: str, attrs: dict) -> None:
-    """Register a stub module under *module_name* unless it is already present."""
-    if module_name in sys.modules:
-        return
-    stub = ModuleType(module_name)
-    for attr_name, attr_value in attrs.items():
-        setattr(stub, attr_name, attr_value)
-    sys.modules[module_name] = stub
-
-
-def _install_stubs() -> None:
-    """
-    Install minimal stubs for optional packages so bot.py and its transitive
-    dependencies can be imported without the real libraries installed.
-    """
-    _stub_if_missing("telegram", {"Update": MagicMock()})
-    _stub_if_missing("telegram.ext", {
-        "Application": MagicMock(),
-        "CommandHandler": MagicMock(),
-        "ContextTypes": MagicMock(),
-    })
-    _stub_if_missing("mplfinance", {"make_addplot": MagicMock(), "plot": MagicMock()})
-    _stub_if_missing("anthropic", {})
-    _stub_if_missing("finnhub", {})
-    _stub_if_missing("yfinance", {})
-
-
-_install_stubs()
-
-from src.common.events import log_telegram_message  # noqa: E402
-from src.notifier.bot import _extract_command, handle_detail_command_wrapper, handle_help_command  # noqa: E402
+from src.common.events import log_telegram_message
+from src.notifier.bot import _extract_command, handle_detail_command_wrapper, handle_help_command
 
 
 # ---------------------------------------------------------------------------
