@@ -209,7 +209,12 @@ echo -e "${BOLD}⏰ Setting up cron jobs...${RESET}"
 VENV_PYTHON_BIN="${PROJECT_DIR}/.venv/bin/python"
 
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || echo "")"
+# Remove the managed TICKER-TIDE block
 STRIPPED_CRONTAB="$(echo "$CURRENT_CRONTAB" | sed '/# TICKER-TIDE-START/,/# TICKER-TIDE-END/d')"
+# Remove any stray lines referencing this project dir (old manually-added entries)
+STRIPPED_CRONTAB="$(echo "$STRIPPED_CRONTAB" | grep -v "${PROJECT_DIR}")"
+# Remove blank lines left behind
+STRIPPED_CRONTAB="$(echo "$STRIPPED_CRONTAB" | sed '/^[[:space:]]*$/d')"
 
 CRON_BLOCK="# TICKER-TIDE-START — managed by deploy.sh, do not edit manually
 0 0 * * * cd ${PROJECT_DIR} && ${VENV_PYTHON_BIN} scripts/run_daily.py >> ${PROJECT_DIR}/logs/daily_\$(date +\\%Y\\%m\\%d).log 2>&1
@@ -217,8 +222,12 @@ CRON_BLOCK="# TICKER-TIDE-START — managed by deploy.sh, do not edit manually
 0 6 * * 0 find ${PROJECT_DIR}/logs -name \"*.log\" -mtime +30 -delete
 # TICKER-TIDE-END"
 
-NEW_CRONTAB="${STRIPPED_CRONTAB}
+if [[ -n "$STRIPPED_CRONTAB" ]]; then
+    NEW_CRONTAB="${STRIPPED_CRONTAB}
 ${CRON_BLOCK}"
+else
+    NEW_CRONTAB="${CRON_BLOCK}"
+fi
 
 echo "$NEW_CRONTAB" | crontab -
 crontab -l > /dev/null
