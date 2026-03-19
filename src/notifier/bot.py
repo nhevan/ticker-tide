@@ -17,16 +17,36 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from datetime import datetime, timezone
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src.common.config import get_active_tickers, load_config
 from src.common.db import get_connection
+from src.common.events import log_telegram_message
 from src.notifier.detail_command import handle_detail_command, send_photo_to_chat
 from src.notifier.tickers_command import handle_tickers_command
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_command(message_text: str) -> str | None:
+    """
+    Return the leading slash-command from a message string, or None if absent.
+
+    Extracts the first token if it starts with '/'. For example, '/detail AAPL 30'
+    returns '/detail', and 'hello world' returns None.
+
+    Parameters:
+        message_text: Raw incoming message string.
+
+    Returns:
+        The command token (e.g. '/detail') or None.
+    """
+    first_token = message_text.strip().split()[0] if message_text.strip() else ""
+    return first_token if first_token.startswith("/") else None
+
 
 _HELP_TEXT = (
     "📋 Available Commands:\n"
@@ -63,8 +83,23 @@ async def handle_detail_command_wrapper(
         args = context.args or []
         message_text = "/detail " + " ".join(args)
 
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    received_at = datetime.now(tz=timezone.utc).isoformat()
+    user = update.message.from_user
+    user_id = str(user.id) if user else None
+    username = user.username if user else None
+    command = _extract_command(message_text)
+
     db_path = os.getenv("DB_PATH", "data/signals.db")
+    log_conn = get_connection(db_path)
+    try:
+        log_telegram_message(log_conn, chat_id, user_id, username, command, message_text, received_at)
+        logger.info("phase=bot chat_id=%s user=%s command=%s message logged", chat_id, username, command)
+    except sqlite3.Error as exc:
+        logger.warning("phase=bot failed to log telegram message: %s", exc)
+    finally:
+        log_conn.close()
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
     notifier_config = load_config("notifier")
     calc_config = load_config("calculator")
@@ -102,6 +137,24 @@ async def handle_help_command(
     """
     if update.message is None:
         return
+
+    received_at = datetime.now(tz=timezone.utc).isoformat()
+    chat_id = str(update.message.chat_id)
+    user = update.message.from_user
+    user_id = str(user.id) if user else None
+    username = user.username if user else None
+    message_text = update.message.text or "/help"
+
+    db_path = os.getenv("DB_PATH", "data/signals.db")
+    log_conn = get_connection(db_path)
+    try:
+        log_telegram_message(log_conn, chat_id, user_id, username, "/help", message_text, received_at)
+        logger.info("phase=bot chat_id=%s user=%s command=/help message logged", chat_id, username)
+    except sqlite3.Error as exc:
+        logger.warning("phase=bot failed to log telegram message: %s", exc)
+    finally:
+        log_conn.close()
+
     await update.message.reply_text(_HELP_TEXT)
 
 

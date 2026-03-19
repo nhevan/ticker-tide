@@ -437,6 +437,15 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             notified BOOLEAN DEFAULT 0,
             created_at TEXT
         )""",
+        """CREATE TABLE IF NOT EXISTS telegram_message_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            user_id TEXT,
+            username TEXT,
+            command TEXT,
+            message_text TEXT NOT NULL,
+            received_at TEXT NOT NULL
+        )""",
     ]
 
     for statement in schema_statements:

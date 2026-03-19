@@ -7,12 +7,17 @@ Lists all actively watched tickers grouped by sector, sorted alphabetically.
 from __future__ import annotations
 
 import logging
+import os
+import sqlite3
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from src.common.config import get_active_tickers
+from src.common.db import get_connection
+from src.common.events import log_telegram_message
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +76,23 @@ async def handle_tickers_command(
     if update.message is None:
         return
 
-    logger.info("phase=bot command=/tickers chat_id=%s", update.message.chat_id)
+    received_at = datetime.now(tz=timezone.utc).isoformat()
+    chat_id = str(update.message.chat_id)
+    user = update.message.from_user
+    user_id = str(user.id) if user else None
+    username = user.username if user else None
+    message_text = update.message.text or "/tickers"
+
+    logger.info("phase=bot command=/tickers chat_id=%s", chat_id)
+
+    db_path = os.getenv("DB_PATH", "data/signals.db")
+    log_conn = get_connection(db_path)
+    try:
+        log_telegram_message(log_conn, chat_id, user_id, username, "/tickers", message_text, received_at)
+    except sqlite3.Error as exc:
+        logger.warning("phase=bot failed to log telegram message: %s", exc)
+    finally:
+        log_conn.close()
 
     active_tickers = get_active_tickers()
     message = format_tickers_message(active_tickers)

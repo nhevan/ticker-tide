@@ -248,6 +248,42 @@ def log_pipeline_run(
     db_conn.commit()
 
 
+def log_telegram_message(
+    db_conn: sqlite3.Connection,
+    chat_id: str,
+    user_id: str | None,
+    username: str | None,
+    command: str | None,
+    message_text: str,
+    received_at: str,
+) -> None:
+    """
+    Insert an incoming Telegram message record into the telegram_message_log table.
+
+    Captures who sent a command, when, and what they said. Intended for usage
+    analytics — e.g. counting which commands are used most frequently or by which users.
+
+    Args:
+        db_conn: Open SQLite connection with the telegram_message_log table.
+        chat_id: Telegram chat ID of the sender (always present).
+        user_id: Telegram user ID as a string, or None if not available.
+        username: Telegram @username, or None if the user has no username set.
+        command: The command prefix extracted from the message (e.g. "/detail", "/help"),
+                 or None if the message has no recognisable command prefix.
+        message_text: Full raw text of the incoming message.
+        received_at: ISO 8601 UTC timestamp when the message was received.
+    """
+    db_conn.execute(
+        """
+        INSERT INTO telegram_message_log
+            (chat_id, user_id, username, command, message_text, received_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (chat_id, user_id, username, command, message_text, received_at),
+    )
+    db_conn.commit()
+
+
 def get_latest_pipeline_run(
     db_conn: sqlite3.Connection, phase: str
 ) -> dict | None:

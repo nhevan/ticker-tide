@@ -631,6 +631,19 @@ Enable WAL mode on connection.
 - notified BOOLEAN DEFAULT 0
 - created_at TEXT
 
+### Telegram Tables
+
+**telegram_message_log** — incoming bot commands for usage analytics
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- chat_id TEXT NOT NULL — Telegram chat ID of the sender
+- user_id TEXT — Telegram user ID (NULL if unavailable)
+- username TEXT — Telegram @username (NULL if user has no username)
+- command TEXT — extracted command prefix e.g. `/detail`, `/help`, `/tickers` (NULL if none)
+- message_text TEXT NOT NULL — full raw message text
+- received_at TEXT NOT NULL — UTC ISO 8601 timestamp
+
+Index: `idx_telegram_message_log_received_at` on `received_at`
+
 ## 5. Technical Indicators (15 total)
 
 All computed using the `ta` library from OHLCV data. Parameters configurable in calculator.json.

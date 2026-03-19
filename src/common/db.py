@@ -441,6 +441,17 @@ def _build_schema_statements() -> list[str]:
             created_at TEXT
         )""",
 
+        # ── Telegram Tables ────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS telegram_message_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            user_id TEXT,
+            username TEXT,
+            command TEXT,
+            message_text TEXT NOT NULL,
+            received_at TEXT NOT NULL
+        )""",
+
         # ── Indexes ────────────────────────────────────────────────────────────────
         "CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_date ON ohlcv_daily(ticker, date)",
         "CREATE INDEX IF NOT EXISTS idx_indicators_ticker_date ON indicators_daily(ticker, date)",
@@ -457,4 +468,5 @@ def _build_schema_statements() -> list[str]:
         "CREATE INDEX IF NOT EXISTS idx_short_interest_ticker ON short_interest(ticker, settlement_date)",
         "CREATE INDEX IF NOT EXISTS idx_pipeline_events ON pipeline_events(event, date)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_log_date ON alerts_log(date)",
+        "CREATE INDEX IF NOT EXISTS idx_telegram_message_log_received_at ON telegram_message_log(received_at)",
     ]

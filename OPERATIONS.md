@@ -167,6 +167,39 @@ conn.close()
 "
 ```
 
+### Bot command usage analytics
+
+```bash
+python -c "
+import sqlite3
+conn = sqlite3.connect('data/signals.db')
+rows = conn.execute(
+    \"SELECT command, COUNT(*) as count \"
+    \"FROM telegram_message_log \"
+    \"GROUP BY command ORDER BY count DESC\"
+).fetchall()
+for r in rows: print(r)
+conn.close()
+"
+```
+
+To see usage by user over the last 30 days:
+
+```bash
+python -c "
+import sqlite3
+conn = sqlite3.connect('data/signals.db')
+rows = conn.execute(
+    \"SELECT username, command, COUNT(*) as count \"
+    \"FROM telegram_message_log \"
+    \"WHERE received_at >= datetime('now', '-30 days') \"
+    \"GROUP BY username, command ORDER BY count DESC\"
+).fetchall()
+for r in rows: print(r)
+conn.close()
+"
+```
+
 ### Check signal flips (last 7 days)
 
 ```bash
