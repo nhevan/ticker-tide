@@ -33,7 +33,8 @@ The backfiller is a one-time historical data loader with the following modules:
 | `src/backfiller/news.py` | News articles + AI sentiment (3 months) | Polygon + Finnhub |
 | `src/backfiller/filings.py` | 8-K SEC filings (6 months) | Polygon |
 | `src/backfiller/main.py` | Orchestrator: ticker sync + all phases | — |
-| `src/backfiller/verify.py` | Post-backfill data verification + report | — |
+| `src/backfiller/verify.py` | Post-backfill raw data verification + report (10 checks) | — |
+| `src/backfiller/verify_pipeline.py` | Post-calculation computed data verification + report (29 checks) | — |
 
 Each module follows the same pattern: per-ticker function + batch function with ProgressTracker + Telegram progress updates. Polygon's Starter tier has no rate limiting. Finnhub free tier enforces 1 second delay between calls via `FinnhubClient._rate_limit()`.
 

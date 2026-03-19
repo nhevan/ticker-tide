@@ -332,6 +332,18 @@ Note: include `admin_chat_id` in `subscriber_chat_ids` if the admin also wants t
 
 ---
 
+## config/verify_pipeline.json
+
+Thresholds for `scripts/verify_pipeline.py`. All keys are optional — the script falls back to built-in defaults if the file is absent.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `indicator_ranges.bb_pctb.min` | float | `-1.0` | Minimum acceptable BB %B value; values outside 0–1 are normal during breakouts |
+| `indicator_ranges.bb_pctb.max` | float | `2.0` | Maximum acceptable BB %B value |
+| `ema_stuck_days_threshold` | int | `10` | Flag an EMA as stuck (computation error) if it has the same value for this many consecutive trading days; EMA distance from price is never flagged as a warning (logged at INFO only) |
+| `weekly_volume_min_ratio` | float | `0.30` | Flag a week only if its volume is below this fraction of `(trading_days × local_avg_daily_volume)`; reference avg uses a rolling ±42-day window (~60 trading days) so early low-volume tickers aren't compared against inflated all-time averages |
+| `warmup_rows` | int | `50` | Rows per ticker (ordered by date) to skip in range checks; covers the `ta` library's indicator warm-up period |
+
 ## Config Changes Requiring Re-runs
 
 | Config change | Required action |

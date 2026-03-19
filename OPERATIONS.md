@@ -54,6 +54,7 @@ tail -50 /home/ec2-user/ticker-tide/logs/daily_$(date +%Y%m%d).log
 | `setup_db.py` | Create/migrate schema (idempotent) | `(none)` |
 | `test_api_access.py` | Test all 5 API keys | `(none)` |
 | `verify_backfill.py` | Post-backfill data quality checks | `--ticker AAPL`, `--quiet`, `--no-telegram`, `--db-path PATH` |
+| `verify_pipeline.py` | Post-calculation computed data checks | `--date YYYY-MM-DD`, `--quiet`, `--no-telegram`, `--db-path PATH` |
 
 Valid `--phase` values for `run_backfill.py`: `ohlcv`, `macro`, `fundamentals`, `earnings`, `corporate_actions`, `news`, `filings`.
 
@@ -289,6 +290,13 @@ python scripts/run_scorer.py --historical
 0 6 * * 0 find /home/ec2-user/ticker-tide/logs -name "daily_*.log" -mtime +30 -delete
 ```
 
+Weekly pipeline health check (Sundays 06:00 UTC):
+
+```
+# Weekly pipeline health check (Sundays at 06:00 UTC)
+0 6 * * 0 cd /home/ec2-user/ticker-tide && .venv/bin/python scripts/verify_pipeline.py >> logs/verify_$(date +\%Y\%m\%d).log 2>&1
+```
+
 Log format (set in `src/common/logger.py`):
 
 ```
@@ -306,7 +314,7 @@ Log format (set in `src/common/logger.py`):
 | Clone repo | `git clone <repo-url> /home/ec2-user/ticker-tide` | `ls /home/ec2-user/ticker-tide/src/` |
 | Run deploy | `cd /home/ec2-user/ticker-tide && ./deploy.sh` | "All tests passed" in output |
 | Restore `.env` | `scp old-server:/home/ec2-user/ticker-tide/.env /home/ec2-user/ticker-tide/.env` | `python scripts/test_api_access.py` |
-| Restore DB | `scp old-server:/home/ec2-user/ticker-tide/data/signals.db /home/ec2-user/ticker-tide/data/` | `python scripts/verify_backfill.py --quiet` |
+| Restore DB | `scp old-server:/home/ec2-user/ticker-tide/data/signals.db /home/ec2-user/ticker-tide/data/` | `python scripts/verify_backfill.py --quiet && python scripts/verify_pipeline.py --quiet` |
 | Set up cron | `crontab -e` — paste cron lines from README | `crontab -l` |
 | Test pipeline | `source .venv/bin/activate && python scripts/run_daily.py --force` | Telegram received |
 

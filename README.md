@@ -44,13 +44,15 @@ python scripts/run_backfill.py             # one-time: load 5 years of data (~30
 python scripts/verify_backfill.py          # check data completeness and gaps
 python scripts/run_calculator.py           # compute all indicators, patterns, profiles
 python scripts/run_scorer.py --historical  # score all historical dates
+python scripts/verify_pipeline.py         # verify computed data (indicators, scores, patterns)
 ```
 
-Set up cron (runs 00:00 UTC, logs to a dated file, rotates logs weekly):
+Set up cron (runs 00:00 UTC, logs to a dated file, rotates logs weekly, and runs pipeline health check Sundays 06:00 UTC):
 
 ```
 0 0 * * * cd /home/ec2-user/ticker-tide && /home/ec2-user/ticker-tide/.venv/bin/python scripts/run_daily.py >> logs/daily_$(date +\%Y\%m\%d).log 2>&1
 0 6 * * 0 find /home/ec2-user/ticker-tide/logs -name "daily_*.log" -mtime +30 -delete
+0 6 * * 0 cd /home/ec2-user/ticker-tide && .venv/bin/python scripts/verify_pipeline.py >> logs/verify_$(date +\%Y\%m\%d).log 2>&1
 ```
 
 ## Daily Operations
@@ -84,7 +86,8 @@ src/
 │   ├── news.py
 │   ├── filings.py
 │   ├── utils.py
-│   └── verify.py              # post-backfill data quality checks (10 checks)
+│   ├── verify.py              # post-backfill raw data quality checks (10 checks)
+│   └── verify_pipeline.py     # post-calculation computed data checks (29 checks)
 ├── fetcher/
 │   ├── main.py
 │   ├── earnings.py
@@ -133,7 +136,8 @@ scripts/
 ├── enrich_finnhub_sentiment.py  # backfill NULL-sentiment Finnhub articles
 ├── setup_db.py                # initialise schema (idempotent)
 ├── test_api_access.py         # verify all 5 API keys
-└── verify_backfill.py         # post-backfill data quality report
+├── verify_backfill.py         # post-backfill raw data quality report
+└── verify_pipeline.py         # post-calculation computed data quality report
 ```
 
 ## Tech Stack

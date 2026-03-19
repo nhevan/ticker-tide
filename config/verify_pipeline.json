@@ -1,0 +1,18 @@
+{
+  "indicator_ranges": {
+    "bb_pctb": {
+      "min": -1.0,
+      "max": 2.0,
+      "note": "Values outside 0-1 are normal during breakouts; only flag truly extreme values"
+    }
+  },
+  "ema_stuck_days_threshold": 10,
+  "weekly_volume_min_ratio": 0.30,
+  "warmup_rows": 50,
+  "_comments": {
+    "bb_pctb": "Widened from [-0.5, 1.5]: values in [-1.0,-0.5] and [1.5,2.0] are legitimate breakout behavior",
+    "ema_stuck_days_threshold": "Flag an EMA as stuck (computation error) if it has the same value for this many consecutive trading days",
+    "weekly_volume_min_ratio": "Flag a week only if its volume is below this fraction of (trading_days × local_avg_daily_volume); the reference average uses a rolling ±42-day window (~60 trading days) so early low-volume tickers aren't compared against inflated all-time averages",
+    "warmup_rows": "Rows per ticker to skip at the start of range checks (ta library warm-up period)"
+  }
+}

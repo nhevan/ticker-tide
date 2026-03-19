@@ -73,7 +73,8 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/backfiller/macro.py` | Polygon treasury yields; yfinance VIX |
 | `src/backfiller/news.py` | Polygon + Finnhub news; AI sentiment extraction |
 | `src/backfiller/filings.py` | Polygon 8-K filings |
-| `src/backfiller/verify.py` | 10 data quality checks; `run_full_verification()` → `VerificationReport` |
+| `src/backfiller/verify.py` | 10 raw data quality checks; `run_full_verification()` → `VerificationReport` |
+| `src/backfiller/verify_pipeline.py` | 29 computed data checks (indicators, scores, patterns, profiles); `run_full_pipeline_verification()` → `VerificationReport` |
 | `src/fetcher/main.py` | Daily fetch orchestrator; gated on market calendar; writes `fetcher_done` event |
 | `src/fetcher/earnings.py` | Periodic earnings calendar refresh |
 | `src/fetcher/market_calendar.py` | `is_market_open_today()` via Polygon market holidays endpoint |
