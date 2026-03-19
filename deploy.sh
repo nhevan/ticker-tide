@@ -134,13 +134,21 @@ if [[ ! -f "${PROJECT_DIR}/.env" ]]; then
 else
     MISSING_KEYS=()
     for key in "${REQUIRED_KEYS[@]}"; do
+        # TELEGRAM_ADMIN_CHAT_ID accepts TELEGRAM_CHAT_ID as a backward-compatible alias
+        lookup_key="$key"
+        if [[ "$key" == "TELEGRAM_ADMIN_CHAT_ID" ]] && ! grep -q "^TELEGRAM_ADMIN_CHAT_ID=" "${PROJECT_DIR}/.env"; then
+            if grep -q "^TELEGRAM_CHAT_ID=" "${PROJECT_DIR}/.env"; then
+                lookup_key="TELEGRAM_CHAT_ID"
+            fi
+        fi
+
         # Check if key exists in .env
-        if ! grep -q "^${key}=" "${PROJECT_DIR}/.env"; then
+        if ! grep -q "^${lookup_key}=" "${PROJECT_DIR}/.env"; then
             MISSING_KEYS+=("$key (missing)")
             continue
         fi
         # Check if value is still the placeholder
-        VALUE="$(grep "^${key}=" "${PROJECT_DIR}/.env" | cut -d= -f2-)"
+        VALUE="$(grep "^${lookup_key}=" "${PROJECT_DIR}/.env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
         if [[ "$VALUE" == "your_"* ]] || [[ -z "$VALUE" ]]; then
             MISSING_KEYS+=("$key (placeholder not replaced)")
         fi
@@ -234,8 +242,12 @@ printf "${BOLD}║  Cron:     %-34s║${RESET}\n" "3 jobs installed"
 echo -e "${BOLD}╚══════════════════════════════════════════════╝${RESET}"
 
 # ─── Telegram deploy notification ──────────────────────────────────────────────
-_TG_BOT_TOKEN="$(grep '^TELEGRAM_BOT_TOKEN=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2-)"
-_TG_CHAT_ID="$(grep '^TELEGRAM_ADMIN_CHAT_ID=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2-)"
+_TG_BOT_TOKEN="$(grep '^TELEGRAM_BOT_TOKEN=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+_TG_CHAT_ID="$(grep '^TELEGRAM_ADMIN_CHAT_ID=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+# Fall back to old key name for backward compatibility
+if [[ -z "$_TG_CHAT_ID" ]]; then
+    _TG_CHAT_ID="$(grep '^TELEGRAM_CHAT_ID=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+fi
 
 if [[ -n "$_TG_BOT_TOKEN" && -n "$_TG_CHAT_ID" ]]; then
     _DEPLOY_MSG="🚀 *Ticker-Tide deployed successfully*
