@@ -237,7 +237,30 @@ echo "  • Daily pipeline:      00:00 UTC"
 echo "  • Weekly verification: 06:00 UTC Sunday"
 echo "  • Log cleanup:         06:00 UTC Sunday"
 
-# ─── Step 11: Print summary ────────────────────────────────────────────────────
+# ─── Step 11: Set up bot systemd service ───────────────────────────────────────
+echo ""
+echo -e "${BOLD}🤖 Setting up bot systemd service...${RESET}"
+
+SERVICE_SRC="${PROJECT_DIR}/deploy/ticker-tide-bot.service"
+SERVICE_DEST="/etc/systemd/system/ticker-tide-bot.service"
+
+if [[ ! -f "$SERVICE_SRC" ]]; then
+    echo -e "${YELLOW}⚠️  deploy/ticker-tide-bot.service not found — skipping bot service setup${RESET}"
+elif ! command -v systemctl &>/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  systemctl not available — skipping bot service setup (not a systemd system)${RESET}"
+else
+    sudo sed "s|PROJECT_DIR|${PROJECT_DIR}|g" "${SERVICE_SRC}" \
+        | sudo tee "${SERVICE_DEST}" > /dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable ticker-tide-bot
+    sudo systemctl restart ticker-tide-bot
+    echo -e "${GREEN}✅ Bot service installed and started (ticker-tide-bot)${RESET}"
+    echo "  • sudo systemctl status ticker-tide-bot"
+    echo "  • sudo systemctl stop/start/restart ticker-tide-bot"
+    echo "  • tail -f ${PROJECT_DIR}/logs/bot.log"
+fi
+
+# ─── Step 12: Print summary ────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════╗${RESET}"
 echo -e "${BOLD}║         🚀 Deployment Complete!              ║${RESET}"
@@ -248,6 +271,7 @@ printf "${BOLD}║  Venv:     %-34s║${RESET}\n" ".venv/"
 printf "${BOLD}║  Database: %-34s║${RESET}\n" "see config/database.json"
 printf "${BOLD}║  Tests:    %-34s║${RESET}\n" "${TEST_COUNT} passed"
 printf "${BOLD}║  Cron:     %-34s║${RESET}\n" "3 jobs installed"
+printf "${BOLD}║  Bot:      %-34s║${RESET}\n" "systemd ticker-tide-bot"
 echo -e "${BOLD}╚══════════════════════════════════════════════╝${RESET}"
 
 # ─── Telegram deploy notification ──────────────────────────────────────────────

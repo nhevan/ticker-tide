@@ -41,6 +41,41 @@ tail -50 /home/ec2-user/ticker-tide/logs/daily_$(date +%Y%m%d).log
 
 ---
 
+---
+
+## Telegram Bot Service
+
+The interactive bot (`/detail`, `/help`, `/tickers`) runs as a systemd service and is managed by `deploy.sh` — no manual startup needed.
+
+### Status and control
+
+```bash
+# Check if the bot is running
+sudo systemctl status ticker-tide-bot
+
+# Stop / start / restart
+sudo systemctl stop ticker-tide-bot
+sudo systemctl start ticker-tide-bot
+sudo systemctl restart ticker-tide-bot
+
+# Live log tail (systemd journal)
+sudo journalctl -u ticker-tide-bot -f
+
+# File-based log
+tail -f /home/ec2-user/ticker-tide/logs/bot.log
+```
+
+### How it is managed
+
+`deploy.sh` installs `deploy/ticker-tide-bot.service` to `/etc/systemd/system/` on every deploy, then runs `systemctl enable` + `systemctl restart`. The service:
+- Auto-starts on EC2 reboot
+- Restarts automatically within 5 seconds on any crash or clean exit
+- Reads credentials directly from `.env` via `EnvironmentFile`
+
+Never start `run_bot.py` manually in a tmux session on EC2 — the systemd service handles it.
+
+---
+
 ## Manual Commands
 
 | Script | Purpose | Common flags |

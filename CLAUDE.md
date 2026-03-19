@@ -144,6 +144,19 @@ Current cron jobs:
 - Weekly verification: 0 6 * * 0 (06:00 UTC Sunday) — scripts/verify_pipeline.py
 - Log cleanup: 0 6 * * 0 (06:00 UTC Sunday) — delete logs > 30 days
 
+### Bot Service Management
+
+The Telegram bot (scripts/run_bot.py) runs as a systemd service on EC2.
+Never start it manually in tmux or as a background process.
+
+deploy.sh installs deploy/ticker-tide-bot.service to /etc/systemd/system/
+and runs systemctl enable + systemctl restart on every deploy.
+
+When modifying the bot service:
+1. Edit deploy/ticker-tide-bot.service
+2. Update OPERATIONS.md if management commands change
+3. Run deploy.sh to apply (or: sudo systemctl daemon-reload && sudo systemctl restart ticker-tide-bot)
+
 ## Dependencies
 - pandas for data manipulation
 - numpy for numerical computation

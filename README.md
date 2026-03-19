@@ -170,6 +170,7 @@ Every push to `main` triggers `.github/workflows/deploy.yml`, which SSHes into t
 - `.env` key validation
 - Database initialisation (`scripts/setup_db.py`)
 - Full test suite (`pytest tests/ -v`) — deployment aborts on test failure
+- Installs and restarts the `ticker-tide-bot` systemd service (auto-starts on reboot, restarts on crash)
 
 ### Required Repository Secrets
 
