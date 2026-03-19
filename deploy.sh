@@ -250,19 +250,22 @@ if [[ -z "$_TG_CHAT_ID" ]]; then
 fi
 
 if [[ -n "$_TG_BOT_TOKEN" && -n "$_TG_CHAT_ID" ]]; then
-    _DEPLOY_MSG="🚀 *Ticker-Tide deployed successfully*
-• Host: $(hostname)
-• Python: ${PYTHON_VERSION}
-• Tests: ${TEST_COUNT} passed
-• Time: $(date -u '+%Y-%m-%d %H:%M UTC')"
+    _DEPLOY_MSG="🚀 Ticker-Tide deployed successfully
+Host: $(hostname)
+Python: ${PYTHON_VERSION}
+Tests: ${TEST_COUNT} passed
+Time: $(date -u '+%Y-%m-%d %H:%M UTC')"
 
-    curl -s -X POST "https://api.telegram.org/bot${_TG_BOT_TOKEN}/sendMessage" \
+    _TG_RESPONSE="$(curl -s -X POST "https://api.telegram.org/bot${_TG_BOT_TOKEN}/sendMessage" \
         --data-urlencode "chat_id=${_TG_CHAT_ID}" \
-        --data-urlencode "text=${_DEPLOY_MSG}" \
-        --data-urlencode "parse_mode=Markdown" \
-        -o /dev/null \
-        && echo -e "${GREEN}✅ Telegram notification sent${RESET}" \
-        || echo -e "${YELLOW}⚠️  Telegram notification failed (non-fatal)${RESET}"
+        --data-urlencode "text=${_DEPLOY_MSG}" 2>&1)"
+
+    if echo "$_TG_RESPONSE" | grep -q '"ok":true'; then
+        echo -e "${GREEN}✅ Telegram notification sent${RESET}"
+    else
+        echo -e "${YELLOW}⚠️  Telegram notification failed (non-fatal)${RESET}"
+        echo -e "${YELLOW}   Response: ${_TG_RESPONSE}${RESET}"
+    fi
 else
     echo -e "${YELLOW}⚠️  Telegram notification skipped (TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID not set)${RESET}"
 fi
