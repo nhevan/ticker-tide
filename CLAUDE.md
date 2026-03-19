@@ -128,6 +128,22 @@ Every change to indicators, patterns, scoring logic, or thresholds must be verif
 - WARNINGS are acceptable (some are informational)
 - Both scripts send results to admin Telegram for visibility
 
+### Cron Job Management
+
+All cron jobs are managed by deploy.sh between TICKER-TIDE-START and
+TICKER-TIDE-END markers. Never ask the user to manually edit crontab.
+
+When adding or modifying a cron job:
+1. Update the cron block in deploy.sh
+2. Update the cron job descriptions in deploy.sh output
+3. Update OPERATIONS.md with the new schedule
+4. Run deploy.sh to apply changes
+
+Current cron jobs:
+- Daily pipeline: 0 0 * * * (00:00 UTC) — scripts/run_daily.py
+- Weekly verification: 0 6 * * 0 (06:00 UTC Sunday) — scripts/verify_pipeline.py
+- Log cleanup: 0 6 * * 0 (06:00 UTC Sunday) — delete logs > 30 days
+
 ## Dependencies
 - pandas for data manipulation
 - numpy for numerical computation

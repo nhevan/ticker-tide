@@ -194,7 +194,33 @@ fi
 TEST_COUNT="$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ passed' | tail -1 | awk '{print $1}' || echo "?")"
 echo -e "${GREEN}✅ All tests passed${RESET}"
 
-# ─── Step 10: Print summary ────────────────────────────────────────────────────
+# ─── Step 10: Set up cron jobs ─────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}⏰ Setting up cron jobs...${RESET}"
+
+VENV_PYTHON_BIN="${PROJECT_DIR}/.venv/bin/python"
+
+CURRENT_CRONTAB="$(crontab -l 2>/dev/null || echo "")"
+STRIPPED_CRONTAB="$(echo "$CURRENT_CRONTAB" | sed '/# TICKER-TIDE-START/,/# TICKER-TIDE-END/d')"
+
+CRON_BLOCK="# TICKER-TIDE-START — managed by deploy.sh, do not edit manually
+0 0 * * * cd ${PROJECT_DIR} && ${VENV_PYTHON_BIN} scripts/run_daily.py >> ${PROJECT_DIR}/logs/daily_\$(date +\\%Y\\%m\\%d).log 2>&1
+0 6 * * 0 cd ${PROJECT_DIR} && ${VENV_PYTHON_BIN} scripts/verify_pipeline.py >> ${PROJECT_DIR}/logs/verify_\$(date +\\%Y\\%m\\%d).log 2>&1
+0 6 * * 0 find ${PROJECT_DIR}/logs -name \"*.log\" -mtime +30 -delete
+# TICKER-TIDE-END"
+
+NEW_CRONTAB="${STRIPPED_CRONTAB}
+${CRON_BLOCK}"
+
+echo "$NEW_CRONTAB" | crontab -
+crontab -l > /dev/null
+
+echo -e "${GREEN}✅ Cron jobs installed (3 jobs)${RESET}"
+echo "  • Daily pipeline:      00:00 UTC"
+echo "  • Weekly verification: 06:00 UTC Sunday"
+echo "  • Log cleanup:         06:00 UTC Sunday"
+
+# ─── Step 11: Print summary ────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════╗${RESET}"
 echo -e "${BOLD}║         🚀 Deployment Complete!              ║${RESET}"
@@ -204,6 +230,7 @@ printf "${BOLD}║  Python:   %-34s║${RESET}\n" "${PYTHON_VERSION}"
 printf "${BOLD}║  Venv:     %-34s║${RESET}\n" ".venv/"
 printf "${BOLD}║  Database: %-34s║${RESET}\n" "see config/database.json"
 printf "${BOLD}║  Tests:    %-34s║${RESET}\n" "${TEST_COUNT} passed"
+printf "${BOLD}║  Cron:     %-34s║${RESET}\n" "3 jobs installed"
 echo -e "${BOLD}╚══════════════════════════════════════════════╝${RESET}"
 
 if [[ "$NEEDS_ENV_EDIT" == "true" ]]; then
