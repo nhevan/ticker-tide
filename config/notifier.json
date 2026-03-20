@@ -30,5 +30,19 @@
     "sr_levels_to_show": 3,
     "signal_history_days": 30,
     "peer_count": 5
+  },
+  "indicator_thresholds": {
+    "rsi_overbought": 70,
+    "rsi_oversold": 30,
+    "adx_strong_trend": 40,
+    "adx_trending": 25,
+    "stoch_overbought": 80,
+    "stoch_oversold": 20,
+    "cci_overbought": 100,
+    "cci_oversold": -100,
+    "williams_r_overbought": -20,
+    "williams_r_oversold": -80,
+    "cmf_strong_accumulation": 0.1,
+    "cmf_strong_distribution": -0.1
   }
 }
