@@ -5,7 +5,9 @@ Daily pipeline orchestrator — runs all 4 phases in sequence.
 This is the script that cron calls every day at 00:00 UTC (01:00 CET).
 
 Flow:
-  1. Check if market is open today → if not, send 'market closed' and exit 0.
+  1. Check if market was open yesterday (UTC) → if not, send 'market closed' and exit 0.
+     The pipeline runs at 00:00 UTC, after the US market close (~21:00 UTC), so the
+     relevant trading date is always the previous UTC calendar day.
   2. Phase 2a: run_daily_fetch() — fetch OHLCV, news, macro.
   3. Phase 2b: run_calculator(mode='incremental') — compute indicators.
   4. Phase 3: run_scorer() — generate signals.
@@ -30,7 +32,7 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # Ensure project root is on sys.path regardless of invocation directory
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -100,17 +102,21 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
     pipeline_start = time.monotonic()
 
     try:
-        # Step 1: Market calendar check
-        if not is_market_open_today():
-            today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-            send_market_closed_notification(today, bot_token, subscriber_chat_ids, notifier_config)
+        # Step 1: Market calendar check.
+        # The pipeline runs at 00:00 UTC, which is after the US market close (~21:00 UTC).
+        # The relevant trading date is therefore yesterday (UTC), not today.
+        target_date = (datetime.now(tz=timezone.utc) - timedelta(days=1)).date()
+        if not is_market_open_today(target_date):
+            send_market_closed_notification(
+                target_date.isoformat(), bot_token, subscriber_chat_ids, notifier_config
+            )
             pipeline_stats["status"] = "market_closed"
             return 0
 
         # Step 2a: Fetcher
         phase_start = time.monotonic()
         try:
-            fetch_result = run_daily_fetch(db_path=db_path, force=force)
+            fetch_result = run_daily_fetch(db_path=db_path, force=force, target_date=target_date.isoformat())
             pipeline_stats["fetcher_duration"] = time.monotonic() - phase_start
             if not fetch_result.get("skipped"):
                 pipeline_stats["phases_completed"].append("fetcher")

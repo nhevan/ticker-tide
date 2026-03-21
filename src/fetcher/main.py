@@ -21,7 +21,11 @@ from src.notifier.telegram import get_telegram_config
 logger = logging.getLogger(__name__)
 
 
-def run_daily_fetch(db_path: str | None = None, force: bool = False) -> dict:
+def run_daily_fetch(
+    db_path: str | None = None,
+    force: bool = False,
+    target_date: str | None = None,
+) -> dict:
     """
     Run the daily data fetch phase (Phase 2a).
 
@@ -31,6 +35,9 @@ def run_daily_fetch(db_path: str | None = None, force: bool = False) -> dict:
     Parameters:
         db_path: Optional override for the database file path.
         force: When True, bypass the 'already completed' check and re-run.
+        target_date: The trading date to fetch data for, as "YYYY-MM-DD". Defaults to
+            today in UTC when not provided. The daily pipeline passes yesterday's UTC
+            date here because it runs after market close.
 
     Returns:
         Summary dict with keys: skipped, tickers_processed, tickers_failed,
@@ -41,7 +48,7 @@ def run_daily_fetch(db_path: str | None = None, force: bool = False) -> dict:
     resolved_db_path = db_path or db_config["path"]
 
     db_conn = get_connection(resolved_db_path)
-    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    today = target_date or datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
     status = get_pipeline_event_status(db_conn, "fetcher_done", today)
     if status == "completed" and not force:
