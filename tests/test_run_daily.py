@@ -248,3 +248,96 @@ class TestTargetDatePassedToFetcher:
             f"Expected run_daily_fetch to receive target_date='2026-03-23' (Monday), "
             f"got: {kwargs}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: --date / date_override bypasses the yesterday calculation
+# ---------------------------------------------------------------------------
+
+class TestDateOverride:
+    """
+    When date_override is supplied, the pipeline must use that exact date
+    instead of computing yesterday from the current UTC clock.
+    """
+
+    def test_date_override_used_for_market_calendar_check(self) -> None:
+        """
+        Passing date_override='2026-03-19' should check that specific date
+        regardless of what today's UTC clock says.
+        """
+        with patch("scripts.run_daily.is_market_open_today", return_value=False) as mock_calendar, \
+             patch("scripts.run_daily.send_market_closed_notification"), \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            run_daily_pipeline(date_override="2026-03-19")
+
+        mock_calendar.assert_called_once_with(date(2026, 3, 19))
+
+    def test_date_override_passed_to_fetcher(self) -> None:
+        """
+        date_override='2026-03-19' should be forwarded to run_daily_fetch as
+        target_date='2026-03-19', not computed from the clock.
+        """
+        with patch("scripts.run_daily.is_market_open_today", return_value=True), \
+             patch("scripts.run_daily.run_daily_fetch", return_value={"skipped": False}) as mock_fetch, \
+             patch("scripts.run_daily.run_calculator"), \
+             patch("scripts.run_daily.run_scorer", return_value={"skipped": False, "scoring_date": "2026-03-19"}), \
+             patch("scripts.run_daily.run_notifier", return_value={"skipped": False}), \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            run_daily_pipeline(date_override="2026-03-19")
+
+        kwargs = mock_fetch.call_args[1]
+        assert kwargs.get("target_date") == "2026-03-19", (
+            f"Expected run_daily_fetch to receive target_date='2026-03-19', got: {kwargs}"
+        )
+
+    def test_date_override_ignores_yesterday(self) -> None:
+        """
+        When date_override='2026-03-19' is set, the pipeline should NOT use
+        yesterday as the target date even if the clock says a different day.
+        The market calendar check receives the override date, not yesterday.
+        """
+        # Simulate running on Monday March 23 — yesterday would be Sunday March 22.
+        # The override should win, sending March 19 to the calendar check.
+        monday_midnight_utc = datetime(2026, 3, 23, 0, 0, 0, tzinfo=timezone.utc)
+
+        with patch("scripts.run_daily.datetime") as mock_dt, \
+             patch("scripts.run_daily.is_market_open_today", return_value=True) as mock_calendar, \
+             patch("scripts.run_daily.run_daily_fetch", return_value={"skipped": False}), \
+             patch("scripts.run_daily.run_calculator"), \
+             patch("scripts.run_daily.run_scorer", return_value={"skipped": False, "scoring_date": "2026-03-19"}), \
+             patch("scripts.run_daily.run_notifier", return_value={"skipped": False}), \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            mock_dt.now.return_value = monday_midnight_utc
+
+            run_daily_pipeline(date_override="2026-03-19")
+
+        # Should have checked 2026-03-19, not 2026-03-22 (yesterday of the clock)
+        mock_calendar.assert_called_once_with(date(2026, 3, 19))
+
+    def test_market_closed_notification_uses_override_date(self) -> None:
+        """
+        When the market is closed on the override date, the notification
+        should report that exact date, not yesterday.
+        """
+        with patch("scripts.run_daily.is_market_open_today", return_value=False), \
+             patch("scripts.run_daily.send_market_closed_notification") as mock_notify, \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            result = run_daily_pipeline(date_override="2026-01-01")
+
+        assert result == 0
+        actual_date_arg = mock_notify.call_args[0][0]
+        assert actual_date_arg == "2026-01-01", (
+            f"Expected notification date '2026-01-01', got '{actual_date_arg}'."
+        )

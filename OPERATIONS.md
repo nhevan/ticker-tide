@@ -80,7 +80,7 @@ Never start `run_bot.py` manually in a tmux session on EC2 — the systemd servi
 
 | Script | Purpose | Common flags |
 |---|---|---|
-| `run_daily.py` | Run all 4 phases in sequence | `--force` (bypass "already completed" check), `--db-path PATH` |
+| `run_daily.py` | Run all 4 phases in sequence | `--force` (bypass "already completed" check), `--date YYYY-MM-DD` (backfill a specific past date), `--db-path PATH` |
 | `run_backfill.py` | One-time historical data load | `--ticker AAPL`, `--phase ohlcv`, `--force`, `--db-path PATH` |
 | `run_calculator.py` | Compute indicators, patterns, profiles | `--mode full\|incremental`, `--ticker AAPL`, `--db-path PATH` |
 | `run_scorer.py` | Generate BULLISH/BEARISH/NEUTRAL signals | `--ticker AAPL`, `--historical`, `--db-path PATH` |

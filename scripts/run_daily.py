@@ -5,9 +5,9 @@ Daily pipeline orchestrator — runs all 4 phases in sequence.
 This is the script that cron calls every day at 00:00 UTC (01:00 CET).
 
 Flow:
-  1. Check if market was open yesterday (UTC) → if not, send 'market closed' and exit 0.
+  1. Check if market was open on the target date → if not, send 'market closed' and exit 0.
      The pipeline runs at 00:00 UTC, after the US market close (~21:00 UTC), so the
-     relevant trading date is always the previous UTC calendar day.
+     relevant trading date is always the previous UTC calendar day (unless --date is given).
   2. Phase 2a: run_daily_fetch() — fetch OHLCV, news, macro.
   3. Phase 2b: run_calculator(mode='incremental') — compute indicators.
   4. Phase 3: run_scorer() — generate signals.
@@ -22,6 +22,7 @@ Error handling:
 
 Usage:
   python scripts/run_daily.py
+  python scripts/run_daily.py --date 2026-03-20
   python scripts/run_daily.py --db-path /custom/path/signals.db
   python scripts/run_daily.py --force
 """
@@ -53,7 +54,11 @@ from src.notifier.telegram import (  # noqa: E402
 from src.scorer.main import run_scorer  # noqa: E402
 
 
-def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
+def run_daily_pipeline(
+    db_path: str | None = None,
+    force: bool = False,
+    date_override: str | None = None,
+) -> int:
     """
     Run the complete daily pipeline across all 4 phases.
 
@@ -64,6 +69,9 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
     Parameters:
         db_path: Optional override for the database file path.
         force: When True, bypass idempotency checks in each phase.
+        date_override: Optional ISO date string (YYYY-MM-DD) to run the pipeline
+            for a specific past date instead of yesterday. Useful for backfilling
+            a missed day.
 
     Returns:
         0 on full success, 1 if any phase failed.
@@ -103,9 +111,14 @@ def run_daily_pipeline(db_path: str | None = None, force: bool = False) -> int:
 
     try:
         # Step 1: Market calendar check.
-        # The pipeline runs at 00:00 UTC, which is after the US market close (~21:00 UTC).
-        # The relevant trading date is therefore yesterday (UTC), not today.
-        target_date = (datetime.now(tz=timezone.utc) - timedelta(days=1)).date()
+        # When --date is given, use that date. Otherwise the pipeline runs at
+        # 00:00 UTC (after US market close ~21:00 UTC) so the relevant trading
+        # date is yesterday (UTC).
+        if date_override:
+            from datetime import date as date_type
+            target_date = date_type.fromisoformat(date_override)
+        else:
+            target_date = (datetime.now(tz=timezone.utc) - timedelta(days=1)).date()
         if not is_market_open_today(target_date):
             send_market_closed_notification(
                 target_date.isoformat(), bot_token, subscriber_chat_ids, notifier_config
@@ -217,15 +230,24 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   python scripts/run_daily.py
+  python scripts/run_daily.py --date 2026-03-20
   python scripts/run_daily.py --db-path /custom/path/signals.db
   python scripts/run_daily.py --force
         """,
     )
     parser.add_argument("--db-path", metavar="PATH", help="Override database path.")
     parser.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help=(
+            "Run the pipeline for a specific past date instead of yesterday. "
+            "Use this to backfill a missed day, e.g. --date 2026-03-20."
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Force re-run of all phases even if already completed today.",
     )
     args = parser.parse_args()
-    sys.exit(run_daily_pipeline(db_path=args.db_path, force=args.force))
+    sys.exit(run_daily_pipeline(db_path=args.db_path, force=args.force, date_override=args.date))
