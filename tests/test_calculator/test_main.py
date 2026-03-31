@@ -1161,3 +1161,76 @@ class TestCalculatorPipelineEventDate:
         ).fetchone()
         assert row is not None
         assert row["status"] == "completed"
+
+
+# ── Tests: run_calculator target_date parameter ───────────────────────────────
+
+class TestRunCalculatorTargetDate:
+    """
+    Tests for the target_date parameter on run_calculator().
+
+    The daily pipeline runs at 00:00 UTC and fetches data for yesterday (target_date).
+    The fetcher stores fetcher_done for target_date, not for today. The calculator
+    must check fetcher_done against target_date, not today, so that incremental mode
+    actually proceeds.
+    """
+
+    def test_uses_target_date_for_fetcher_done_check(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """
+        When target_date="2026-03-30" is supplied, the calculator should check
+        fetcher_done for "2026-03-30", not for today's UTC date.
+
+        Inserting fetcher_done for "2026-03-30" (not today) must be enough
+        for incremental mode to proceed and call compute_indicators.
+        """
+        from src.calculator.main import run_calculator
+
+        target_date = "2026-03-30"
+        # Insert fetcher_done for target_date, NOT for today
+        _insert_pipeline_event(db_connection, "fetcher_done", target_date, "completed")
+
+        ns = _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="incremental", target_date=target_date)
+
+        ns.compute_indicators.assert_called(), (
+            "compute_indicators was not called — the calculator skipped despite "
+            f"fetcher_done being present for target_date={target_date!r}. "
+            "It is likely still checking fetcher_done against today's date."
+        )
+
+    def test_falls_back_to_today_when_no_target_date(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """
+        When target_date is not provided, the calculator should fall back to
+        today's UTC date for the fetcher_done check (existing behaviour preserved).
+
+        Inserting fetcher_done for today must be enough for incremental mode to proceed.
+        """
+        from src.calculator.main import run_calculator
+
+        _insert_pipeline_event(db_connection, "fetcher_done", _today(), "completed")
+
+        ns = _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="incremental")  # no target_date
+
+        ns.compute_indicators.assert_called(), (
+            "compute_indicators was not called — the calculator skipped despite "
+            "fetcher_done being present for today. Backward-compatible fallback is broken."
+        )

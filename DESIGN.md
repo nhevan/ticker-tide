@@ -187,7 +187,7 @@ All modules follow the same per-ticker error handling: catch specific exceptions
 - `incremental` — compute only new data for the current day (used in the daily pipeline; gated on `fetcher_done` event)
 
 **Pre-flight checks:**
-1. Incremental mode verifies `fetcher_done` event exists for today; if missing, logs a warning and returns early.
+1. Incremental mode verifies `fetcher_done` event exists for `target_date` (the trading date passed by the daily pipeline, i.e. yesterday UTC); falls back to today when `target_date` is not provided. If missing, logs a warning and returns early.
 2. If `calculator_done` status is already `"completed"` for today, skips (idempotent). If `"failed"`, retries.
 3. Writes `calculator_done` with `status="processing"` before starting.
 

@@ -251,6 +251,71 @@ class TestTargetDatePassedToFetcher:
 
 
 # ---------------------------------------------------------------------------
+# Tests: target_date is passed to run_calculator
+# ---------------------------------------------------------------------------
+
+class TestTargetDatePassedToCalculator:
+    """
+    When the market is open, run_daily_pipeline must pass target_date (yesterday UTC)
+    to run_calculator so the calculator checks fetcher_done for the correct date.
+    """
+
+    def test_run_calculator_receives_target_date(self) -> None:
+        """
+        target_date="2026-03-20" (Friday) should be passed to run_calculator
+        when pipeline runs at midnight UTC on Saturday March 21.
+        """
+        saturday_midnight_utc = datetime(2026, 3, 21, 0, 0, 0, tzinfo=timezone.utc)
+
+        with patch("scripts.run_daily.datetime") as mock_dt, \
+             patch("scripts.run_daily.is_market_open_today", return_value=True), \
+             patch("scripts.run_daily.run_daily_fetch", return_value={"skipped": False}), \
+             patch("scripts.run_daily.run_calculator") as mock_calc, \
+             patch("scripts.run_daily.run_scorer", return_value={"skipped": False, "scoring_date": "2026-03-20"}), \
+             patch("scripts.run_daily.run_notifier", return_value={"skipped": False}), \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            mock_dt.now.return_value = saturday_midnight_utc
+
+            run_daily_pipeline()
+
+        kwargs = mock_calc.call_args[1]
+        assert kwargs.get("target_date") == "2026-03-20", (
+            f"Expected run_calculator to receive target_date='2026-03-20', "
+            f"got: {kwargs}. "
+            "The calculator will check fetcher_done against today instead of yesterday."
+        )
+
+    def test_run_calculator_receives_correct_weekday_target_date(self) -> None:
+        """
+        Running on Tuesday at midnight UTC → run_calculator should receive target_date=Monday.
+        """
+        tuesday_midnight_utc = datetime(2026, 3, 24, 0, 0, 0, tzinfo=timezone.utc)
+
+        with patch("scripts.run_daily.datetime") as mock_dt, \
+             patch("scripts.run_daily.is_market_open_today", return_value=True), \
+             patch("scripts.run_daily.run_daily_fetch", return_value={"skipped": False}), \
+             patch("scripts.run_daily.run_calculator") as mock_calc, \
+             patch("scripts.run_daily.run_scorer", return_value={"skipped": False, "scoring_date": "2026-03-23"}), \
+             patch("scripts.run_daily.run_notifier", return_value={"skipped": False}), \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            mock_dt.now.return_value = tuesday_midnight_utc
+
+            run_daily_pipeline()
+
+        kwargs = mock_calc.call_args[1]
+        assert kwargs.get("target_date") == "2026-03-23", (
+            f"Expected run_calculator to receive target_date='2026-03-23' (Monday), "
+            f"got: {kwargs}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tests: --date / date_override bypasses the yesterday calculation
 # ---------------------------------------------------------------------------
 

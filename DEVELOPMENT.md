@@ -78,7 +78,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/fetcher/main.py` | Daily fetch orchestrator; gated on market calendar; writes `fetcher_done` event |
 | `src/fetcher/earnings.py` | Periodic earnings calendar refresh |
 | `src/fetcher/market_calendar.py` | `is_market_open_today()` via Polygon market holidays endpoint |
-| `src/calculator/main.py` | `run_calculator(mode)` — orchestrates all sub-modules per ticker; dependency ordering |
+| `src/calculator/main.py` | `run_calculator(mode, target_date)` — orchestrates all sub-modules per ticker; `target_date` is the trading date the fetcher processed (yesterday UTC in daily pipeline) and drives the `fetcher_done` pre-flight check |
 | `src/calculator/indicators.py` | 15 technical indicators via `ta` library → `indicators_daily` |
 | `src/calculator/weekly.py` | Weekly OHLCV candles + weekly indicators → `weekly_candles`, `indicators_weekly` |
 | `src/calculator/profiles.py` | Percentile profiles (p5–p95); sector profile blending → `indicator_profiles` |

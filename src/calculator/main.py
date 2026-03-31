@@ -426,6 +426,7 @@ def run_calculator(
     mode: str = "full",
     ticker_filter: str = None,
     force: bool = False,
+    target_date: str | None = None,
 ) -> dict:
     """
     Run the full Calculator pipeline (Phase 2b).
@@ -434,8 +435,10 @@ def run_calculator(
     in dependency order, then writes a "calculator_done" pipeline event.
 
     Pre-flight checks:
-      - Incremental mode: verifies "fetcher_done" event exists for today.
-        If not, logs a warning and returns early without processing.
+      - Incremental mode: verifies "fetcher_done" event exists for target_date (or
+        today's UTC date when target_date is not provided). The daily pipeline passes
+        target_date=yesterday so the check matches the date the fetcher used.
+        If not found, logs a warning and returns early without processing.
       - Checks "calculator_done" status for today. If "completed", skips (already done).
         If "failed" or missing, proceeds (initial run or retry).
       - When force=True, the "already completed" check is bypassed and the run
@@ -492,11 +495,15 @@ def run_calculator(
     }
 
     # ── Pre-flight: incremental mode requires fetcher_done event ─────────────
+    # Use target_date when provided (the trading date the fetcher processed, i.e.
+    # yesterday UTC in the daily pipeline). Fall back to today for backward
+    # compatibility when called without a target_date (e.g. manual full-mode runs).
     if mode == "incremental":
-        fetcher_status = get_pipeline_event_status(db_conn, "fetcher_done", today)
+        fetcher_check_date = target_date or today
+        fetcher_status = get_pipeline_event_status(db_conn, "fetcher_done", fetcher_check_date)
         if fetcher_status != "completed":
             logger.warning(
-                f"phase={_PHASE} mode=incremental date={today} "
+                f"phase={_PHASE} mode=incremental date={fetcher_check_date} "
                 f"fetcher_done_status={fetcher_status!r} — skipping calculator run"
             )
             return empty_summary

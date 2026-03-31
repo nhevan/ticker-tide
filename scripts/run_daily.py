@@ -143,7 +143,7 @@ def run_daily_pipeline(
         # Step 2b: Calculator
         phase_start = time.monotonic()
         try:
-            run_calculator(db_path=db_path, mode="incremental", force=force)
+            run_calculator(db_path=db_path, mode="incremental", force=force, target_date=target_date.isoformat())
             pipeline_stats["calculator_duration"] = time.monotonic() - phase_start
             pipeline_stats["phases_completed"].append("calculator")
         except Exception as exc:
