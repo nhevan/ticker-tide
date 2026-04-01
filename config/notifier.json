@@ -20,7 +20,8 @@
     "always_include_flips": true,
     "max_tickers_per_section": 10,
     "include_heartbeat": true,
-    "display_timezone": "Europe/Amsterdam"
+    "display_timezone": "Europe/Amsterdam",
+    "max_message_chars": 4000
   },
   "detail_command": {
     "default_chart_days": 30,

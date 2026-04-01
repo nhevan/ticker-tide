@@ -304,6 +304,7 @@ Applied to the base confidence value (`|final_score|`). Final confidence is clam
 | `telegram.max_tickers_per_section` | int | `10` | Max tickers per BULLISH/BEARISH/Flips section (controls API cost) |
 | `telegram.include_heartbeat` | boolean | `true` | Send a pipeline summary heartbeat to `admin_chat_id` after each run |
 | `telegram.display_timezone` | string | `"Europe/Amsterdam"` | Timezone for timestamps shown in Telegram messages |
+| `telegram.max_message_chars` | int | `4000` | Maximum characters per Telegram message before splitting. Messages that exceed this limit are split at line boundaries and annotated with `(N/M)` page indicators in the header and footer. Keep below Telegram's hard limit of 4096. |
 
 **Message routing:**
 

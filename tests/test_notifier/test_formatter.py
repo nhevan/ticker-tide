@@ -12,6 +12,9 @@ import pytest
 from src.notifier.formatter import (
     DIVIDER,
     MAX_TELEGRAM_LENGTH,
+    _add_page_indicators,
+    _split_sections_into_messages,
+    _split_text_at_line_boundary,
     format_bearish_section,
     format_bullish_section,
     format_daily_summary_section,
@@ -409,3 +412,161 @@ def test_format_no_signals_report():
     assert "No significant signals" in full
     assert isinstance(messages, list)
     assert all(len(m) <= MAX_TELEGRAM_LENGTH for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# _split_text_at_line_boundary
+# ---------------------------------------------------------------------------
+
+
+def test_split_text_at_line_boundary_no_split():
+    """Text under the limit is returned as a single-element list unchanged."""
+    text = "line one\nline two\nline three"
+    result = _split_text_at_line_boundary(text, 1000)
+    assert result == [text]
+
+
+def test_split_text_at_line_boundary_splits_at_newline():
+    """Splitting must only occur at newline boundaries, never mid-line."""
+    line = "A" * 20
+    # Three lines of 20 chars each = 62 chars total (with two newlines)
+    # Limit 45: first two lines (41 chars) fit, third goes to next chunk
+    text = f"{line}\n{line}\n{line}"
+    result = _split_text_at_line_boundary(text, 45)
+    assert len(result) == 2
+    for chunk in result:
+        for part in chunk.split("\n"):
+            assert part in ("", line), f"Line was split mid-content: {part!r}"
+
+
+def test_split_text_at_line_boundary_single_long_line():
+    """A single line longer than the limit is placed alone (can't split further)."""
+    long_line = "X" * 5000
+    result = _split_text_at_line_boundary(long_line, 100)
+    assert result == [long_line]
+
+
+def test_split_text_at_line_boundary_each_chunk_within_limit():
+    """Every chunk must be at most max_chars (except a single oversized line)."""
+    line = "B" * 50
+    text = "\n".join([line] * 30)  # 30 lines × 50 chars = 1500 chars
+    result = _split_text_at_line_boundary(text, 200)
+    assert len(result) > 1
+    for chunk in result:
+        # Each chunk <= 200, unless it's a single line that alone exceeds limit
+        lines_in_chunk = chunk.split("\n")
+        if len(lines_in_chunk) > 1:
+            assert len(chunk) <= 200
+
+
+# ---------------------------------------------------------------------------
+# _add_page_indicators
+# ---------------------------------------------------------------------------
+
+
+def test_add_page_indicators_single_message_unchanged():
+    """A single-message list should be returned as-is with no indicators."""
+    messages = ["Hello world\nsome content"]
+    result = _add_page_indicators(messages)
+    assert result == messages
+
+
+def test_add_page_indicators_adds_header_and_footer():
+    """Each message gets (N/M) on the first line and a footer."""
+    messages = ["First message\ncontent", "Second message\ncontent", "Third message\ncontent"]
+    result = _add_page_indicators(messages)
+    assert len(result) == 3
+    for i, msg in enumerate(result, 1):
+        total = len(messages)
+        assert f"({i}/{total})" in msg.split("\n")[0]
+        assert f"— page {i} of {total}" in msg
+
+
+def test_add_page_indicators_appended_to_first_content_line():
+    """(N/M) goes on the first non-empty line, stripping leading newlines."""
+    messages = ["\n\nActual Title\nMore content", "Page two"]
+    result = _add_page_indicators(messages)
+    first_line = result[0].split("\n")[0]
+    assert first_line == "Actual Title (1/2)"
+
+
+def test_add_page_indicators_two_messages():
+    """Smoke test for the common two-page case."""
+    messages = ["Section A content", "Section B content"]
+    result = _add_page_indicators(messages)
+    assert "(1/2)" in result[0]
+    assert "(2/2)" in result[1]
+    assert "— page 1 of 2" in result[0]
+    assert "— page 2 of 2" in result[1]
+
+
+# ---------------------------------------------------------------------------
+# _split_sections_into_messages (updated behaviour)
+# ---------------------------------------------------------------------------
+
+
+def test_split_sections_oversized_section_is_split():
+    """A section that alone exceeds max_chars must be split into sub-pages."""
+    oversized = "\n".join([f"Ticker{i}: some longer reasoning text for this ticker" for i in range(50)])
+    result = _split_sections_into_messages([oversized], max_chars=500)
+    assert len(result) > 1
+    for msg in result:
+        assert len(msg) <= 500 + 40  # 40 bytes headroom for indicators
+
+
+def test_split_sections_page_indicators_present_when_multiple_messages():
+    """Page indicators appear on all messages when there is more than one."""
+    section_a = "Section A\n" + "line\n" * 40
+    section_b = "Section B\n" + "line\n" * 40
+    result = _split_sections_into_messages([section_a, section_b], max_chars=300)
+    if len(result) > 1:
+        total = len(result)
+        for i, msg in enumerate(result, 1):
+            assert f"({i}/{total})" in msg
+            assert f"— page {i} of {total}" in msg
+
+
+def test_split_sections_single_message_no_indicators():
+    """When all sections fit in one message, no page indicators are added."""
+    result = _split_sections_into_messages(["Short section A", "Short section B"], max_chars=4000)
+    assert len(result) == 1
+    assert "(1/1)" not in result[0]
+    assert "— page" not in result[0]
+
+
+# ---------------------------------------------------------------------------
+# format_full_report — pagination integration
+# ---------------------------------------------------------------------------
+
+
+def test_format_full_report_pagination_indicators():
+    """A report that spans multiple messages must have (N/M) on each."""
+    long_reasoning = "Z" * 300
+    results = _make_results(
+        bullish=[_make_bullish(f"TK{i}", 70.0 + i % 10, 30.0 + i, long_reasoning) for i in range(15)],
+        bearish=[_make_bearish(f"BK{i}", 70.0 + i % 10, -30.0 - i, long_reasoning) for i in range(15)],
+    )
+    stats = _make_pipeline_stats()
+    messages = format_full_report(results, stats, SAMPLE_CONFIG)
+    assert len(messages) > 1
+    total = len(messages)
+    for i, msg in enumerate(messages, 1):
+        assert f"({i}/{total})" in msg, f"Missing ({i}/{total}) in message {i}"
+        assert f"— page {i} of {total}" in msg, f"Missing footer in message {i}"
+
+
+def test_format_full_report_uses_config_max_chars():
+    """A small max_message_chars forces more splits than the default."""
+    config_small = {
+        "telegram": {
+            "display_timezone": "Europe/Amsterdam",
+            "max_message_chars": 300,
+        }
+    }
+    results = _make_results(
+        bullish=[_make_bullish("AAPL", 75.0, 40.0, "Some medium length reasoning text for this ticker.")],
+        bearish=[_make_bearish("MSFT", 72.0, -35.0, "Some medium length reasoning text for this ticker.")],
+    )
+    stats = _make_pipeline_stats()
+    messages = format_full_report(results, stats, config_small)
+    assert len(messages) > 1

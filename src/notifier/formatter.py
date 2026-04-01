@@ -49,6 +49,8 @@ logger = logging.getLogger(__name__)
 
 DIVIDER = "━━━━━━━━━━━━━━━━━━━━━━━━━"
 MAX_TELEGRAM_LENGTH = 4096
+# Worst-case overhead added by _add_page_indicators: " (99/99)\n\n— page 99 of 99" ≈ 35 chars.
+_PAGE_INDICATOR_OVERHEAD = 35
 
 
 def format_duration(seconds: float) -> str:
@@ -290,19 +292,91 @@ def format_heartbeat(pipeline_stats: dict) -> str:
     return "\n".join(lines)
 
 
-def _split_sections_into_messages(sections: list[str]) -> list[str]:
+def _split_text_at_line_boundary(text: str, max_chars: int) -> list[str]:
     """
-    Pack a list of section strings into Telegram messages respecting the 4096-char limit.
+    Split text into chunks each at most max_chars characters, never mid-line.
 
-    Splits only at section boundaries, never mid-section. If a single section
-    exceeds the limit it is placed in its own message (Telegram will truncate).
+    Lines that individually exceed max_chars are placed alone in their own chunk
+    (they cannot be split without breaking content).
+
+    Parameters:
+        text: The text to split.
+        max_chars: Maximum characters per chunk.
+
+    Returns:
+        List of text chunks; always at least one element.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    lines = text.split("\n")
+    chunks: list[str] = []
+    current_lines: list[str] = []
+    current_len = 0
+
+    for line in lines:
+        cost = len(line) + 1  # +1 for the joining newline
+        if current_len + cost > max_chars and current_lines:
+            chunks.append("\n".join(current_lines))
+            current_lines = []
+            current_len = 0
+        current_lines.append(line)
+        current_len += cost
+
+    if current_lines:
+        chunks.append("\n".join(current_lines))
+
+    return chunks
+
+
+def _add_page_indicators(messages: list[str]) -> list[str]:
+    """
+    Append (N/M) to the first content line and a footer of each message.
+
+    When messages contains only one element, it is returned unchanged. Otherwise
+    every message gets "(N/M)" appended to its first non-empty line and a
+    "— page N of M" line at the end.
+
+    Parameters:
+        messages: List of message strings to annotate.
+
+    Returns:
+        Annotated list with the same length as messages.
+    """
+    total = len(messages)
+    if total <= 1:
+        return messages
+
+    result: list[str] = []
+    for i, msg in enumerate(messages, 1):
+        stripped = msg.strip("\n")
+        lines = stripped.split("\n")
+        lines[0] = f"{lines[0]} ({i}/{total})"
+        annotated = "\n".join(lines) + f"\n\n— page {i} of {total}"
+        result.append(annotated)
+    return result
+
+
+def _split_sections_into_messages(sections: list[str], max_chars: int = MAX_TELEGRAM_LENGTH) -> list[str]:
+    """
+    Pack a list of section strings into Telegram messages respecting max_chars.
+
+    Tries to join sections into as few messages as possible. When a section alone
+    exceeds max_chars it is further split at line boundaries. Page indicators
+    ("(N/M)" in the header, "— page N of M" in the footer) are added to every
+    message when there are two or more messages.
 
     Parameters:
         sections: Ordered list of non-empty section strings.
+        max_chars: Target character limit per message. Defaults to MAX_TELEGRAM_LENGTH.
 
     Returns:
-        List of message strings each at most MAX_TELEGRAM_LENGTH characters.
+        List of message strings. Each message is within max_chars before page
+        indicators are added; the indicators add at most _PAGE_INDICATOR_OVERHEAD
+        characters.
     """
+    # Reserve space so that messages remain within max_chars after indicators.
+    effective_max = max_chars - _PAGE_INDICATOR_OVERHEAD
     messages: list[str] = []
     current = ""
 
@@ -310,18 +384,23 @@ def _split_sections_into_messages(sections: list[str]) -> list[str]:
         if not section:
             continue
         joined = current + "\n" + section if current else section
-        if len(joined) <= MAX_TELEGRAM_LENGTH:
+        if len(joined) <= effective_max:
             current = joined
         else:
             if current:
                 messages.append(current)
-            # Section alone exceeds limit — place it as-is (rare edge case)
-            current = section
+            if len(section) > effective_max:
+                # Section alone is too long — split at line boundaries.
+                parts = _split_text_at_line_boundary(section, effective_max)
+                messages.extend(parts[:-1])
+                current = parts[-1]
+            else:
+                current = section
 
     if current:
         messages.append(current)
 
-    return messages or [""]
+    return _add_page_indicators(messages or [""])
 
 
 def format_full_report(
@@ -392,11 +471,12 @@ def format_full_report(
         heartbeat = format_heartbeat(stats_with_tz)
         sections.append(f"\n{heartbeat}")
 
+    max_chars = config.get("telegram", {}).get("max_message_chars", MAX_TELEGRAM_LENGTH)
     full_text = "\n".join(s for s in sections if s)
-    if len(full_text) <= MAX_TELEGRAM_LENGTH:
+    if len(full_text) <= max_chars - _PAGE_INDICATOR_OVERHEAD:
         return [full_text]
 
-    return _split_sections_into_messages(sections)
+    return _split_sections_into_messages(sections, max_chars)
 
 
 def format_no_signals_report(
@@ -440,11 +520,12 @@ def format_no_signals_report(
         heartbeat = format_heartbeat(stats_with_tz)
         parts.append(f"\n{heartbeat}")
 
+    max_chars = config.get("telegram", {}).get("max_message_chars", MAX_TELEGRAM_LENGTH)
     full_text = "\n".join(parts)
-    if len(full_text) <= MAX_TELEGRAM_LENGTH:
+    if len(full_text) <= max_chars - _PAGE_INDICATOR_OVERHEAD:
         return [full_text]
 
-    return _split_sections_into_messages(parts)
+    return _split_sections_into_messages(parts, max_chars)
 
 
 def format_market_closed_message(date: str, config: dict) -> str:
