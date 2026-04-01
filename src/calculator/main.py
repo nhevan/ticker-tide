@@ -96,6 +96,24 @@ def _resolve_data_date(db_conn: sqlite3.Connection) -> str:
     return row["date"]
 
 
+def _resolve_ohlcv_max_date(db_conn: sqlite3.Connection) -> str | None:
+    """Return the latest date present in ohlcv_daily, or None if the table is empty.
+
+    Used to decide whether the calculator needs to run in incremental mode —
+    if OHLCV has a date newer than the latest indicators, new rows need processing.
+    Also used as the canonical trading date when writing the calculator_done event
+    so that the scorer and notifier can look it up by the right date.
+
+    Args:
+        db_conn: Open SQLite connection with WAL mode enabled.
+
+    Returns:
+        YYYY-MM-DD string of the latest OHLCV date, or None if ohlcv_daily is empty.
+    """
+    row = db_conn.execute("SELECT MAX(date) AS max_date FROM ohlcv_daily").fetchone()
+    return row["max_date"] if row and row["max_date"] else None
+
+
 def should_recompute_profiles(
     db_conn: sqlite3.Connection,
     ticker: str,
@@ -508,24 +526,42 @@ def run_calculator(
             )
             return empty_summary
 
-    # ── Pre-flight: skip if already completed (check today AND data_date) ─────
-    # Check both: data_date handles the "ran on a weekend for Friday's data" case;
-    # today handles a same-day re-run on a trading day.
+    # ── Pre-flight: skip if already up-to-date ───────────────────────────────
     if not force:
-        for check_date in dict.fromkeys([data_date, today]):  # deduplicated, order preserved
-            if get_pipeline_event_status(db_conn, _EVENT_NAME, check_date) == "completed":
+        if mode == "incremental":
+            # In incremental mode the ground truth is whether OHLCV has a date
+            # newer than the latest indicators row.  Checking pipeline events is
+            # unreliable here because calculator_done for data_date may already be
+            # "completed" from the previous day's run even though the fetcher just
+            # inserted a new date.
+            ohlcv_max_date = _resolve_ohlcv_max_date(db_conn)
+            if ohlcv_max_date and ohlcv_max_date <= data_date:
                 logger.info(
-                    f"phase={_PHASE} date={check_date} — already completed, skipping "
+                    f"phase={_PHASE} mode=incremental ohlcv_max={ohlcv_max_date} "
+                    f"indicators_max={data_date} — indicators are current, skipping "
                     f"(use force=True to override)"
                 )
                 return empty_summary
+        else:
+            # For full mode keep the existing event-based guard so a full
+            # recalculation isn't triggered accidentally without force=True.
+            for check_date in dict.fromkeys([data_date, today]):  # deduplicated, order preserved
+                if get_pipeline_event_status(db_conn, _EVENT_NAME, check_date) == "completed":
+                    logger.info(
+                        f"phase={_PHASE} date={check_date} — already completed, skipping "
+                        f"(use force=True to override)"
+                    )
+                    return empty_summary
     else:
         logger.info(
             f"phase={_PHASE} date={data_date} — force=True, re-running despite completed status"
         )
 
     # ── Mark as processing ───────────────────────────────────────────────────
-    write_pipeline_event(db_conn, _EVENT_NAME, data_date, "processing")
+    # Use the OHLCV max date as the canonical trading date so that the
+    # "processing" and "completed" events share the same key the scorer uses.
+    event_date = _resolve_ohlcv_max_date(db_conn) or data_date
+    write_pipeline_event(db_conn, _EVENT_NAME, event_date, "processing")
 
     # ── Load tickers ─────────────────────────────────────────────────────────
     all_tickers = get_active_tickers()
@@ -624,9 +660,10 @@ def run_calculator(
         datetime.fromisoformat(completed_at) - datetime.fromisoformat(started_at)
     ).total_seconds()
 
-    # Re-resolve after processing — the run may have inserted new indicator rows
-    # whose date differs from what was in the DB before the run started.
-    final_data_date = _resolve_data_date(db_conn)
+    # Use the OHLCV max date as the canonical trading date for the event so that
+    # the scorer and notifier can look up calculator_done by the same date they use.
+    # Fall back to _resolve_data_date (indicators mode) if ohlcv_daily is empty.
+    final_data_date = _resolve_ohlcv_max_date(db_conn) or _resolve_data_date(db_conn)
 
     write_pipeline_event(db_conn, _EVENT_NAME, final_data_date, "completed")
 

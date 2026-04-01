@@ -1234,3 +1234,194 @@ class TestRunCalculatorTargetDate:
             "compute_indicators was not called — the calculator skipped despite "
             "fetcher_done being present for today. Backward-compatible fallback is broken."
         )
+
+
+# ── Helpers for OHLCV-based skip tests ───────────────────────────────────────
+
+def _insert_ohlcv_row(conn: sqlite3.Connection, ticker: str, date: str) -> None:
+    """Insert a minimal ohlcv_daily row for skip-logic tests."""
+    conn.execute(
+        """INSERT OR REPLACE INTO ohlcv_daily
+               (ticker, date, open, high, low, close, volume)
+           VALUES (?, ?, 100, 105, 99, 102, 1000000)""",
+        (ticker, date),
+    )
+    conn.commit()
+
+
+# ── Tests: _resolve_ohlcv_max_date ───────────────────────────────────────────
+
+class TestResolveOhlcvMaxDate:
+    """Tests for the _resolve_ohlcv_max_date helper."""
+
+    def test_returns_none_when_empty(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Returns None when ohlcv_daily has no rows."""
+        from src.calculator.main import _resolve_ohlcv_max_date
+
+        result = _resolve_ohlcv_max_date(db_connection)
+
+        assert result is None
+
+    def test_returns_latest_date(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Returns the latest date across all tickers when rows exist."""
+        from src.calculator.main import _resolve_ohlcv_max_date
+
+        _insert_ohlcv_row(db_connection, "AAPL", "2026-03-28")
+        _insert_ohlcv_row(db_connection, "AAPL", "2026-03-31")
+        _insert_ohlcv_row(db_connection, "MSFT", "2026-03-29")
+
+        result = _resolve_ohlcv_max_date(db_connection)
+
+        assert result == "2026-03-31"
+
+
+# ── Tests: incremental skip uses OHLCV vs indicators comparison ───────────────
+
+class TestIncrementalSkipLogic:
+    """
+    In incremental mode the calculator should skip only when
+    MAX(ohlcv_daily.date) <= MAX(indicators_daily.date), not when
+    calculator_done pipeline event is present for the old date.
+    """
+
+    def test_incremental_skips_when_indicators_current(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """Calculator skips when OHLCV max date equals indicators max date."""
+        from src.calculator.main import run_calculator
+
+        date = "2026-03-31"
+        for ticker in ("AAPL", "MSFT", "JPM"):
+            _insert_ohlcv_row(db_connection, ticker, date)
+            _insert_indicators_row(db_connection, ticker, date)
+        _insert_pipeline_event(db_connection, "fetcher_done", date, "completed")
+
+        ns = _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="incremental", target_date=date)
+
+        ns.compute_indicators.assert_not_called(), (
+            "compute_indicators was called despite indicators already being "
+            "up-to-date with OHLCV — the incremental skip should have fired."
+        )
+
+    def test_incremental_runs_when_ohlcv_newer(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """Calculator runs even when calculator_done is completed for the old date,
+        as long as OHLCV has a newer date than indicators."""
+        from src.calculator.main import run_calculator
+
+        old_date = "2026-03-28"
+        new_date = "2026-03-31"
+
+        # Indicators exist only for old_date; OHLCV has new_date
+        for ticker in ("AAPL", "MSFT", "JPM"):
+            _insert_indicators_row(db_connection, ticker, old_date)
+            _insert_ohlcv_row(db_connection, ticker, new_date)
+
+        # calculator_done already completed for old_date — this is the bug scenario
+        _insert_pipeline_event(db_connection, "calculator_done", old_date, "completed")
+        _insert_pipeline_event(db_connection, "fetcher_done", new_date, "completed")
+
+        ns = _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="incremental", target_date=new_date)
+
+        assert ns.compute_indicators.call_count >= 3, (
+            "compute_indicators was not called despite OHLCV having a newer date "
+            f"({new_date}) than indicators ({old_date}). The event-based skip "
+            "should NOT fire in incremental mode."
+        )
+
+    def test_full_mode_skip_uses_event_not_ohlcv(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """In full mode, skip check still uses calculator_done event, not OHLCV vs indicators."""
+        from src.calculator.main import run_calculator
+
+        old_date = "2026-03-28"
+        new_date = "2026-03-31"
+
+        # OHLCV is newer than indicators — but we're in full mode
+        for ticker in ("AAPL", "MSFT", "JPM"):
+            _insert_indicators_row(db_connection, ticker, old_date)
+            _insert_ohlcv_row(db_connection, ticker, new_date)
+
+        # calculator_done exists for old_date (which _resolve_data_date returns)
+        _insert_pipeline_event(db_connection, "calculator_done", old_date, "completed")
+
+        ns = _patch_run_calculator_deps(
+            mocker, db_connection, three_tickers, sample_calc_config
+        )
+
+        run_calculator(mode="full")
+
+        ns.compute_indicators.assert_not_called(), (
+            "Full mode should still use event-based skip even when OHLCV is newer."
+        )
+
+
+# ── Tests: calculator_done event written for OHLCV max date ──────────────────
+
+class TestCalculatorEventWrittenForOhlcvDate:
+    """The calculator_done event should be written for MAX(ohlcv_daily.date),
+    not for today's wall-clock date, so the scorer/notifier can find it."""
+
+    def test_writes_event_for_ohlcv_max_date(
+        self,
+        mocker,
+        db_connection: sqlite3.Connection,
+        sample_calc_config: dict,
+        three_tickers: list[dict],
+    ) -> None:
+        """calculator_done is written for the OHLCV trading date, not today."""
+        from src.calculator.main import run_calculator
+
+        trading_date = "2026-03-31"
+        for ticker in ("AAPL", "MSFT", "JPM"):
+            _insert_ohlcv_row(db_connection, ticker, trading_date)
+
+        _patch_run_calculator_deps(mocker, db_connection, three_tickers, sample_calc_config)
+
+        run_calculator(mode="full")
+
+        row = db_connection.execute(
+            "SELECT status FROM pipeline_events WHERE event = 'calculator_done' AND date = ?",
+            (trading_date,),
+        ).fetchone()
+        assert row is not None, (
+            f"Expected calculator_done for trading date {trading_date}"
+        )
+        assert row["status"] == "completed"
+        # Should NOT be written for today's wall-clock date
+        today = _today()
+        if today != trading_date:
+            today_row = db_connection.execute(
+                "SELECT status FROM pipeline_events WHERE event = 'calculator_done' AND date = ?",
+                (today,),
+            ).fetchone()
+            assert today_row is None, (
+                f"calculator_done was written for today ({today}) instead of "
+                f"the OHLCV trading date ({trading_date})"
+            )

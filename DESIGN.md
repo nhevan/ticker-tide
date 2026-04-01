@@ -188,8 +188,8 @@ All modules follow the same per-ticker error handling: catch specific exceptions
 
 **Pre-flight checks:**
 1. Incremental mode verifies `fetcher_done` event exists for `target_date` (the trading date passed by the daily pipeline, i.e. yesterday UTC); falls back to today when `target_date` is not provided. If missing, logs a warning and returns early.
-2. If `calculator_done` status is already `"completed"` for today, skips (idempotent). If `"failed"`, retries.
-3. Writes `calculator_done` with `status="processing"` before starting.
+2. **Incremental mode** — skips if `MAX(ohlcv_daily.date) <= MAX(indicators_daily.date)` (indicators already current with OHLCV). This is data-driven so the calculator always runs when the fetcher has deposited new rows, regardless of prior event state. **Full mode** — skips if `calculator_done` is already `"completed"` for `data_date` or today (event-based, idempotent). If `"failed"`, retries in both modes.
+3. Writes `calculator_done` with `status="processing"` for `MAX(ohlcv_daily.date)` (the canonical trading date) before starting.
 
 **Processing order:**
 1. `run_calculator_for_etfs_and_benchmarks` — indicators + weekly only for all sector ETFs (XLK, XLF, etc.) and market benchmarks (SPY, QQQ); needed by the scorer for sector scoring and relative strength.
@@ -221,7 +221,7 @@ Step 10: news               independent
 - In full mode the orchestrator always recomputes profiles regardless.
 
 **Post-flight:**
-- Updates `calculator_done` to `status="completed"`.
+- Updates `calculator_done` to `status="completed"` using `MAX(ohlcv_daily.date)` as the event date (falls back to `MAX(indicators_daily.date)` if OHLCV table is empty). This ensures the scorer and notifier can find the event by the trading date.
 - Writes `pipeline_runs` entry with phase, duration, tickers processed/failed, status.
 - Sends Telegram summary with per-module counts and duration.
 
