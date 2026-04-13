@@ -242,7 +242,7 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 | `src/scorer/pattern_scorer.py` | Scores candlestick/structural patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Rolls up component scores into 9 categories; applies regime-based adaptive weights |
 | `src/scorer/sector_adjuster.py` | Computes sector ETF trend score and applies adjustment (±5 to ±10) |
-| `src/scorer/timeframe_merger.py` | Merges daily (×0.6) + weekly (×0.4) composite scores; computes weekly score from indicators_weekly |
+| `src/scorer/timeframe_merger.py` | Merges daily (×0.6) + weekly (×0.4) composite scores; computes weekly score from indicators_weekly using `scoring_date` to prevent look-ahead bias and regime-aware RSI direction |
 | `src/scorer/confidence.py` | Signal classification (BULLISH/BEARISH/NEUTRAL), confidence modifiers, data_completeness dict, key_signals list |
 | `src/scorer/flip_detector.py` | Detects signal direction changes; saves to signal_flips table |
 | `src/scorer/main.py` | Orchestrator: per-ticker score_ticker() + run_scorer() for daily pipeline + run_historical_scoring() for Option E |
@@ -299,7 +299,9 @@ Final confidence is clamped to [0, 100].
 6. Score fundamentals; compute macro (SPY trend + VIX + sector ETF + treasury + RS).
 7. Compute 9 category scores → apply adaptive weights → daily_score.
 8. Apply sector adjustment.
-9. Compute weekly score; merge timeframes → final_score.
+9. Compute weekly score (`compute_weekly_score`): loads the most recent weekly candle
+   with `week_start <= scoring_date` (no look-ahead bias), applies regime-aware RSI
+   direction (same rule as step 3); merge timeframes → final_score.
 10. Classify signal; compute confidence + modifiers.
 11. Build data_completeness JSON; build key_signals list.
 12. Save to `scores_daily` (INSERT OR REPLACE).

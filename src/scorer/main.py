@@ -621,7 +621,7 @@ def score_ticker(
     daily_score = apply_sector_adjustment(raw_daily, sector_etf_score, config)
 
     # 13. Compute weekly score
-    weekly_score = compute_weekly_score(db_conn, ticker, config)
+    weekly_score = compute_weekly_score(db_conn, ticker, config, scoring_date=scoring_date, regime=regime)
     weekly_available = weekly_score is not None
 
     # 14. Merge timeframes → final score

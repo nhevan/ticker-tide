@@ -52,18 +52,29 @@ def compute_weekly_score(
     db_conn: sqlite3.Connection,
     ticker: str,
     config: dict,
+    scoring_date: str,
+    regime: str = "ranging",
 ) -> Optional[float]:
     """
     Compute a simplified composite score from weekly indicator data.
 
-    Loads the most recent weekly indicators from indicators_weekly and runs a
+    Loads the most recent weekly indicators from indicators_weekly with a
+    week_start on or before scoring_date (no look-ahead), and runs a
     simplified scoring pipeline: EMA alignment, MACD histogram, RSI, ADX,
     CMF, and Bollinger %B. Does not include patterns, divergences, or news.
+
+    RSI is scored with the regime-aware direction: in trending regime a high
+    RSI signals trend continuation (bullish), in ranging/volatile regime a
+    high RSI signals overbought (bearish — mean-reversion).
 
     Parameters:
         db_conn: Open SQLite connection with row_factory=sqlite3.Row.
         ticker: Ticker symbol.
         config: Scorer config dict.
+        scoring_date: The date being scored (YYYY-MM-DD). Only weekly candles
+            with week_start <= scoring_date are considered.
+        regime: Market regime — "trending", "ranging", or "volatile".
+            Defaults to "ranging".
 
     Returns:
         Float composite score (-100 to +100), or None if no weekly data.
@@ -78,14 +89,16 @@ def compute_weekly_score(
     from src.scorer.category_scorer import apply_adaptive_weights, rollup_category
     from src.scorer.regime import get_regime_weights
 
+    oscillator_higher_is_bullish = regime == "trending"
+
     row = db_conn.execute(
         "SELECT w.close, i.ema_9, i.ema_21, i.ema_50, i.macd_histogram, "
         "       i.rsi_14, i.adx, i.cmf_20, i.bb_pctb, i.atr_14 "
         "FROM indicators_weekly i "
         "JOIN weekly_candles w ON i.ticker = w.ticker AND i.week_start = w.week_start "
-        "WHERE i.ticker = ? "
+        "WHERE i.ticker = ? AND i.week_start <= ? "
         "ORDER BY i.week_start DESC LIMIT 1",
-        (ticker,),
+        (ticker, scoring_date),
     ).fetchone()
 
     if row is None:
@@ -114,7 +127,7 @@ def compute_weekly_score(
 
     # RSI
     if rsi is not None:
-        component_scores.append(score_rsi(rsi, profile=None))
+        component_scores.append(score_rsi(rsi, profile=None, higher_is_bullish=oscillator_higher_is_bullish))
 
     # ADX
     if adx is not None:
