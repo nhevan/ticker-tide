@@ -210,6 +210,7 @@ Controls regime detection, adaptive weights, signal thresholds, and confidence m
 | `regime_detection.atr_volatile_multiplier` | float | `1.5` | ATR > N × 20-day ATR SMA → Volatile regime |
 | `regime_detection.atr_volatile_lookback` | int | `20` | Lookback period for ATR SMA in volatile detection |
 | `regime_detection.vix_volatile_threshold` | int | `25` | VIX ≥ this also triggers Volatile regime |
+| `regime_detection.ema_trend_override` | bool | `true` | When enabled, a fully aligned EMA stack (close > EMA9 > EMA21 > EMA50 or reverse) overrides regime to Trending even if ADX is below the trending threshold. Prevents mean-reversion oscillator interpretation on stocks in clear directional trends with low ADX |
 
 ### Adaptive category weights
 

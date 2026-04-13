@@ -237,7 +237,7 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 
 | Module | Purpose |
 |---|---|
-| `src/scorer/regime.py` | Market regime detection (Trending/Ranging/Volatile) from ADX, ATR, VIX |
+| `src/scorer/regime.py` | Market regime detection (Trending/Ranging/Volatile) from ADX, ATR, VIX; EMA stack alignment override reclassifies to Trending when close/EMA9/EMA21/EMA50 are fully aligned |
 | `src/scorer/indicator_scorer.py` | Maps each indicator value to -100 to +100 using percentile profiles; applies regime-aware direction for momentum oscillators (RSI, Stochastic %K, CCI, Williams %R) |
 | `src/scorer/pattern_scorer.py` | Scores candlestick/structural patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Rolls up component scores into 9 categories; applies regime-based adaptive weights |
@@ -288,7 +288,9 @@ Final confidence is clamped to [0, 100].
 
 **`score_ticker()`** — full pipeline for one ticker on one date:
 1. Load indicators + close price (returns None if absent).
-2. Detect regime; get adaptive weights.
+2. Detect regime; get adaptive weights. Regime detection priority:
+   volatile (VIX/ATR) > EMA-stack-trending (close/EMA9/EMA21/EMA50 fully aligned,
+   config-gated via `ema_trend_override`) > ADX-trending > ADX-ranging > default-ranging.
 3. Score all 15 indicators — momentum oscillators (RSI, Stochastic %K, CCI, Williams %R)
    use **regime-aware direction**: `higher_is_bullish=True` in `"trending"` regime
    (high readings = trend continuation = bullish) vs. `higher_is_bullish=False` in

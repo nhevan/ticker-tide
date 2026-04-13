@@ -92,7 +92,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/calculator/relative_strength.py` | RS vs SPY and sector ETF (on-the-fly; not stored) |
 | `src/calculator/news_aggregator.py` | `news_articles` → `news_daily_summary` per ticker per day |
 | `src/scorer/main.py` | `run_scorer()` and `run_historical_scoring()`; per-ticker `score_ticker()` pipeline |
-| `src/scorer/regime.py` | Trending/Ranging/Volatile detection from ADX, ATR, VIX |
+| `src/scorer/regime.py` | Trending/Ranging/Volatile detection from ADX, ATR, VIX; EMA stack alignment override (close/EMA9/EMA21/EMA50 fully aligned → Trending even with low ADX) |
 | `src/scorer/indicator_scorer.py` | Maps indicator values → [−100, +100] using percentile profiles; momentum oscillators (RSI, Stochastic %K, CCI, Williams %R) accept a `regime` parameter — `"trending"` flips to `higher_is_bullish=True` (trend-continuation), `"ranging"`/`"volatile"` use mean-reversion |
 | `src/scorer/pattern_scorer.py` | Scores patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Aggregates component scores into 9 categories; applies adaptive weights |

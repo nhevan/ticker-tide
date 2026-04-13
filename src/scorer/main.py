@@ -511,6 +511,10 @@ def score_ticker(
         atr_sma_20=atr_sma,
         vix_close=vix_close,
         config=config,
+        close=close,
+        ema_9=indicators.get("ema_9"),
+        ema_21=indicators.get("ema_21"),
+        ema_50=indicators.get("ema_50"),
     )
     regime_weights = get_regime_weights(regime, config)
 

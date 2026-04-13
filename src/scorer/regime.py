@@ -28,11 +28,23 @@ def detect_regime(
     atr_sma_20: Optional[float],
     vix_close: Optional[float],
     config: dict,
+    close: Optional[float] = None,
+    ema_9: Optional[float] = None,
+    ema_21: Optional[float] = None,
+    ema_50: Optional[float] = None,
 ) -> str:
     """
     Classify the current market regime for a ticker.
 
-    Checks conditions in priority order: volatile > trending > ranging.
+    Checks conditions in priority order:
+      volatile > EMA-stack-trending > ADX-trending > ADX-ranging > default-ranging.
+
+    When ema_trend_override is enabled in config and EMAs form a fully aligned
+    stack (bullish: close > ema_9 > ema_21 > ema_50, or bearish: the reverse),
+    the regime is classified as "trending" even if ADX is below the trending
+    threshold. This prevents mean-reversion oscillator interpretation from
+    being applied to stocks in clear directional trends with low ADX.
+
     Defaults to "ranging" when no condition is met or data is missing.
 
     Parameters:
@@ -41,6 +53,10 @@ def detect_regime(
         atr_sma_20: 20-day SMA of ATR, or None if unavailable.
         vix_close: Most recent VIX close, or None if unavailable.
         config: Full scorer config dict containing regime_detection thresholds.
+        close: Current close price, or None if unavailable.
+        ema_9: 9-period EMA value, or None if unavailable.
+        ema_21: 21-period EMA value, or None if unavailable.
+        ema_50: 50-period EMA value, or None if unavailable.
 
     Returns:
         One of "trending", "ranging", or "volatile".
@@ -60,6 +76,17 @@ def detect_regime(
         if atr > atr_sma_20 * atr_multiplier:
             logger.debug(f"Regime=volatile (ATR={atr:.4f} > {atr_multiplier}x SMA={atr_sma_20:.4f})")
             return "volatile"
+
+    # EMA trend override: if EMAs form a fully aligned stack,
+    # treat as trending even when ADX is below threshold
+    ema_override: bool = regime_cfg.get("ema_trend_override", False)
+    if ema_override and all(v is not None for v in (close, ema_9, ema_21, ema_50)):
+        bullish_stack = close > ema_9 > ema_21 > ema_50
+        bearish_stack = close < ema_9 < ema_21 < ema_50
+        if bullish_stack or bearish_stack:
+            direction = "bullish" if bullish_stack else "bearish"
+            logger.debug(f"Regime=trending (EMA override: {direction} stack aligned)")
+            return "trending"
 
     # Trending second
     if adx is not None and adx > adx_trending:
