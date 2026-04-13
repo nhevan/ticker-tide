@@ -455,3 +455,55 @@ class TestHandleScatterCommand:
         # (could be an "empty" chart), so either send_photo is called OR
         # send_telegram_message is called with "no data" message.
         assert mock_send.called or mock_msg.called
+
+    def test_sends_error_message_when_photo_send_returns_false(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        from src.notifier.scatter_command import handle_scatter_command
+
+        closes = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]
+        _insert_ohlcv(db_connection, "AAPL", _REF_DATE, closes)
+        _insert_score(db_connection, "AAPL", _REF_DATE.isoformat(), "BULLISH", 70.0)
+
+        with patch("src.notifier.scatter_command.send_photo_to_chat") as mock_send, \
+             patch("src.notifier.scatter_command.send_telegram_message") as mock_msg:
+            mock_send.return_value = False
+
+            handle_scatter_command(
+                conn=db_connection,
+                chat_id="123",
+                message_text=f"/scatter 5 AAPL 365",
+                bot_token="fake-token",
+                config=SAMPLE_CONFIG,
+                active_tickers=ACTIVE_TICKERS,
+            )
+
+        mock_send.assert_called_once()
+        mock_msg.assert_called_once()
+        assert "❌" in mock_msg.call_args[0][2]
+
+    def test_sends_error_message_when_photo_send_raises(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        from src.notifier.scatter_command import handle_scatter_command
+
+        closes = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]
+        _insert_ohlcv(db_connection, "AAPL", _REF_DATE, closes)
+        _insert_score(db_connection, "AAPL", _REF_DATE.isoformat(), "BULLISH", 70.0)
+
+        with patch("src.notifier.scatter_command.send_photo_to_chat") as mock_send, \
+             patch("src.notifier.scatter_command.send_telegram_message") as mock_msg:
+            mock_send.side_effect = RuntimeError("network failure")
+
+            handle_scatter_command(
+                conn=db_connection,
+                chat_id="123",
+                message_text=f"/scatter 5 AAPL 365",
+                bot_token="fake-token",
+                config=SAMPLE_CONFIG,
+                active_tickers=ACTIVE_TICKERS,
+            )
+
+        mock_send.assert_called_once()
+        mock_msg.assert_called_once()
+        assert "❌" in mock_msg.call_args[0][2]

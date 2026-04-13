@@ -504,9 +504,13 @@ def handle_scatter_command(
 
     # --- Send and clean up ---
     try:
-        send_photo_to_chat(bot_token, chat_id, chart_path, caption=caption)
+        sent = send_photo_to_chat(bot_token, chat_id, chart_path, caption=caption)
+        if not sent:
+            logger.error("phase=%s send_photo_to_chat returned False", _PHASE)
+            send_telegram_message(bot_token, chat_id, "❌ Failed to send scatter chart.")
     except Exception as exc:
         logger.error("phase=%s send_photo failed: %s", _PHASE, exc)
+        send_telegram_message(bot_token, chat_id, "❌ Failed to send scatter chart.")
     finally:
         if os.path.exists(chart_path):
             try:
