@@ -242,7 +242,7 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 | `src/scorer/pattern_scorer.py` | Scores candlestick/structural patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Rolls up component scores into 9 categories; applies regime-based adaptive weights |
 | `src/scorer/sector_adjuster.py` | Computes sector ETF trend score and applies adjustment (±5 to ±10) |
-| `src/scorer/timeframe_merger.py` | Merges daily (×0.6) + weekly (×0.4) composite scores; computes weekly score from indicators_weekly using `scoring_date` to prevent look-ahead bias and regime-aware RSI direction |
+| `src/scorer/timeframe_merger.py` | Merges daily (×0.2) + weekly (×0.8) composite scores; computes weekly score from indicators_weekly using `scoring_date` to prevent look-ahead bias and regime-aware RSI direction |
 | `src/scorer/confidence.py` | Signal classification (BULLISH/BEARISH/NEUTRAL), confidence modifiers, data_completeness dict, key_signals list |
 | `src/scorer/flip_detector.py` | Detects signal direction changes; saves to signal_flips table |
 | `src/scorer/main.py` | Orchestrator: per-ticker score_ticker() + run_scorer() for daily pipeline + run_historical_scoring() for Option E |
@@ -757,7 +757,12 @@ All computed using the `ta` library from OHLCV data. Parameters configurable in 
 | Fundamental | 5% | 5% | 5% |
 | Macro | 5% | 5% | 5% |
 
-### Dual Timeframe: Final = (Daily × 0.6) + (Weekly × 0.4)
+### Dual Timeframe: Final = (Daily × 0.2) + (Weekly × 0.8)
+
+Weekly indicators dominate (80%) to optimise for monthly price-movement prediction.
+Backtested across 62 tickers and 5 years of data (5,344 weekly samples with 21-day
+forward returns): 0.2/0.8 yields 58.8% directional accuracy vs 54.4% at the previous
+0.6/0.4 split (+4.4pp). Weights are configurable via `scorer.json` `timeframe_weights`.
 ### Signal: +30 to +100 = BULLISH, -30 to +30 = NEUTRAL, -100 to -30 = BEARISH
 ### Confidence: |Final Score|% + modifiers (timeframe agreement, volume confirmation, earnings proximity, VIX, etc.)
 

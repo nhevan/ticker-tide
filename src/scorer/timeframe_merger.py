@@ -2,7 +2,7 @@
 Dual timeframe confirmation.
 
 Merges daily and weekly scores using configurable weights:
-  Final Score = (Daily Score × 0.6) + (Weekly Score × 0.4)
+  Final Score = (Daily Score × 0.2) + (Weekly Score × 0.8)
 
 If weekly score is not available, falls back to daily score only.
 """
@@ -41,8 +41,8 @@ def merge_timeframes(
         return max(-100.0, min(100.0, daily_score))
 
     weights = config.get("timeframe_weights", {})
-    daily_weight: float = weights.get("daily", 0.6)
-    weekly_weight: float = weights.get("weekly", 0.4)
+    daily_weight: float = weights.get("daily", 0.2)
+    weekly_weight: float = weights.get("weekly", 0.8)
 
     merged = daily_score * daily_weight + weekly_score * weekly_weight
     return max(-100.0, min(100.0, merged))

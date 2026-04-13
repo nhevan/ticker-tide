@@ -241,8 +241,8 @@ Categories: `trend`, `momentum`, `volume`, `volatility`, `candlestick`, `structu
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `timeframe_weights.daily` | float | `0.6` | Weight of daily score in final merged score |
-| `timeframe_weights.weekly` | float | `0.4` | Weight of weekly score in final merged score |
+| `timeframe_weights.daily` | float | `0.2` | Weight of daily score in final merged score |
+| `timeframe_weights.weekly` | float | `0.8` | Weight of weekly score in final merged score |
 
 ### Signal thresholds
 

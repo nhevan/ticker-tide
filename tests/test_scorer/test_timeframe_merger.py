@@ -13,8 +13,8 @@ from src.scorer.timeframe_merger import compute_weekly_score, merge_timeframes
 
 SAMPLE_CONFIG = {
     "timeframe_weights": {
-        "daily": 0.6,
-        "weekly": 0.4,
+        "daily": 0.2,
+        "weekly": 0.8,
     }
 }
 
@@ -224,14 +224,14 @@ class TestComputeWeeklyScoreRegimeAware:
 
 class TestMergeTimeframes:
     def test_merge_daily_weekly_same_direction(self) -> None:
-        """daily=+60, weekly=+50, weights 0.6/0.4 → 0.6*60 + 0.4*50 = 56.0."""
+        """daily=+60, weekly=+50, weights 0.2/0.8 → 0.2*60 + 0.8*50 = 52.0."""
         result = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG)
-        assert result == pytest.approx(56.0, abs=0.01)
+        assert result == pytest.approx(52.0, abs=0.01)
 
     def test_merge_daily_weekly_opposite_direction(self) -> None:
-        """daily=+60, weekly=-40 → 0.6*60 + 0.4*(-40) = 20.0 (conflict → closer to neutral)."""
+        """daily=+60, weekly=-40 → 0.2*60 + 0.8*(-40) = -20.0 (weekly dominates → bearish)."""
         result = merge_timeframes(daily_score=60.0, weekly_score=-40.0, config=SAMPLE_CONFIG)
-        assert result == pytest.approx(20.0, abs=0.01)
+        assert result == pytest.approx(-20.0, abs=0.01)
 
     def test_merge_weekly_not_available(self) -> None:
         """weekly_score=None → merged = daily_score only."""

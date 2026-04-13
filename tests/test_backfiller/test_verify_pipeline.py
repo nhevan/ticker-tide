@@ -768,24 +768,26 @@ class TestCheckWeightedScoreMath:
     """Tests for check_weighted_score_math()."""
 
     def test_check_weighted_score_math(self, db_connection: sqlite3.Connection) -> None:
-        """final_score exactly equal to 0.6*daily + 0.4*weekly should pass."""
+        """final_score exactly equal to 0.2*daily + 0.8*weekly should pass."""
         daily_score = 50.0
         weekly_score = 30.0
-        expected_final = 0.6 * daily_score + 0.4 * weekly_score  # 42.0
+        expected_final = 0.2 * daily_score + 0.8 * weekly_score  # 34.0
         _insert_score(db_connection, "AAPL", "2026-01-02",
                       final_score=expected_final,
                       daily_score=daily_score,
                       weekly_score=weekly_score)
-        result = check_weighted_score_math(db_connection, "2026-01-02")
+        result = check_weighted_score_math(db_connection, "2026-01-02",
+                                           daily_weight=0.2, weekly_weight=0.8)
         assert result.status == "pass"
 
     def test_check_weighted_score_math_violation(self, db_connection: sqlite3.Connection) -> None:
-        """final_score far from 0.6*daily + 0.4*weekly should be flagged."""
+        """final_score far from 0.2*daily + 0.8*weekly should be flagged."""
         _insert_score(db_connection, "AAPL", "2026-01-02",
                       final_score=99.0,
                       daily_score=10.0,
                       weekly_score=10.0)  # expected ≈ 10.0, got 99.0
-        result = check_weighted_score_math(db_connection, "2026-01-02", tolerance=2.0)
+        result = check_weighted_score_math(db_connection, "2026-01-02", tolerance=2.0,
+                                           daily_weight=0.2, weekly_weight=0.8)
         assert result.status in ("warn", "fail")
         assert result.details is not None
 
@@ -1532,7 +1534,7 @@ class TestRunFullPipelineVerification:
         _insert_indicator_row(conn, ticker, date_str)
         daily_score = 50.0
         weekly_score = 30.0
-        final_score = round(0.6 * daily_score + 0.4 * weekly_score, 6)
+        final_score = round(0.2 * daily_score + 0.8 * weekly_score, 6)
         _insert_score(conn, ticker, date_str,
                       signal="BULLISH", confidence=60.0, final_score=final_score,
                       daily_score=daily_score, weekly_score=weekly_score)

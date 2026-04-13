@@ -28,6 +28,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from src.common.config import load_config
 from src.common.progress import edit_telegram_message, send_telegram_message
 from src.notifier.chart_generator import cleanup_chart, generate_chart
 
@@ -110,13 +111,18 @@ def build_scoring_chain(score: dict) -> str:
     confidence = score.get("confidence", 0.0) or 0.0
     regime = score.get("regime", "unknown")
 
-    merged = 0.6 * daily + 0.4 * weekly
+    scorer_cfg = load_config("scorer")
+    weights = scorer_cfg.get("timeframe_weights", {})
+    daily_weight: float = weights.get("daily", 0.2)
+    weekly_weight: float = weights.get("weekly", 0.8)
+
+    merged = daily_weight * daily + weekly_weight * weekly
 
     lines = [
         "═══ SCORING CHAIN ═══",
         f"  Daily raw:    {daily:+.1f}",
         f"  Weekly:       {weekly:+.1f}",
-        f"  Merged:       0.6×{daily:+.1f} + 0.4×{weekly:+.1f} = {merged:+.1f}",
+        f"  Merged:       {daily_weight}×{daily:+.1f} + {weekly_weight}×{weekly:+.1f} = {merged:+.1f}",
         f"  Final score:  {final:+.1f}",
         f"  Signal:       {signal}",
         f"  Confidence:   {confidence:.0f}%",

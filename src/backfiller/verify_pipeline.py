@@ -23,7 +23,7 @@ Checks performed:
 8.  Signal-score consistency (BULLISH matches positive score)
 9.  Signal distribution (not all same signal)
 10. Confidence distribution (not all 0%)
-11. Weighted score math verification (0.6×daily + 0.4×weekly ≈ final)
+11. Weighted score math verification (0.2×daily + 0.8×weekly ≈ final)
 12. Regime validity (trending/ranging/volatile only)
 13. JSON field validity (data_completeness, key_signals)
 14. Pattern counts and validity
@@ -823,21 +823,32 @@ def check_weighted_score_math(
     db_conn: sqlite3.Connection,
     scoring_date: str,
     tolerance: float = 2.0,
+    daily_weight: Optional[float] = None,
+    weekly_weight: Optional[float] = None,
 ) -> CheckResult:
     """
-    Verify that final_score ≈ 0.6 × daily_score + 0.4 × weekly_score.
+    Verify that final_score ≈ daily_weight × daily_score + weekly_weight × weekly_score.
 
-    Allows for a ±tolerance difference (default ±2.0) to account for sector
-    adjustment and rounding. Flags tickers where the deviation exceeds tolerance.
+    Weights default to the values in scorer.json timeframe_weights. Allows for a
+    ±tolerance difference (default ±2.0) to account for sector adjustment and rounding.
+    Flags tickers where the deviation exceeds tolerance.
 
     Args:
         db_conn: Open SQLite connection.
         scoring_date: Date string (YYYY-MM-DD) to check.
         tolerance: Maximum allowed deviation from the weighted formula. Default 2.0.
+        daily_weight: Override daily weight (defaults to scorer.json value).
+        weekly_weight: Override weekly weight (defaults to scorer.json value).
 
     Returns:
         CheckResult with "warn" if any ticker exceeds the tolerance.
     """
+    if daily_weight is None or weekly_weight is None:
+        scorer_cfg = load_config("scorer")
+        tw = scorer_cfg.get("timeframe_weights", {})
+        daily_weight = daily_weight if daily_weight is not None else tw.get("daily", 0.2)
+        weekly_weight = weekly_weight if weekly_weight is not None else tw.get("weekly", 0.8)
+
     rows = db_conn.execute(
         "SELECT ticker, final_score, daily_score, weekly_score "
         "FROM scores_daily "
@@ -850,7 +861,7 @@ def check_weighted_score_math(
 
     issues: list[str] = []
     for row in rows:
-        expected = 0.6 * row["daily_score"] + 0.4 * row["weekly_score"]
+        expected = daily_weight * row["daily_score"] + weekly_weight * row["weekly_score"]
         deviation = abs(row["final_score"] - expected)
         if deviation > tolerance:
             issues.append(
@@ -862,7 +873,7 @@ def check_weighted_score_math(
         return CheckResult(
             name="weighted_score_math",
             status="warn",
-            message=f"{len(issues)} ticker(s) have final_score far from 0.6×daily+0.4×weekly",
+            message=f"{len(issues)} ticker(s) have final_score far from {daily_weight}×daily+{weekly_weight}×weekly",
             details=issues,
         )
     return CheckResult(
