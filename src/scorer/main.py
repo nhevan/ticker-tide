@@ -516,7 +516,7 @@ def score_ticker(
 
     # 5. Score indicators
     profiles = load_profile_for_ticker(db_conn, ticker)
-    indicator_scores = score_all_indicators(indicators, close, profiles, config)
+    indicator_scores = score_all_indicators(indicators, close, profiles, config, regime=regime)
 
     # 6. Load and score patterns
     patterns = _load_patterns(db_conn, ticker, scoring_date)

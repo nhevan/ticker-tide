@@ -93,7 +93,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/calculator/news_aggregator.py` | `news_articles` → `news_daily_summary` per ticker per day |
 | `src/scorer/main.py` | `run_scorer()` and `run_historical_scoring()`; per-ticker `score_ticker()` pipeline |
 | `src/scorer/regime.py` | Trending/Ranging/Volatile detection from ADX, ATR, VIX |
-| `src/scorer/indicator_scorer.py` | Maps indicator values → [−100, +100] using percentile profiles |
+| `src/scorer/indicator_scorer.py` | Maps indicator values → [−100, +100] using percentile profiles; momentum oscillators (RSI, Stochastic %K, CCI, Williams %R) accept a `regime` parameter — `"trending"` flips to `higher_is_bullish=True` (trend-continuation), `"ranging"`/`"volatile"` use mean-reversion |
 | `src/scorer/pattern_scorer.py` | Scores patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Aggregates component scores into 9 categories; applies adaptive weights |
 | `src/scorer/sector_adjuster.py` | Sector ETF trend score → ±5 to ±10 adjustment on final score |
@@ -166,7 +166,7 @@ notifier          ← config, db, events, progress, anthropic, telegram
 
 4. **Add to percentile profiles in `src/calculator/profiles.py`** — include `"my_indicator"` in the list of tracked indicators so it gets p5/p50/p95 computed.
 
-5. **Add scoring logic in `src/scorer/indicator_scorer.py`** — map the indicator value to [−100, +100] using its percentile profile, following the existing pattern for RSI, ADX, etc.
+5. **Add scoring logic in `src/scorer/indicator_scorer.py`** — map the indicator value to [−100, +100] using its percentile profile, following the existing pattern for RSI, ADX, etc. If the indicator is a momentum oscillator where overbought/oversold interpretation changes between trending and ranging markets, pass `oscillator_higher_is_bullish` (derived from `regime == "trending"`) as the `higher_is_bullish` argument, consistent with RSI, Stochastic %K, CCI, and Williams %R.
 
 6. **Write tests first (TDD)**:
     - `tests/test_calculator/test_indicators.py` — test that the value is computed and stored correctly

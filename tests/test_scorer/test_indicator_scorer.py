@@ -251,3 +251,185 @@ class TestScoreAllIndicators:
         result = score_all_indicators(indicators, close=110.0, profiles={}, config={})
         assert result.get("rsi_14") is None
         assert result.get("macd_histogram") is not None
+
+
+class TestScoreRSIRegimeAware:
+    """Tests for higher_is_bullish parameter on score_rsi()."""
+
+    _PROFILE = {
+        "p5": 25.0, "p20": 35.0, "p50": 53.0,
+        "p80": 68.0, "p95": 78.0, "mean": 52.0, "std": 12.0,
+    }
+
+    def test_trending_overbought_rsi_is_bullish_with_profile(self) -> None:
+        """RSI=75 with higher_is_bullish=True (trending) → bullish (positive score)."""
+        score = score_rsi(75.0, self._PROFILE, higher_is_bullish=True)
+        assert score > 0, f"Trending RSI=75 should be bullish, got {score}"
+
+    def test_trending_oversold_rsi_is_bearish_with_profile(self) -> None:
+        """RSI=25 with higher_is_bullish=True (trending) → bearish (negative score)."""
+        score = score_rsi(25.0, self._PROFILE, higher_is_bullish=True)
+        assert score < 0, f"Trending RSI=25 should be bearish (downtrend continuation), got {score}"
+
+    def test_trending_overbought_rsi_is_bullish_no_profile(self) -> None:
+        """RSI=75, no profile, higher_is_bullish=True → bullish (positive score)."""
+        score = score_rsi(75.0, None, higher_is_bullish=True)
+        assert score > 0, f"Trending RSI=75 (no profile) should be bullish, got {score}"
+
+    def test_trending_oversold_rsi_is_bearish_no_profile(self) -> None:
+        """RSI=25, no profile, higher_is_bullish=True → bearish (negative score)."""
+        score = score_rsi(25.0, None, higher_is_bullish=True)
+        assert score < 0, f"Trending RSI=25 (no profile) should be bearish, got {score}"
+
+    def test_default_higher_is_bullish_false_unchanged(self) -> None:
+        """Default (higher_is_bullish=False) preserves original mean-reversion behaviour."""
+        original = score_rsi(75.0, self._PROFILE)
+        explicit = score_rsi(75.0, self._PROFILE, higher_is_bullish=False)
+        assert original == explicit
+
+    def test_trending_and_ranging_scores_are_opposite_sign(self) -> None:
+        """score_rsi(75) trending and ranging should have opposite signs."""
+        ranging = score_rsi(75.0, self._PROFILE, higher_is_bullish=False)
+        trending = score_rsi(75.0, self._PROFILE, higher_is_bullish=True)
+        assert ranging < 0 and trending > 0
+
+
+class TestScoreAllIndicatorsRegimeAware:
+    """Tests for regime-aware oscillator flipping in score_all_indicators()."""
+
+    _PROFILE_RSI = {
+        "p5": 25.0, "p20": 35.0, "p50": 53.0,
+        "p80": 68.0, "p95": 78.0, "mean": 52.0, "std": 12.0,
+    }
+    _PROFILE_STOCH = {
+        "p5": 8.0, "p20": 20.0, "p50": 50.0,
+        "p80": 80.0, "p95": 92.0, "mean": 50.0, "std": 20.0,
+    }
+    _PROFILE_CCI = {
+        "p5": -150.0, "p20": -80.0, "p50": 0.0,
+        "p80": 80.0, "p95": 150.0, "mean": 0.0, "std": 60.0,
+    }
+    _PROFILE_WR = {
+        "p5": -95.0, "p20": -75.0, "p50": -50.0,
+        "p80": -25.0, "p95": -5.0, "mean": -50.0, "std": 25.0,
+    }
+
+    def test_trending_rsi_overbought_is_bullish_with_profile(self) -> None:
+        """In trending regime, RSI=75 (overbought) → bullish score."""
+        indicators = {"rsi_14": 75.0}
+        profiles = {"rsi_14": self._PROFILE_RSI}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="trending")
+        assert result["rsi_14"] > 0, f"Expected bullish RSI in trending, got {result['rsi_14']}"
+
+    def test_ranging_rsi_overbought_is_bearish_with_profile(self) -> None:
+        """In ranging regime, RSI=75 (overbought) → bearish score (mean-reversion)."""
+        indicators = {"rsi_14": 75.0}
+        profiles = {"rsi_14": self._PROFILE_RSI}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="ranging")
+        assert result["rsi_14"] < 0, f"Expected bearish RSI in ranging, got {result['rsi_14']}"
+
+    def test_volatile_rsi_overbought_is_bearish_with_profile(self) -> None:
+        """In volatile regime, RSI=75 (overbought) → bearish score (mean-reversion)."""
+        indicators = {"rsi_14": 75.0}
+        profiles = {"rsi_14": self._PROFILE_RSI}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="volatile")
+        assert result["rsi_14"] < 0, f"Expected bearish RSI in volatile, got {result['rsi_14']}"
+
+    def test_default_regime_omitted_is_ranging(self) -> None:
+        """Omitting regime defaults to ranging (backward-compatible mean-reversion)."""
+        indicators = {"rsi_14": 75.0}
+        profiles = {"rsi_14": self._PROFILE_RSI}
+        explicit_ranging = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="ranging")
+        default = score_all_indicators(indicators, close=100.0, profiles=profiles, config={})
+        assert default["rsi_14"] == explicit_ranging["rsi_14"]
+
+    def test_trending_stoch_overbought_is_bullish_with_profile(self) -> None:
+        """In trending regime, Stoch %K=85 (overbought) → bullish score."""
+        indicators = {"stoch_k": 85.0}
+        profiles = {"stoch_k": self._PROFILE_STOCH}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="trending")
+        assert result["stoch_k"] > 0, f"Expected bullish Stoch in trending, got {result['stoch_k']}"
+
+    def test_ranging_stoch_overbought_is_bearish_with_profile(self) -> None:
+        """In ranging regime, Stoch %K=85 → bearish score."""
+        indicators = {"stoch_k": 85.0}
+        profiles = {"stoch_k": self._PROFILE_STOCH}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="ranging")
+        assert result["stoch_k"] < 0, f"Expected bearish Stoch in ranging, got {result['stoch_k']}"
+
+    def test_trending_stoch_overbought_is_bullish_no_profile(self) -> None:
+        """In trending regime, Stoch %K=85, no profile → bullish (fixed fallback flipped)."""
+        indicators = {"stoch_k": 85.0}
+        result = score_all_indicators(indicators, close=100.0, profiles={}, config={}, regime="trending")
+        assert result["stoch_k"] > 0, f"Expected bullish Stoch no-profile trending, got {result['stoch_k']}"
+
+    def test_ranging_stoch_overbought_is_bearish_no_profile(self) -> None:
+        """In ranging regime, Stoch %K=85, no profile → bearish (fixed fallback)."""
+        indicators = {"stoch_k": 85.0}
+        result = score_all_indicators(indicators, close=100.0, profiles={}, config={}, regime="ranging")
+        assert result["stoch_k"] < 0, f"Expected bearish Stoch no-profile ranging, got {result['stoch_k']}"
+
+    def test_trending_cci_high_is_bullish_with_profile(self) -> None:
+        """In trending regime, CCI=150 (overbought) → bullish score."""
+        indicators = {"cci_20": 150.0}
+        profiles = {"cci_20": self._PROFILE_CCI}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="trending")
+        assert result["cci_20"] > 0, f"Expected bullish CCI in trending, got {result['cci_20']}"
+
+    def test_ranging_cci_high_is_bearish_with_profile(self) -> None:
+        """In ranging regime, CCI=150 → bearish score."""
+        indicators = {"cci_20": 150.0}
+        profiles = {"cci_20": self._PROFILE_CCI}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="ranging")
+        assert result["cci_20"] < 0, f"Expected bearish CCI in ranging, got {result['cci_20']}"
+
+    def test_trending_cci_high_is_bullish_no_profile(self) -> None:
+        """In trending regime, CCI=200, no profile → bullish (fixed fallback flipped)."""
+        indicators = {"cci_20": 200.0}
+        result = score_all_indicators(indicators, close=100.0, profiles={}, config={}, regime="trending")
+        assert result["cci_20"] > 0, f"Expected bullish CCI no-profile trending, got {result['cci_20']}"
+
+    def test_ranging_cci_high_is_bearish_no_profile(self) -> None:
+        """In ranging regime, CCI=200, no profile → bearish (fixed fallback)."""
+        indicators = {"cci_20": 200.0}
+        result = score_all_indicators(indicators, close=100.0, profiles={}, config={}, regime="ranging")
+        assert result["cci_20"] < 0, f"Expected bearish CCI no-profile ranging, got {result['cci_20']}"
+
+    def test_trending_williams_r_overbought_is_bullish_with_profile(self) -> None:
+        """In trending regime, Williams %R=-5 (overbought) → bullish score."""
+        indicators = {"williams_r": -5.0}
+        profiles = {"williams_r": self._PROFILE_WR}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="trending")
+        assert result["williams_r"] > 0, f"Expected bullish WR in trending, got {result['williams_r']}"
+
+    def test_ranging_williams_r_overbought_is_bearish_with_profile(self) -> None:
+        """In ranging regime, Williams %R=-5 → bearish score."""
+        indicators = {"williams_r": -5.0}
+        profiles = {"williams_r": self._PROFILE_WR}
+        result = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="ranging")
+        assert result["williams_r"] < 0, f"Expected bearish WR in ranging, got {result['williams_r']}"
+
+    def test_trending_williams_r_overbought_is_bullish_no_profile(self) -> None:
+        """In trending regime, Williams %R=-5, no profile → bullish (fixed fallback flipped)."""
+        indicators = {"williams_r": -5.0}
+        result = score_all_indicators(indicators, close=100.0, profiles={}, config={}, regime="trending")
+        assert result["williams_r"] > 0, f"Expected bullish WR no-profile trending, got {result['williams_r']}"
+
+    def test_ranging_williams_r_overbought_is_bearish_no_profile(self) -> None:
+        """In ranging regime, Williams %R=-5, no profile → bearish (fixed fallback)."""
+        indicators = {"williams_r": -5.0}
+        result = score_all_indicators(indicators, close=100.0, profiles={}, config={}, regime="ranging")
+        assert result["williams_r"] < 0, f"Expected bearish WR no-profile ranging, got {result['williams_r']}"
+
+    def test_bb_pctb_not_flipped_in_trending_regime(self) -> None:
+        """BB %B is never flipped — high value stays bearish even in trending regime."""
+        profile_bb = {
+            "p5": 0.05, "p20": 0.2, "p50": 0.5,
+            "p80": 0.8, "p95": 0.95, "mean": 0.5, "std": 0.2,
+        }
+        indicators = {"bb_pctb": 0.95}
+        profiles = {"bb_pctb": profile_bb}
+        ranging = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="ranging")
+        trending = score_all_indicators(indicators, close=100.0, profiles=profiles, config={}, regime="trending")
+        assert ranging["bb_pctb"] < 0, "BB %B near upper band should be bearish in ranging"
+        assert trending["bb_pctb"] == ranging["bb_pctb"], "BB %B should not change between regimes"

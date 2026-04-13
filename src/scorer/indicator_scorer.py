@@ -225,35 +225,43 @@ def score_ema_alignment(close: float, ema_9: float, ema_21: float, ema_50: float
     return 0.0
 
 
-def score_rsi(value: float, profile: Optional[dict]) -> float:
+def score_rsi(value: float, profile: Optional[dict], higher_is_bullish: bool = False) -> float:
     """
     Score the RSI indicator.
 
     Uses percentile-based scoring from the stock's profile when available.
     Falls back to fixed thresholds (70=overbought, 30=oversold) when not.
-    High RSI = overbought = bearish (higher_is_bullish=False).
+
+    The interpretation depends on market regime:
+      - higher_is_bullish=False (ranging/volatile): high RSI = overbought = bearish.
+      - higher_is_bullish=True (trending): high RSI = trend continuation = bullish.
 
     Parameters:
         value: Current RSI value (0-100).
         profile: Percentile profile for RSI, or None for fixed fallback.
+        higher_is_bullish: If True, high RSI is scored as bullish (trending regime).
+                           Defaults to False (mean-reversion / ranging regime).
 
     Returns:
         Float score between -100 and +100.
     """
     if profile is not None:
-        return score_with_percentile(value, profile, higher_is_bullish=False)
+        return score_with_percentile(value, profile, higher_is_bullish=higher_is_bullish)
 
-    # Fixed fallback
+    # Fixed fallback — compute mean-reversion score, then negate for trending regime.
     if value <= _RSI_FIXED_OVERSOLD:
         t = (_RSI_FIXED_OVERSOLD - value) / _RSI_FIXED_OVERSOLD
-        return min(100.0, 50.0 + t * 50.0)
-    if value >= _RSI_FIXED_OVERBOUGHT:
+        raw = min(100.0, 50.0 + t * 50.0)
+    elif value >= _RSI_FIXED_OVERBOUGHT:
         t = (value - _RSI_FIXED_OVERBOUGHT) / (100 - _RSI_FIXED_OVERBOUGHT)
-        return max(-100.0, -(50.0 + t * 50.0))
-    # Neutral zone (30-70)
-    mid = (_RSI_FIXED_OVERSOLD + _RSI_FIXED_OVERBOUGHT) / 2
-    t = (value - mid) / ((_RSI_FIXED_OVERBOUGHT - _RSI_FIXED_OVERSOLD) / 2)
-    return max(-100.0, min(100.0, -t * 30.0))
+        raw = max(-100.0, -(50.0 + t * 50.0))
+    else:
+        # Neutral zone (30-70)
+        mid = (_RSI_FIXED_OVERSOLD + _RSI_FIXED_OVERBOUGHT) / 2
+        t = (value - mid) / ((_RSI_FIXED_OVERBOUGHT - _RSI_FIXED_OVERSOLD) / 2)
+        raw = max(-100.0, min(100.0, -t * 30.0))
+
+    return -raw if higher_is_bullish else raw
 
 
 def score_macd_histogram(value: float, profile: Optional[dict]) -> float:
@@ -353,6 +361,7 @@ def score_all_indicators(
     close: float,
     profiles: dict,
     config: dict,
+    regime: str = "ranging",
 ) -> dict:
     """
     Score every indicator in the indicators dict.
@@ -361,11 +370,23 @@ def score_all_indicators(
     indicators that are None. Returns None for unrecognized indicators not
     explicitly handled.
 
+    Momentum oscillators (RSI, Stochastic %K, CCI, Williams %R) are scored
+    with regime-aware direction:
+      - regime="trending": higher_is_bullish=True — high readings signal trend
+        continuation (bullish), low readings signal downtrend continuation (bearish).
+      - regime="ranging" or "volatile": higher_is_bullish=False — mean-reversion
+        interpretation; overbought readings are bearish.
+
+    BB %B is never flipped — it measures Bollinger Band position, not momentum
+    direction, and lives in the Volatility category.
+
     Parameters:
         indicators: Dict with keys like "rsi_14", "macd_histogram", "ema_9", etc.
         close: Current closing price (needed for EMA alignment).
         profiles: Dict mapping indicator_name → profile dict.
         config: Scorer config (currently unused but passed for extensibility).
+        regime: Market regime string ("trending", "ranging", or "volatile").
+                Defaults to "ranging" for backward compatibility.
 
     Returns:
         Dict mapping indicator names to scores (-100 to +100), or None for
@@ -373,9 +394,13 @@ def score_all_indicators(
     """
     result: dict = {}
 
+    # Oscillators use trend-continuation scoring in trending regime;
+    # mean-reversion in ranging/volatile.
+    oscillator_higher_is_bullish = (regime == "trending")
+
     # RSI
     rsi = indicators.get("rsi_14")
-    result["rsi_14"] = None if rsi is None else score_rsi(rsi, profiles.get("rsi_14"))
+    result["rsi_14"] = None if rsi is None else score_rsi(rsi, profiles.get("rsi_14"), oscillator_higher_is_bullish)
 
     # MACD histogram
     macd_hist = indicators.get("macd_histogram")
@@ -404,61 +429,65 @@ def score_all_indicators(
     adx = indicators.get("adx")
     result["adx"] = None if adx is None else score_adx(adx)
 
-    # Stochastic %K (overbought/oversold, higher_is_bullish=False)
+    # Stochastic %K (regime-aware: overbought/oversold in ranging; trend-continuation in trending)
     stoch_k = indicators.get("stoch_k")
     if stoch_k is not None:
         profile_stoch = profiles.get("stoch_k")
         if profile_stoch:
-            result["stoch_k"] = score_with_percentile(stoch_k, profile_stoch, higher_is_bullish=False)
+            result["stoch_k"] = score_with_percentile(stoch_k, profile_stoch, higher_is_bullish=oscillator_higher_is_bullish)
         else:
-            # Fixed fallback: 80=overbought, 20=oversold
+            # Fixed fallback: 80=overbought, 20=oversold in ranging; flip sign in trending.
             if stoch_k >= 80:
-                result["stoch_k"] = -60.0
+                raw = -60.0
             elif stoch_k <= 20:
-                result["stoch_k"] = 60.0
+                raw = 60.0
             else:
-                result["stoch_k"] = (50.0 - stoch_k) / 50.0 * 30.0
+                raw = (50.0 - stoch_k) / 50.0 * 30.0
+            result["stoch_k"] = -raw if oscillator_higher_is_bullish else raw
     else:
         result["stoch_k"] = None
 
-    # Williams %R (ranges -100 to 0; near -100 = oversold = bullish)
+    # Williams %R (ranges -100 to 0; regime-aware)
     williams_r = indicators.get("williams_r")
     if williams_r is not None:
         profile_wr = profiles.get("williams_r")
         if profile_wr:
-            # Low Williams %R (near -100) = oversold = bullish → higher_is_bullish=False
-            result["williams_r"] = score_with_percentile(williams_r, profile_wr, higher_is_bullish=False)
+            # Low Williams %R (near -100) = oversold = bullish in ranging;
+            # flip to higher_is_bullish in trending.
+            result["williams_r"] = score_with_percentile(williams_r, profile_wr, higher_is_bullish=oscillator_higher_is_bullish)
         else:
-            # Fixed fallback: near -100 = oversold = bullish; near 0 = overbought = bearish
+            # Fixed fallback: near -100 = oversold = bullish; near 0 = overbought = bearish.
             if williams_r <= -80:
-                result["williams_r"] = 60.0
+                raw = 60.0
             elif williams_r >= -20:
-                result["williams_r"] = -60.0
+                raw = -60.0
             else:
-                result["williams_r"] = (-40.0 - williams_r) / 40.0 * 30.0
+                raw = (-40.0 - williams_r) / 40.0 * 30.0
+            result["williams_r"] = -raw if oscillator_higher_is_bullish else raw
     else:
         result["williams_r"] = None
 
-    # CCI (higher_is_bullish=True for trend direction; extreme high=overbought)
+    # CCI (regime-aware)
     cci = indicators.get("cci_20")
     if cci is not None:
         profile_cci = profiles.get("cci_20")
         if profile_cci:
-            result["cci_20"] = score_with_percentile(cci, profile_cci, higher_is_bullish=False)
+            result["cci_20"] = score_with_percentile(cci, profile_cci, higher_is_bullish=oscillator_higher_is_bullish)
         else:
-            # Fixed fallback: > 100 = overbought, < -100 = oversold
+            # Fixed fallback: > 100 = overbought, < -100 = oversold in ranging.
             if cci >= 200:
-                result["cci_20"] = -80.0
+                raw = -80.0
             elif cci >= 100:
                 t = (cci - 100) / 100
-                result["cci_20"] = -(t * 60.0 + 20.0)
+                raw = -(t * 60.0 + 20.0)
             elif cci <= -200:
-                result["cci_20"] = 80.0
+                raw = 80.0
             elif cci <= -100:
                 t = (-cci - 100) / 100
-                result["cci_20"] = t * 60.0 + 20.0
+                raw = t * 60.0 + 20.0
             else:
-                result["cci_20"] = cci / 100 * (-20.0)
+                raw = cci / 100 * (-20.0)
+            result["cci_20"] = -raw if oscillator_higher_is_bullish else raw
     else:
         result["cci_20"] = None
 
