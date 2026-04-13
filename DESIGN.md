@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-A signal generation engine that analyzes ~50 US stock tickers daily and produces:
+A signal generation engine that analyzes ~50 US stock tickers and 3 index ETFs (QQQ, VOO, DIA) daily and produces:
 - Signal: BULLISH / BEARISH / NEUTRAL
 - Confidence: 0-100%
 - Reasoning: AI-generated explanation of why

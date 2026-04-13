@@ -280,6 +280,11 @@ conn.close()
 #    { "symbol": "NVDA", "sector": "Technology", "sector_etf": "XLK",
 #      "added": "2026-03-18", "active": true }
 #    For renamed tickers add: "former_symbol": "FB", "symbol_since": "2022-06-09"
+#
+#    For index ETFs (QQQ, VOO, DIA, etc.) use sector: "Index" and sector_etf: null.
+#    Fundamentals/earnings/filings will be empty (expected); all price-based indicators work.
+#    { "symbol": "VOO", "sector": "Index", "sector_etf": null,
+#      "added": "2026-04-13", "active": true }
 
 # 2. Backfill all data for the new ticker
 python scripts/run_backfill.py --ticker NVDA

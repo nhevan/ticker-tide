@@ -414,6 +414,27 @@
       "sector_etf": "XLI",
       "added": "2026-03-16",
       "active": true
+    },
+    {
+      "symbol": "QQQ",
+      "sector": "Index",
+      "sector_etf": null,
+      "added": "2026-04-13",
+      "active": true
+    },
+    {
+      "symbol": "VOO",
+      "sector": "Index",
+      "sector_etf": null,
+      "added": "2026-04-13",
+      "active": true
+    },
+    {
+      "symbol": "DIA",
+      "sector": "Index",
+      "sector_etf": null,
+      "added": "2026-04-13",
+      "active": true
     }
   ],
   "sector_etfs": [

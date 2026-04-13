@@ -25,13 +25,15 @@ Template: `.env.example`
 
 Ticker universe. The `tickers` array is the only required field; `sector_etfs` and `market_benchmarks` are read by the scorer and fetcher for sector/benchmark comparisons.
 
+**Index ETFs** (QQQ, VOO, DIA) are tracked as regular tickers with `sector: "Index"` and `sector_etf: null`. They receive full pipeline treatment (indicators, patterns, scoring, signals) but will not have fundamentals, earnings, or filing data — the scorer applies a -3% confidence penalty for the missing fundamentals and returns a raw score (no sector adjustment) when `sector_etf` is null.
+
 ### `tickers[]` object fields
 
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `symbol` | string | Yes | Ticker symbol as traded on Nasdaq/NYSE |
 | `sector` | string | Yes | GICS sector name |
-| `sector_etf` | string | Yes | SPDR sector ETF symbol (must be listed in `sector_etfs`) |
+| `sector_etf` | string or null | Yes | SPDR sector ETF symbol (must be listed in `sector_etfs`). Set to `null` for index ETFs (QQQ, VOO, DIA) — the sector adjustment is skipped when this is null. |
 | `added` | string | Yes | Date added to config (`YYYY-MM-DD`); preserved on re-insert |
 | `active` | boolean | Yes | `false` disables the ticker without deleting its data |
 | `former_symbol` | string | No | Pre-rename ticker (e.g. `"FB"`); triggers split-fetch in OHLCV backfiller |
