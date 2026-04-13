@@ -3,7 +3,7 @@ Tests for src/notifier/scatter_command.py — /scatter Telegram bot command.
 
 Covers:
   - parse_scatter_command: valid inputs, invalid inputs, defaults
-  - fetch_signals_with_forward_returns: happy path, BEARISH inversion, dropped rows
+  - fetch_signals_with_forward_returns: happy path, signed_confidence, raw returns, dropped rows
   - generate_scatter_chart: produces a PNG file, handles empty data
   - handle_scatter_command: end-to-end orchestration (mocked Telegram)
 """
@@ -70,11 +70,12 @@ def _insert_score(
     signal_date: str,
     signal: str,
     confidence: float,
+    final_score: float = 0.0,
 ) -> None:
     conn.execute(
-        """INSERT OR REPLACE INTO scores_daily (ticker, date, signal, confidence)
-           VALUES (?, ?, ?, ?)""",
-        (ticker, signal_date, signal, confidence),
+        """INSERT OR REPLACE INTO scores_daily (ticker, date, signal, confidence, final_score)
+           VALUES (?, ?, ?, ?, ?)""",
+        (ticker, signal_date, signal, confidence, final_score),
     )
     conn.commit()
 
@@ -175,7 +176,7 @@ class TestFetchSignalsWithForwardReturns:
 
         # Signal on first day, n_days=5 → forward close is closes[5]=105.0
         signal_date = _REF_DATE.isoformat()
-        _insert_score(db_connection, "AAPL", signal_date, "BULLISH", 75.0)
+        _insert_score(db_connection, "AAPL", signal_date, "BULLISH", 75.0, final_score=30.0)
 
         rows = fetch_signals_with_forward_returns(
             db_connection, n_days=5, ticker_filter="AAPL", days_back=365
@@ -186,8 +187,10 @@ class TestFetchSignalsWithForwardReturns:
         assert rows[0]["signal"] == "BULLISH"
         assert rows[0]["confidence"] == 75.0
         assert rows[0]["forward_return_pct"] == pytest.approx(5.0, rel=1e-3)
+        # BULLISH final_score is positive → signed_confidence is positive
+        assert rows[0]["signed_confidence"] == pytest.approx(0.30, rel=1e-3)
 
-    def test_bearish_return_inverted(
+    def test_bearish_return_is_raw_not_inverted(
         self, db_connection: sqlite3.Connection
     ) -> None:
         from src.notifier.scatter_command import fetch_signals_with_forward_returns
@@ -197,17 +200,19 @@ class TestFetchSignalsWithForwardReturns:
         _insert_ohlcv(db_connection, "AAPL", _REF_DATE, closes)
 
         signal_date = _REF_DATE.isoformat()
-        _insert_score(db_connection, "AAPL", signal_date, "BEARISH", 60.0)
+        _insert_score(db_connection, "AAPL", signal_date, "BEARISH", 60.0, final_score=-25.0)
 
         rows = fetch_signals_with_forward_returns(
             db_connection, n_days=5, ticker_filter="AAPL", days_back=365
         )
 
         assert len(rows) == 1
-        # Raw return = (90-100)/100 = -10%, aligned BEARISH return = +10%
-        assert rows[0]["forward_return_pct"] == pytest.approx(10.0, rel=1e-3)
+        # Raw return = (90-100)/100 = -10%; no inversion applied — direction lives on X now
+        assert rows[0]["forward_return_pct"] == pytest.approx(-10.0, rel=1e-3)
+        # BEARISH final_score is negative → signed_confidence is negative
+        assert rows[0]["signed_confidence"] == pytest.approx(-0.25, rel=1e-3)
 
-    def test_neutral_return_not_inverted(
+    def test_neutral_signed_confidence_near_zero(
         self, db_connection: sqlite3.Connection
     ) -> None:
         from src.notifier.scatter_command import fetch_signals_with_forward_returns
@@ -216,15 +221,17 @@ class TestFetchSignalsWithForwardReturns:
         _insert_ohlcv(db_connection, "AAPL", _REF_DATE, closes)
 
         signal_date = _REF_DATE.isoformat()
-        _insert_score(db_connection, "AAPL", signal_date, "NEUTRAL", 30.0)
+        _insert_score(db_connection, "AAPL", signal_date, "NEUTRAL", 30.0, final_score=5.0)
 
         rows = fetch_signals_with_forward_returns(
             db_connection, n_days=5, ticker_filter="AAPL", days_back=365
         )
 
         assert len(rows) == 1
-        # Raw return = (95-100)/100 = -5%, NEUTRAL is not inverted
+        # Raw return = (95-100)/100 = -5%, not inverted
         assert rows[0]["forward_return_pct"] == pytest.approx(-5.0, rel=1e-3)
+        # NEUTRAL final_score is small → signed_confidence near 0
+        assert rows[0]["signed_confidence"] == pytest.approx(0.05, rel=1e-3)
 
     def test_signal_dropped_when_no_future_close(
         self, db_connection: sqlite3.Connection
@@ -340,9 +347,9 @@ class TestGenerateScatterChart:
         from src.notifier.scatter_command import generate_scatter_chart
 
         data = [
-            {"ticker": "AAPL", "signal_date": "2025-01-10", "signal": "BULLISH", "confidence": 75.0, "forward_return_pct": 3.5},
-            {"ticker": "AAPL", "signal_date": "2025-01-11", "signal": "BEARISH", "confidence": 60.0, "forward_return_pct": 2.0},
-            {"ticker": "AAPL", "signal_date": "2025-01-12", "signal": "NEUTRAL", "confidence": 40.0, "forward_return_pct": -0.5},
+            {"ticker": "AAPL", "signal_date": "2025-01-10", "signal": "BULLISH", "confidence": 75.0, "signed_confidence": 0.30, "forward_return_pct": 3.5},
+            {"ticker": "AAPL", "signal_date": "2025-01-11", "signal": "BEARISH", "confidence": 60.0, "signed_confidence": -0.25, "forward_return_pct": -2.0},
+            {"ticker": "AAPL", "signal_date": "2025-01-12", "signal": "NEUTRAL", "confidence": 40.0, "signed_confidence": 0.05, "forward_return_pct": -0.5},
         ]
 
         chart_path = generate_scatter_chart(data, n_days=5, ticker_filter=None, days_back=90)
@@ -369,7 +376,7 @@ class TestGenerateScatterChart:
         from src.notifier.scatter_command import generate_scatter_chart
 
         data = [
-            {"ticker": "AAPL", "signal_date": "2025-01-10", "signal": "BULLISH", "confidence": 80.0, "forward_return_pct": 4.0},
+            {"ticker": "AAPL", "signal_date": "2025-01-10", "signal": "BULLISH", "confidence": 80.0, "signed_confidence": 0.35, "forward_return_pct": 4.0},
         ]
 
         chart_path = generate_scatter_chart(data, n_days=10, ticker_filter="AAPL", days_back=60)

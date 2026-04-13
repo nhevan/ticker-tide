@@ -53,7 +53,7 @@ _SIGNAL_COLORS: dict[str, str] = {
 
 _SIGNAL_LABELS: dict[str, str] = {
     "BULLISH": "Bullish",
-    "BEARISH": "Bearish (aligned)",
+    "BEARISH": "Bearish",
     "NEUTRAL": "Neutral",
 }
 
@@ -169,9 +169,9 @@ def fetch_signals_with_forward_returns(
     Signals without OHLCV data on the signal date, or without a closing price
     N trading days later, are silently dropped.
 
-    For BEARISH signals the forward return is inverted: a price drop becomes a
-    positive aligned return, so the scatter plot Y-axis represents "was this
-    signal correct?" for all signal types equally.
+    Direction is encoded as a signed confidence score (final_score / 100):
+    negative for BEARISH, positive for BULLISH, near-zero for NEUTRAL.
+    The forward return is the raw unmodified price change — no inversion applied.
 
     Parameters:
         conn: Open SQLite connection (row_factory=sqlite3.Row expected).
@@ -182,13 +182,13 @@ def fetch_signals_with_forward_returns(
     Returns:
         List of dicts, each with keys:
             ticker (str), signal_date (str), signal (str),
-            confidence (float), forward_return_pct (float).
+            confidence (float), signed_confidence (float), forward_return_pct (float).
     """
     cutoff_date = (date.today() - timedelta(days=days_back)).isoformat()
 
     if ticker_filter:
         query = (
-            "SELECT ticker, date, signal, confidence "
+            "SELECT ticker, date, signal, confidence, final_score "
             "FROM scores_daily "
             "WHERE date >= ? AND ticker = ? AND signal IS NOT NULL "
             "ORDER BY ticker, date"
@@ -196,7 +196,7 @@ def fetch_signals_with_forward_returns(
         params: tuple = (cutoff_date, ticker_filter)
     else:
         query = (
-            "SELECT ticker, date, signal, confidence "
+            "SELECT ticker, date, signal, confidence, final_score "
             "FROM scores_daily "
             "WHERE date >= ? AND signal IS NOT NULL "
             "ORDER BY ticker, date"
@@ -212,6 +212,7 @@ def fetch_signals_with_forward_returns(
         signal_date = row["date"]
         signal = row["signal"]
         confidence = row["confidence"]
+        final_score = row["final_score"]
 
         if confidence is None:
             continue
@@ -241,8 +242,8 @@ def fetch_signals_with_forward_returns(
 
         raw_return_pct = (future_close - signal_close) / signal_close * 100.0
 
-        # Align BEARISH: a correct bearish call (price fell) should be positive
-        aligned_return_pct = -raw_return_pct if signal == "BEARISH" else raw_return_pct
+        # Direction is encoded on the X-axis via signed_confidence; Y is raw return.
+        signed_confidence = (final_score / 100.0) if final_score is not None else 0.0
 
         result.append(
             {
@@ -250,7 +251,8 @@ def fetch_signals_with_forward_returns(
                 "signal_date": signal_date,
                 "signal": signal,
                 "confidence": confidence,
-                "forward_return_pct": round(aligned_return_pct, 4),
+                "signed_confidence": round(signed_confidence, 4),
+                "forward_return_pct": round(raw_return_pct, 4),
             }
         )
 
@@ -280,10 +282,10 @@ def generate_scatter_chart(
     """
     Render a confidence vs. forward-return scatter plot as a dark-mode PNG.
 
-    Plots each signal as a dot (confidence on X, aligned forward return on Y),
+    Plots each signal as a dot (signed_confidence on X, raw forward return on Y),
     colored by signal type. A linear regression line is drawn per signal type
-    when that type has at least 2 data points. A horizontal reference line
-    marks y=0.
+    when that type has at least 2 data points. Horizontal and vertical reference
+    lines mark y=0 and x=0 respectively.
 
     Parameters:
         data: List of dicts from fetch_signals_with_forward_returns.
@@ -299,6 +301,7 @@ def generate_scatter_chart(
     ax.set_facecolor("#1a1a2e")
 
     ax.axhline(y=0, color="#555577", linewidth=0.8, linestyle="--", zorder=1)
+    ax.axvline(x=0, color="#555577", linewidth=0.8, linestyle="--", zorder=1)
 
     if not data:
         _render_empty_chart(ax, n_days, ticker_filter, days_back)
@@ -360,7 +363,7 @@ def _render_scatter_with_regression(
     for row in data:
         sig = row["signal"]
         if sig in by_signal:
-            by_signal[sig][0].append(row["confidence"])
+            by_signal[sig][0].append(row["signed_confidence"])
             by_signal[sig][1].append(row["forward_return_pct"])
 
     for signal_type, (xs, ys) in by_signal.items():
@@ -378,6 +381,10 @@ def _render_scatter_with_regression(
             y_line = np.polyval(coeffs, x_line)
             ax.plot(x_line, y_line, color=color, linewidth=1.5, alpha=0.8, zorder=4)
 
+    ax.set_xlim(-1.05, 1.05)
+    ax.set_xticks([-1, -0.5, 0, 0.5, 1])
+    ax.set_xticklabels(["-1\n(Bearish)", "-0.5", "0\n(Neutral)", "+0.5", "+1\n(Bullish)"])
+
 
 def _apply_axis_labels(
     ax: plt.Axes,
@@ -394,12 +401,8 @@ def _apply_axis_labels(
         fontsize=13,
         pad=12,
     )
-    ax.set_xlabel("Confidence (%)", color="#aaaacc", fontsize=11)
-    ax.set_ylabel(
-        f"{n_days}-Day Aligned Return (%)\n(BEARISH inverted)",
-        color="#aaaacc",
-        fontsize=11,
-    )
+    ax.set_xlabel("Confidence Score  ←Bearish · Neutral · Bullish→", color="#aaaacc", fontsize=11)
+    ax.set_ylabel(f"{n_days}-Day Forward Return (%)", color="#aaaacc", fontsize=11)
 
 
 def _apply_common_style(ax: plt.Axes) -> None:
