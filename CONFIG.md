@@ -282,7 +282,29 @@ Applied to the base confidence value (`|final_score|`). Final confidence is clam
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `scoring.score_expansion_factor` | float | `1.5` | Multiplier applied to spread indicator scores before category aggregation |
+| `scoring.score_expansion_factor` | float | `1.5` | Multiplier applied to spread indicator scores before category aggregation (used by both daily and weekly pipelines) |
+
+### Weekly adaptive weights
+
+Regime-specific weights for the 4 indicator-based categories used in weekly scoring.
+Each regime's weights must sum to 1.0. Weekly scoring only uses trend, momentum, volume,
+and volatility (patterns, sentiment, fundamental, macro have no weekly data sources).
+If this section is missing, daily `adaptive_weights` are re-normalized to these 4 categories.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `weekly_adaptive_weights.trending.trend` | float | `0.45` | Trend category weight in trending regime |
+| `weekly_adaptive_weights.trending.momentum` | float | `0.25` | Momentum category weight in trending regime |
+| `weekly_adaptive_weights.trending.volume` | float | `0.15` | Volume category weight in trending regime |
+| `weekly_adaptive_weights.trending.volatility` | float | `0.15` | Volatility category weight in trending regime |
+| `weekly_adaptive_weights.ranging.trend` | float | `0.20` | Trend category weight in ranging regime |
+| `weekly_adaptive_weights.ranging.momentum` | float | `0.40` | Momentum category weight in ranging regime |
+| `weekly_adaptive_weights.ranging.volume` | float | `0.20` | Volume category weight in ranging regime |
+| `weekly_adaptive_weights.ranging.volatility` | float | `0.20` | Volatility category weight in ranging regime |
+| `weekly_adaptive_weights.volatile.trend` | float | `0.30` | Trend category weight in volatile regime |
+| `weekly_adaptive_weights.volatile.momentum` | float | `0.25` | Momentum category weight in volatile regime |
+| `weekly_adaptive_weights.volatile.volume` | float | `0.15` | Volume category weight in volatile regime |
+| `weekly_adaptive_weights.volatile.volatility` | float | `0.30` | Volatility category weight in volatile regime |
 
 ---
 

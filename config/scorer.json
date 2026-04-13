@@ -57,5 +57,10 @@
   },
   "scoring": {
     "score_expansion_factor": 1.5
+  },
+  "weekly_adaptive_weights": {
+    "trending": { "trend": 0.45, "momentum": 0.25, "volume": 0.15, "volatility": 0.15 },
+    "ranging":  { "trend": 0.20, "momentum": 0.40, "volume": 0.20, "volatility": 0.20 },
+    "volatile": { "trend": 0.30, "momentum": 0.25, "volume": 0.15, "volatility": 0.30 }
   }
 }

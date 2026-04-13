@@ -97,7 +97,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/scorer/pattern_scorer.py` | Scores patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Aggregates component scores into 9 categories; applies adaptive weights |
 | `src/scorer/sector_adjuster.py` | Sector ETF trend score → ±5 to ±10 adjustment on final score |
-| `src/scorer/timeframe_merger.py` | Merges daily (×0.6) + weekly (×0.4) into `final_score`; `compute_weekly_score(db_conn, ticker, config, scoring_date, regime)` requires `scoring_date` (prevents look-ahead bias) and passes `regime` for RSI direction |
+| `src/scorer/timeframe_merger.py` | Merges daily (×0.2) + weekly (×0.8) into `final_score`; `compute_weekly_score(db_conn, ticker, config, scoring_date, regime)` scores all 14 indicators from `indicators_weekly` using the same pipeline as daily (score_all_indicators → 4-category rollup → weekly adaptive weights → expansion factor); requires `scoring_date` (prevents look-ahead bias) and passes `regime` for oscillator direction |
 | `src/scorer/confidence.py` | Signal classification; confidence modifiers; `data_completeness`; `key_signals` |
 | `src/scorer/flip_detector.py` | Detects signal direction changes → `signal_flips` |
 | `src/notifier/main.py` | `run_notifier()` — queries scores, calls AI reasoner, formats, sends Telegram |

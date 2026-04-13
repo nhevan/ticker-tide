@@ -242,7 +242,7 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 | `src/scorer/pattern_scorer.py` | Scores candlestick/structural patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Rolls up component scores into 9 categories; applies regime-based adaptive weights |
 | `src/scorer/sector_adjuster.py` | Computes sector ETF trend score and applies adjustment (±5 to ±10) |
-| `src/scorer/timeframe_merger.py` | Merges daily (×0.2) + weekly (×0.8) composite scores; computes weekly score from indicators_weekly using `scoring_date` to prevent look-ahead bias and regime-aware RSI direction |
+| `src/scorer/timeframe_merger.py` | Merges daily (×0.2) + weekly (×0.8) composite scores; computes weekly score from all indicators in indicators_weekly using the same scoring primitives as daily (score_all_indicators, category rollup, adaptive weights, expansion factor); uses `scoring_date` to prevent look-ahead bias and regime-aware oscillator direction |
 | `src/scorer/confidence.py` | Signal classification (BULLISH/BEARISH/NEUTRAL), confidence modifiers, data_completeness dict, key_signals list |
 | `src/scorer/flip_detector.py` | Detects signal direction changes; saves to signal_flips table |
 | `src/scorer/main.py` | Orchestrator: per-ticker score_ticker() + run_scorer() for daily pipeline + run_historical_scoring() for Option E |
@@ -300,8 +300,10 @@ Final confidence is clamped to [0, 100].
 7. Compute 9 category scores → apply adaptive weights → daily_score.
 8. Apply sector adjustment.
 9. Compute weekly score (`compute_weekly_score`): loads the most recent weekly candle
-   with `week_start <= scoring_date` (no look-ahead bias), applies regime-aware RSI
-   direction (same rule as step 3); merge timeframes → final_score.
+   with `week_start <= scoring_date` (no look-ahead bias), scores all 14 indicators
+   using `score_all_indicators` with daily profiles as fallback, rolls up into 4
+   categories (trend, momentum, volume, volatility), applies weekly adaptive weights
+   and expansion factor; merge timeframes → final_score.
 10. Classify signal; compute confidence + modifiers.
 11. Build data_completeness JSON; build key_signals list.
 12. Save to `scores_daily` (INSERT OR REPLACE).
@@ -764,6 +766,14 @@ Weekly indicators dominate (80%) to optimise for monthly price-movement predicti
 Backtested across 62 tickers and 5 years of data (5,344 weekly samples with 21-day
 forward returns): 0.2/0.8 yields 58.8% directional accuracy vs 54.4% at the previous
 0.6/0.4 split (+4.4pp). Weights are configurable via `scorer.json` `timeframe_weights`.
+
+The weekly score uses the same scoring pipeline as daily: all 14 indicators from
+`indicators_weekly` are scored via `score_all_indicators`, rolled up into 4 categories
+(trend, momentum, volume, volatility) with magnitude-weighted averaging, then combined
+via `weekly_adaptive_weights` (regime-specific, 4 categories summing to 1.0) and the
+same expansion factor. Daily profiles are used as fallback when weekly profiles are
+unavailable. Patterns, divergences, news, fundamentals, and macro are not included
+in weekly scoring (no weekly data sources).
 ### Signal: +30 to +100 = BULLISH, -30 to +30 = NEUTRAL, -100 to -30 = BEARISH
 ### Confidence: |Final Score|% + modifiers (timeframe agreement, volume confirmation, earnings proximity, VIX, etc.)
 

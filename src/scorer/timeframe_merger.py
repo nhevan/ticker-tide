@@ -56,21 +56,24 @@ def compute_weekly_score(
     regime: str = "ranging",
 ) -> Optional[float]:
     """
-    Compute a simplified composite score from weekly indicator data.
+    Compute a composite score from weekly indicator data.
 
     Loads the most recent weekly indicators from indicators_weekly with a
-    week_start on or before scoring_date (no look-ahead), and runs a
-    simplified scoring pipeline: EMA alignment, MACD histogram, RSI, ADX,
-    CMF, and Bollinger %B. Does not include patterns, divergences, or news.
+    week_start on or before scoring_date (no look-ahead), then scores all
+    available indicators using the same primitives as daily scoring:
+    score_all_indicators for individual scores, rollup_category for the 4
+    indicator-based categories (trend, momentum, volume, volatility), and
+    apply_adaptive_weights with a weekly-specific weight set and expansion
+    factor.
 
-    RSI is scored with the regime-aware direction: in trending regime a high
-    RSI signals trend continuation (bullish), in ranging/volatile regime a
-    high RSI signals overbought (bearish — mean-reversion).
+    Does not include patterns, divergences, crossovers, news, fundamentals,
+    or macro — those have no weekly equivalents.
 
     Parameters:
         db_conn: Open SQLite connection with row_factory=sqlite3.Row.
         ticker: Ticker symbol.
-        config: Scorer config dict.
+        config: Scorer config dict containing weekly_adaptive_weights and
+            scoring.score_expansion_factor.
         scoring_date: The date being scored (YYYY-MM-DD). Only weekly candles
             with week_start <= scoring_date are considered.
         regime: Market regime — "trending", "ranging", or "volatile".
@@ -81,19 +84,13 @@ def compute_weekly_score(
     """
     # Import here to avoid circular dependencies at module level
     from src.scorer.indicator_scorer import (
-        score_adx,
-        score_ema_alignment,
-        score_macd_histogram,
-        score_rsi,
+        load_profile_for_ticker,
+        score_all_indicators,
     )
     from src.scorer.category_scorer import apply_adaptive_weights, rollup_category
-    from src.scorer.regime import get_regime_weights
-
-    oscillator_higher_is_bullish = regime == "trending"
 
     row = db_conn.execute(
-        "SELECT w.close, i.ema_9, i.ema_21, i.ema_50, i.macd_histogram, "
-        "       i.rsi_14, i.adx, i.cmf_20, i.bb_pctb, i.atr_14 "
+        "SELECT w.close, i.* "
         "FROM indicators_weekly i "
         "JOIN weekly_candles w ON i.ticker = w.ticker AND i.week_start = w.week_start "
         "WHERE i.ticker = ? AND i.week_start <= ? "
@@ -106,46 +103,77 @@ def compute_weekly_score(
         return None
 
     close = row["close"]
-    ema_9 = row["ema_9"]
-    ema_21 = row["ema_21"]
-    ema_50 = row["ema_50"]
-    macd_hist = row["macd_histogram"]
-    rsi = row["rsi_14"]
-    adx = row["adx"]
-    cmf = row["cmf_20"]
-    bb_pctb = row["bb_pctb"]
+    if close is None:
+        logger.debug(f"{ticker}: weekly candle has no close price")
+        return None
 
-    component_scores: list[float] = []
+    indicators = dict(row)
 
-    # EMA alignment
-    if all(v is not None for v in (close, ema_9, ema_21, ema_50)):
-        component_scores.append(score_ema_alignment(close, ema_9, ema_21, ema_50))
+    # Load daily profiles as fallback (reasonable proxy for weekly distributions)
+    profiles = load_profile_for_ticker(db_conn, ticker)
 
-    # MACD histogram
-    if macd_hist is not None:
-        component_scores.append(score_macd_histogram(macd_hist, profile=None))
+    # Score all 14 indicators using the same function as daily
+    indicator_scores = score_all_indicators(
+        indicators=indicators,
+        close=close,
+        profiles=profiles,
+        config=config,
+        regime=regime,
+    )
 
-    # RSI
-    if rsi is not None:
-        component_scores.append(score_rsi(rsi, profile=None, higher_is_bullish=oscillator_higher_is_bullish))
+    # Build 4 weekly-applicable category scores (no patterns/sentiment/fundamental/macro)
+    trend_score = rollup_category("weekly_trend", {
+        "ema_alignment": indicator_scores.get("ema_alignment"),
+        "macd_line": indicator_scores.get("macd_line"),
+        "macd_histogram": indicator_scores.get("macd_histogram"),
+        "adx": indicator_scores.get("adx"),
+    })
+    momentum_score = rollup_category("weekly_momentum", {
+        "rsi_14": indicator_scores.get("rsi_14"),
+        "stoch_k": indicator_scores.get("stoch_k"),
+        "cci_20": indicator_scores.get("cci_20"),
+        "williams_r": indicator_scores.get("williams_r"),
+    })
+    volume_score = rollup_category("weekly_volume", {
+        "obv": indicator_scores.get("obv"),
+        "cmf_20": indicator_scores.get("cmf_20"),
+        "ad_line": indicator_scores.get("ad_line"),
+    })
+    volatility_score = rollup_category("weekly_volatility", {
+        "bb_pctb": indicator_scores.get("bb_pctb"),
+        "atr_14": indicator_scores.get("atr_14"),
+    })
 
-    # ADX
-    if adx is not None:
-        component_scores.append(score_adx(adx))
+    category_scores = {
+        "trend": trend_score,
+        "momentum": momentum_score,
+        "volume": volume_score,
+        "volatility": volatility_score,
+    }
 
-    # CMF
-    if cmf is not None:
-        cmf_score = max(-100.0, min(100.0, cmf * 200.0))
-        component_scores.append(cmf_score)
-
-    # BB %B
-    if bb_pctb is not None:
-        bb_score = max(-100.0, min(100.0, (0.5 - bb_pctb) * 100.0))
-        component_scores.append(bb_score)
-
-    if not component_scores:
+    # Check that at least one category produced a non-zero score
+    if all(score == 0.0 for score in category_scores.values()):
         logger.debug(f"{ticker}: no usable weekly indicators")
         return None
 
-    avg = sum(component_scores) / len(component_scores)
-    return max(-100.0, min(100.0, avg))
+    # Apply weekly adaptive weights (4 categories summing to 1.0)
+    weekly_weights_cfg = config.get("weekly_adaptive_weights", {})
+    regime_weights = weekly_weights_cfg.get(regime, {})
+
+    # Fallback: re-normalize daily adaptive weights to the 4 applicable categories
+    if not regime_weights:
+        daily_weights_cfg = config.get("adaptive_weights", {})
+        daily_regime = daily_weights_cfg.get(regime, {})
+        applicable = {
+            key: daily_regime.get(key, 0.0)
+            for key in ("trend", "momentum", "volume", "volatility")
+        }
+        total = sum(applicable.values())
+        if total > 0:
+            regime_weights = {key: val / total for key, val in applicable.items()}
+        else:
+            regime_weights = {"trend": 0.25, "momentum": 0.25, "volume": 0.25, "volatility": 0.25}
+
+    expansion_factor = config.get("scoring", {}).get("score_expansion_factor", 1.0)
+
+    return apply_adaptive_weights(category_scores, regime_weights, expansion_factor)
