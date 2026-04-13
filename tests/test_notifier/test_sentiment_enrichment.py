@@ -402,16 +402,16 @@ class TestUpdateArticleSentiment:
         """Updates sentiment and reasoning for a NULL-sentiment article."""
         from src.notifier.sentiment_enrichment import update_article_sentiment
 
-        _insert_article(db_connection, "finnhub_123", sentiment=None)
+        _insert_article(db_connection, "finnhub_123", ticker="AAPL", sentiment=None)
 
         updated = update_article_sentiment(
-            db_connection, "finnhub_123", "positive", "Strong earnings beat"
+            db_connection, "finnhub_123", "AAPL", "positive", "Strong earnings beat"
         )
 
         assert updated is True
         row = db_connection.execute(
-            "SELECT sentiment, sentiment_reasoning FROM news_articles WHERE id = ?",
-            ("finnhub_123",),
+            "SELECT sentiment, sentiment_reasoning FROM news_articles WHERE id = ? AND ticker = ?",
+            ("finnhub_123", "AAPL"),
         ).fetchone()
         assert row["sentiment"] == "positive"
         assert row["sentiment_reasoning"] == "Strong earnings beat"
@@ -422,30 +422,59 @@ class TestUpdateArticleSentiment:
         """Does NOT overwrite an article that already has a sentiment value."""
         from src.notifier.sentiment_enrichment import update_article_sentiment
 
-        _insert_article(db_connection, "polygon_456", source="polygon", sentiment="negative")
+        _insert_article(db_connection, "polygon_456", ticker="AAPL", source="polygon", sentiment="negative")
 
         updated = update_article_sentiment(
-            db_connection, "polygon_456", "positive", "Would overwrite"
+            db_connection, "polygon_456", "AAPL", "positive", "Would overwrite"
         )
 
         assert updated is False
         row = db_connection.execute(
-            "SELECT sentiment FROM news_articles WHERE id = ?",
-            ("polygon_456",),
+            "SELECT sentiment FROM news_articles WHERE id = ? AND ticker = ?",
+            ("polygon_456", "AAPL"),
         ).fetchone()
         assert row["sentiment"] == "negative"
 
     def test_update_article_sentiment_returns_false_for_missing_id(
         self, db_connection: sqlite3.Connection
     ) -> None:
-        """Returns False when the article ID does not exist."""
+        """Returns False when the (article_id, ticker) pair does not exist."""
         from src.notifier.sentiment_enrichment import update_article_sentiment
 
         updated = update_article_sentiment(
-            db_connection, "nonexistent_999", "positive", "Irrelevant"
+            db_connection, "nonexistent_999", "AAPL", "positive", "Irrelevant"
         )
 
         assert updated is False
+
+    def test_update_article_sentiment_uses_composite_key(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        Same article ID stored for two tickers — updating one ticker's sentiment
+        leaves the other ticker's sentiment unchanged.
+        """
+        from src.notifier.sentiment_enrichment import update_article_sentiment
+
+        _insert_article(db_connection, "shared_001", ticker="AAPL", sentiment=None)
+        _insert_article(db_connection, "shared_001", ticker="AMD", sentiment=None)
+
+        updated = update_article_sentiment(
+            db_connection, "shared_001", "AAPL", "positive", "Apple beat earnings"
+        )
+
+        assert updated is True
+
+        aapl_row = db_connection.execute(
+            "SELECT sentiment FROM news_articles WHERE id = ? AND ticker = ?",
+            ("shared_001", "AAPL"),
+        ).fetchone()
+        amd_row = db_connection.execute(
+            "SELECT sentiment FROM news_articles WHERE id = ? AND ticker = ?",
+            ("shared_001", "AMD"),
+        ).fetchone()
+        assert aapl_row["sentiment"] == "positive"
+        assert amd_row["sentiment"] is None  # AMD row untouched
 
 
 # ---------------------------------------------------------------------------

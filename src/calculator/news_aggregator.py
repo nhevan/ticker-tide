@@ -198,6 +198,25 @@ def aggregate_news_for_ticker(
         )
         saved_count += 1
 
+    # Delete stale summary rows for dates that no longer have articles.
+    # This keeps news_daily_summary consistent with news_articles when articles
+    # are removed or fall outside the fetch lookback window.
+    # Scope the delete to the same date range as the query so we only remove
+    # summaries within the window we just recomputed.
+    date_placeholders = ",".join("?" * len(articles_by_date))
+    delete_params: list = [ticker] + list(articles_by_date.keys())
+    delete_query = (
+        f"DELETE FROM news_daily_summary "
+        f"WHERE ticker = ? AND date NOT IN ({date_placeholders})"
+    )
+    if start_date:
+        delete_query += " AND date >= ?"
+        delete_params.append(start_date)
+    if end_date:
+        delete_query += " AND date <= ?"
+        delete_params.append(end_date)
+    db_conn.execute(delete_query, delete_params)
+
     db_conn.commit()
     logger.info(f"Aggregated {saved_count} daily news summaries for ticker={ticker}")
     return saved_count

@@ -297,6 +297,81 @@ def test_aggregate_news_date_range_filter(db_connection: sqlite3.Connection) -> 
     assert count == 3
 
 
+def test_aggregate_news_removes_stale_summaries(db_connection: sqlite3.Connection) -> None:
+    """
+    Stale summary rows for dates where articles no longer exist are deleted
+    when the aggregator runs without a date filter.
+
+    Scenario: a summary was previously written for 2026-01-05 with article_count=2,
+    but those articles were later lost (e.g. fell outside the fetch lookback window).
+    Re-running the aggregator should delete the orphaned summary row.
+    """
+    # Seed a stale summary row — article_count=2 but no corresponding articles.
+    db_connection.execute(
+        """
+        INSERT INTO news_daily_summary
+            (ticker, date, avg_sentiment_score, article_count,
+             positive_count, negative_count, neutral_count, top_headline, filing_flag)
+        VALUES ('AAPL', '2026-01-05', 1.0, 2, 2, 0, 0, 'Old headline', 0)
+        """
+    )
+    db_connection.commit()
+
+    # Only a more recent article exists.
+    _insert_article(db_connection, "a1", "AAPL", "2026-03-16", "positive")
+
+    aggregate_news_for_ticker(db_connection, "AAPL")
+
+    stale = db_connection.execute(
+        "SELECT COUNT(*) AS cnt FROM news_daily_summary WHERE ticker='AAPL' AND date='2026-01-05'"
+    ).fetchone()["cnt"]
+    fresh = db_connection.execute(
+        "SELECT COUNT(*) AS cnt FROM news_daily_summary WHERE ticker='AAPL' AND date='2026-03-16'"
+    ).fetchone()["cnt"]
+    assert stale == 0, "Stale summary row should have been deleted"
+    assert fresh == 1, "Current summary row should still exist"
+
+
+def test_aggregate_news_stale_cleanup_respects_date_range(db_connection: sqlite3.Connection) -> None:
+    """
+    When a date range is provided, only stale summaries within that range are deleted.
+    Summaries outside the range are left untouched.
+    """
+    # Stale summary inside the query range (no articles for this date).
+    db_connection.execute(
+        """
+        INSERT INTO news_daily_summary
+            (ticker, date, avg_sentiment_score, article_count,
+             positive_count, negative_count, neutral_count, top_headline, filing_flag)
+        VALUES ('AAPL', '2026-03-06', 1.0, 1, 1, 0, 0, 'Inside range', 0)
+        """
+    )
+    # Stale summary outside the query range — should be untouched.
+    db_connection.execute(
+        """
+        INSERT INTO news_daily_summary
+            (ticker, date, avg_sentiment_score, article_count,
+             positive_count, negative_count, neutral_count, top_headline, filing_flag)
+        VALUES ('AAPL', '2026-01-05', 1.0, 1, 1, 0, 0, 'Outside range', 0)
+        """
+    )
+    db_connection.commit()
+
+    # One real article within the query range.
+    _insert_article(db_connection, "a1", "AAPL", "2026-03-10", "positive")
+
+    aggregate_news_for_ticker(db_connection, "AAPL", start_date="2026-03-01", end_date="2026-03-31")
+
+    inside_stale = db_connection.execute(
+        "SELECT COUNT(*) AS cnt FROM news_daily_summary WHERE ticker='AAPL' AND date='2026-03-06'"
+    ).fetchone()["cnt"]
+    outside_stale = db_connection.execute(
+        "SELECT COUNT(*) AS cnt FROM news_daily_summary WHERE ticker='AAPL' AND date='2026-01-05'"
+    ).fetchone()["cnt"]
+    assert inside_stale == 0, "Stale summary inside date range should be deleted"
+    assert outside_stale == 1, "Summary outside date range should be preserved"
+
+
 # ── aggregate_all_news ────────────────────────────────────────────────────────
 
 

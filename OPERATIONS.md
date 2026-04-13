@@ -87,6 +87,7 @@ Never start `run_bot.py` manually in a tmux session on EC2 — the systemd servi
 | `run_notifier.py` | Send Telegram report from latest scores | `--db-path PATH` |
 | `enrich_finnhub_sentiment.py` | Enrich Finnhub articles with Claude sentiment | `--all`, `--ticker AAPL`, `--dry-run`, `--db-path PATH` |
 | `setup_db.py` | Create/migrate schema (idempotent) | `(none)` |
+| `migrate_news_articles_pk.py` | One-time migration: change `news_articles` PK from `id` to `(id, ticker)` | `(none)` |
 | `test_api_access.py` | Test all 5 API keys | `(none)` |
 | `verify_backfill.py` | Post-backfill data quality checks | `--ticker AAPL`, `--quiet`, `--no-telegram`, `--db-path PATH` |
 | `verify_pipeline.py` | Post-calculation computed data checks | `--date YYYY-MM-DD`, `--quiet`, `--no-telegram`, `--db-path PATH` |
@@ -122,6 +123,30 @@ python scripts/run_backfill.py
 python scripts/enrich_finnhub_sentiment.py --all   # ~15,000 articles ≈ $1.50
 python scripts/run_calculator.py
 python scripts/run_scorer.py --historical
+```
+
+---
+
+### Database Schema Migrations
+
+Some schema changes (e.g., modifying a PRIMARY KEY) cannot be applied with `ALTER TABLE` in SQLite and require a full table recreation.
+
+**`migrate_news_articles_pk.py`** — Changes `news_articles` PRIMARY KEY from `id TEXT` to composite `(id, ticker)`, so the same Polygon article can be stored once per ticker that mentions it. This fixes `news_summary_consistency` warnings caused by `INSERT OR REPLACE` overwriting one ticker's article row when another ticker's fetch returned the same article ID.
+
+**Run order (deploy then migrate):**
+
+```bash
+# 1. Run the migration (safe to re-run — skips if already on new schema)
+python scripts/migrate_news_articles_pk.py
+
+# 2. Re-backfill news so each ticker gets its own rows for shared articles
+python scripts/run_backfill.py --phase news --force
+
+# 3. Recompute news_daily_summary article counts
+python scripts/run_calculator.py --force
+
+# 4. Verify the warning is gone
+python scripts/verify_pipeline.py
 ```
 
 ---

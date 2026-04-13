@@ -182,6 +182,7 @@ def parse_sentiment_response(response: str, expected_count: int) -> list[dict]:
 def update_article_sentiment(
     db_conn: sqlite3.Connection,
     article_id: str,
+    ticker: str,
     sentiment: str,
     sentiment_reasoning: Optional[str] = None,
 ) -> bool:
@@ -190,24 +191,27 @@ def update_article_sentiment(
 
     The UPDATE uses AND sentiment IS NULL as a safety guard so that existing
     Polygon sentiments (which are higher quality) are never overwritten.
+    Both article_id and ticker are required to uniquely identify the row
+    since news_articles uses a composite PRIMARY KEY (id, ticker).
 
     Args:
         db_conn: Open SQLite connection with the news_articles table.
-        article_id: Primary key of the article to update.
+        article_id: Article ID component of the composite primary key.
+        ticker: Ticker component of the composite primary key.
         sentiment: One of 'positive', 'negative', 'neutral'.
         sentiment_reasoning: Optional brief reasoning string from Claude.
 
     Returns:
         True if the row was updated, False if the article already had a
-        sentiment value or the article_id was not found.
+        sentiment value or the (article_id, ticker) pair was not found.
     """
     cursor = db_conn.execute(
         """
         UPDATE news_articles
         SET sentiment = ?, sentiment_reasoning = ?
-        WHERE id = ? AND sentiment IS NULL
+        WHERE id = ? AND ticker = ? AND sentiment IS NULL
         """,
-        (sentiment, sentiment_reasoning, article_id),
+        (sentiment, sentiment_reasoning, article_id, ticker),
     )
     db_conn.commit()
     return cursor.rowcount > 0
@@ -276,6 +280,7 @@ def enrich_batch(
         was_updated = update_article_sentiment(
             db_conn,
             article["id"],
+            article["ticker"],
             sentiment,
             classification["sentiment_reasoning"],
         )

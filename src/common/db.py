@@ -134,7 +134,7 @@ def _build_schema_statements() -> list[str]:
 
         # ── News & Filings Tables ──────────────────────────────────────────────────
         """CREATE TABLE IF NOT EXISTS news_articles (
-            id TEXT PRIMARY KEY,
+            id TEXT NOT NULL,
             ticker TEXT NOT NULL,
             date TEXT NOT NULL,
             source TEXT,
@@ -144,7 +144,8 @@ def _build_schema_statements() -> list[str]:
             sentiment TEXT,
             sentiment_reasoning TEXT,
             published_utc TEXT,
-            fetched_at TEXT
+            fetched_at TEXT,
+            PRIMARY KEY (id, ticker)
         )""",
 
         """CREATE TABLE IF NOT EXISTS news_daily_summary (

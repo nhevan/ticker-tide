@@ -405,7 +405,7 @@ def test_backfill_news_polygon_extracts_date_from_published_utc(db_connection) -
 
 
 def test_backfill_news_polygon_deduplicates(db_connection, sample_polygon_articles) -> None:
-    """Inserting the same articles twice yields 3 rows (id is PRIMARY KEY)."""
+    """Inserting the same articles twice for the same ticker yields 3 rows (composite PK deduplicates)."""
     mock_client = MagicMock()
     mock_client.fetch_news.return_value = sample_polygon_articles
 
@@ -416,6 +416,30 @@ def test_backfill_news_polygon_deduplicates(db_connection, sample_polygon_articl
         "SELECT COUNT(*) FROM news_articles WHERE ticker='AAPL'"
     ).fetchone()[0]
     assert count == 3
+
+
+def test_backfill_news_polygon_same_id_different_tickers_both_stored(
+    db_connection, sample_polygon_articles
+) -> None:
+    """
+    The same article ID fetched for two different tickers is stored as two
+    separate rows — the composite PRIMARY KEY (id, ticker) prevents the second
+    INSERT OR REPLACE from overwriting the first.
+    """
+    mock_client = MagicMock()
+    mock_client.fetch_news.return_value = sample_polygon_articles
+
+    backfill_news_polygon(db_connection, mock_client, "AAPL", "2024-03-24", "2024-06-24")
+    backfill_news_polygon(db_connection, mock_client, "AMD", "2024-03-24", "2024-06-24")
+
+    aapl_count = db_connection.execute(
+        "SELECT COUNT(*) FROM news_articles WHERE ticker='AAPL'"
+    ).fetchone()[0]
+    amd_count = db_connection.execute(
+        "SELECT COUNT(*) FROM news_articles WHERE ticker='AMD'"
+    ).fetchone()[0]
+    assert aapl_count == 3, f"Expected 3 AAPL rows, got {aapl_count}"
+    assert amd_count == 3, f"Expected 3 AMD rows, got {amd_count}"
 
 
 def test_backfill_news_polygon_handles_api_error(db_connection) -> None:

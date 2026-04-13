@@ -158,7 +158,7 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             UNIQUE(ticker, earnings_date)
         )""",
         """CREATE TABLE IF NOT EXISTS news_articles (
-            id TEXT PRIMARY KEY,
+            id TEXT NOT NULL,
             ticker TEXT NOT NULL,
             date TEXT NOT NULL,
             source TEXT,
@@ -168,7 +168,8 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             sentiment TEXT,
             sentiment_reasoning TEXT,
             published_utc TEXT,
-            fetched_at TEXT
+            fetched_at TEXT,
+            PRIMARY KEY (id, ticker)
         )""",
         """CREATE TABLE IF NOT EXISTS news_daily_summary (
             ticker TEXT NOT NULL,

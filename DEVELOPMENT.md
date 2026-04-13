@@ -235,6 +235,26 @@ Add the `CREATE TABLE IF NOT EXISTS` statement to `_build_schema_statements()` a
 python scripts/setup_db.py
 ```
 
+### Change a table's PRIMARY KEY or add a constraint
+
+SQLite does not support `ALTER TABLE` to modify a PRIMARY KEY. Use the create-new/copy/drop/rename pattern:
+
+1. Update the `CREATE TABLE` statement in `src/common/db.py` with the new schema.
+2. Write a migration script in `scripts/migrate_<description>.py`:
+    ```python
+    conn.execute("CREATE TABLE my_table_new (..., PRIMARY KEY (col_a, col_b))")
+    conn.execute("INSERT INTO my_table_new SELECT * FROM my_table")
+    conn.execute("DROP TABLE my_table")
+    conn.execute("ALTER TABLE my_table_new RENAME TO my_table")
+    # Recreate any indexes that were on the old table
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_... ON my_table(...)")
+    ```
+3. Wrap all SQL in a single `with conn:` transaction so failures roll back cleanly.
+4. Verify row count before and after — they must match.
+5. Run the migration: `python scripts/migrate_<description>.py`
+
+**Example:** `scripts/migrate_news_articles_pk.py` changes `news_articles` PRIMARY KEY from `id TEXT` to `(id, ticker)` so that the same Polygon article can be stored independently for each ticker that mentions it.
+
 ---
 
 ## Code Conventions

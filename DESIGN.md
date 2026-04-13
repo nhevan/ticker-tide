@@ -111,7 +111,7 @@ Finnhub does not provide sentiment scores. This module uses Claude Haiku to clas
 - `temperature=0.0` — deterministic, consistent results
 - `batch_size=20` — 20 articles per Claude API call (single batched prompt)
 - `max_articles_per_run=500` — safety cap to control daily cost (~$0.05/day for 50 articles)
-- `AND sentiment IS NULL` guard in UPDATE prevents overwriting Polygon sentiment (higher quality NLP pipeline)
+- `WHERE id = ? AND ticker = ? AND sentiment IS NULL` guard in UPDATE prevents overwriting Polygon sentiment (higher quality NLP pipeline); both `id` and `ticker` required because `news_articles` uses a composite PK
 - After enrichment, `news_daily_summary` is recomputed for affected (ticker, date) pairs via `aggregate_news_for_ticker()` so the scorer immediately benefits from the updated `avg_sentiment_score`
 
 **Cost estimate:** ~$0.001 per article. Daily enrichment (~10–50 articles) is negligible.
@@ -411,7 +411,7 @@ Enable WAL mode on connection.
 ### News & Filings Tables
 
 **news_articles** — from Polygon + Finnhub
-- id TEXT PRIMARY KEY
+- id TEXT NOT NULL
 - ticker TEXT NOT NULL
 - date TEXT NOT NULL
 - source TEXT (polygon/finnhub)
@@ -422,6 +422,7 @@ Enable WAL mode on connection.
 - sentiment_reasoning TEXT
 - published_utc TEXT
 - fetched_at TEXT
+- PRIMARY KEY (id, ticker) — composite key allows the same Polygon article to be stored once per ticker it mentions
 
 **news_daily_summary** — aggregated per ticker per day
 - ticker TEXT NOT NULL
