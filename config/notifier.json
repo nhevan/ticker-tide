@@ -31,5 +31,11 @@
     "sr_levels_to_show": 3,
     "signal_history_days": 30,
     "peer_count": 5
+  },
+  "scatter_command": {
+    "default_n_days": 5,
+    "max_n_days": 60,
+    "default_days_back": 90,
+    "max_days_back": 365
   }
 }

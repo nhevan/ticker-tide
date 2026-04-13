@@ -309,6 +309,15 @@ Applied to the base confidence value (`|final_score|`). Final confidence is clam
 | `telegram.display_timezone` | string | `"Europe/Amsterdam"` | Timezone for timestamps shown in Telegram messages |
 | `telegram.max_message_chars` | int | `4000` | Maximum characters per Telegram message before splitting. Messages that exceed this limit are split at line boundaries and annotated with `(N/M)` page indicators in the header and footer. Keep below Telegram's hard limit of 4096. |
 
+**`scatter_command` keys** (used by the `/scatter` bot command):
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `scatter_command.default_n_days` | int | `5` | Default forward horizon in trading days when N is not specified |
+| `scatter_command.max_n_days` | int | `60` | Maximum allowed value for N; larger values are clamped to this |
+| `scatter_command.default_days_back` | int | `90` | Default signal history window in calendar days |
+| `scatter_command.max_days_back` | int | `365` | Maximum allowed days_back; larger values are clamped to this |
+
 **Message routing:**
 
 | Message type | Recipients |

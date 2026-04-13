@@ -124,6 +124,7 @@ src/
     ├── telegram.py
     ├── chart_generator.py       # 4-panel mplfinance chart for /detail command
     ├── detail_command.py        # /detail Telegram bot command handler
+    ├── scatter_command.py       # /scatter confidence vs forward return scatter plot
     ├── tickers_command.py       # /tickers Telegram bot command handler
     └── bot.py                   # Telegram bot long-polling listener
 
@@ -193,6 +194,9 @@ The pipeline sends daily reports automatically. A separate interactive bot proce
 | `/tickers` | List all watched tickers grouped by sector |
 | `/detail AAPL` | Deep analysis for AAPL with 30-day chart (default) |
 | `/detail AAPL 90` | Deep analysis with 90-day chart |
+| `/scatter 10` | Confidence vs 10-day forward return scatter plot (all tickers, last 90 days) |
+| `/scatter 5 AAPL` | Confidence vs 5-day forward return for AAPL only |
+| `/scatter 20 AAPL 180` | 20-day forward return, AAPL only, last 180 days of signals |
 | `/help` | List all available commands |
 
 ### What `/detail` Returns

@@ -45,7 +45,7 @@ tail -50 /home/ec2-user/ticker-tide/logs/daily_$(date +%Y%m%d).log
 
 ## Telegram Bot Service
 
-The interactive bot (`/detail`, `/help`, `/tickers`) runs as a systemd service and is managed by `deploy.sh` — no manual startup needed.
+The interactive bot (`/detail`, `/scatter`, `/tickers`, `/help`) runs as a systemd service and is managed by `deploy.sh` — no manual startup needed.
 
 ### Status and control
 
@@ -502,7 +502,7 @@ docker exec -it ticker-tide python scripts/run_backfill.py
 
 ## Telegram Bot
 
-The interactive bot handles on-demand `/detail` commands. It runs as a **separate long-polling process** — independent from the daily pipeline cron job.
+The interactive bot handles on-demand commands. It runs as a **separate long-polling process** — independent from the daily pipeline cron job.
 
 ### Starting the Bot
 
@@ -517,7 +517,25 @@ python scripts/run_bot.py
 
 - `/detail AAPL` — deep analysis with 30-day chart (default)
 - `/detail AAPL 90` — deep analysis with 90-day chart (max: 180 days)
+- `/scatter 10` — confidence vs 10-day forward return scatter plot, all tickers, last 90 days
+- `/scatter 5 AAPL` — confidence vs 5-day return for AAPL only
+- `/scatter 20 AAPL 180` — 20-day return, AAPL, last 180 days of signals
+- `/tickers` — list all watched tickers by sector
 - `/help` — list commands
+
+### `/scatter` Details
+
+Plots historical signal confidence (X-axis) vs the actual % price change N trading days
+after each signal (Y-axis), colored by signal type (green=BULLISH, red=BEARISH, gray=NEUTRAL).
+BEARISH returns are inverted so a correct bearish call (price drop) shows as a positive value.
+Signals without N future days of OHLCV data are automatically excluded.
+A linear regression line is drawn per signal type.
+
+Config keys in `config/notifier.json` under `scatter_command`:
+- `default_n_days` (default 5) — forward horizon when N is omitted
+- `max_n_days` (default 60) — cap on N
+- `default_days_back` (default 90) — signal history window in calendar days
+- `max_days_back` (default 365) — cap on days_back
 
 ### Running as a Service (Optional)
 
@@ -560,15 +578,21 @@ sudo systemctl restart ticker-tide-bot
 
 ### Chart Cleanup
 
-Charts are saved as temporary PNGs at `/tmp/ticker_tide_chart_{TICKER}_{timestamp}.png` and deleted automatically after each `/detail` command. If the process crashes mid-command, orphaned files can be cleaned with:
+Charts are saved as temporary PNGs and deleted automatically after each command.
+- `/detail` charts: `/tmp/ticker_tide_chart_{TICKER}_{timestamp}.png`
+- `/scatter` charts: `/tmp/scatter_{random}.png`
+
+If the process crashes mid-command, orphaned files can be cleaned with:
 
 ```bash
-rm -f /tmp/ticker_tide_chart_*.png
+rm -f /tmp/ticker_tide_chart_*.png /tmp/scatter_*.png
 ```
 
 ### Configuration
 
-Bot behaviour is controlled by `config/notifier.json` under the `detail_command` key:
+Bot behaviour is controlled by `config/notifier.json`.
+
+**`detail_command` keys:**
 
 | Key | Default | Description |
 |---|---|---|
@@ -579,3 +603,12 @@ Bot behaviour is controlled by `config/notifier.json` under the `detail_command`
 | `sr_levels_to_show` | 3 | Number of S/R levels drawn on chart |
 | `signal_history_days` | 30 | Days of signal history shown in breakdown |
 | `peer_count` | 5 | Max sector peers shown in breakdown |
+
+**`scatter_command` keys:**
+
+| Key | Default | Description |
+|---|---|---|
+| `default_n_days` | 5 | Default forward horizon in trading days |
+| `max_n_days` | 60 | Upper bound on N; larger values are clamped |
+| `default_days_back` | 90 | Default signal history window in calendar days |
+| `max_days_back` | 365 | Upper bound on days_back |
