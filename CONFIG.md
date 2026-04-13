@@ -14,6 +14,7 @@ All config files live in `config/`. All thresholds, periods, and URLs are read f
 | `TELEGRAM_BOT_TOKEN` | Yes | Telegram → @BotFather → `/newbot` |
 | `TELEGRAM_ADMIN_CHAT_ID` | Yes | Admin chat ID — receives heartbeats, error alerts, and progress updates. Send a message to your bot, then call `https://api.telegram.org/bot<TOKEN>/getUpdates` and read `message.chat.id` |
 | `TELEGRAM_SUBSCRIBER_CHAT_IDS` | No | Comma-separated list of chat IDs that receive the daily signal report and market-closed notifications (e.g. `"111,222,333"`). If omitted, only the admin receives the signal report. |
+| `TELEGRAM_SUBSCRIBER_TICKERS` | No | Per-subscriber ticker watchlist. Format: `chat_id1:AAPL,MSFT;chat_id2:NVDA,AMD`. Subscribers listed here receive a daily report filtered to their watched tickers only. Subscribers absent from this variable receive the full report. Ticker symbols are case-insensitive. The `/detail TICKER` command is unaffected — subscribers can still look up any ticker. |
 
 **Backward compatibility:** `TELEGRAM_CHAT_ID` is still accepted as a fallback for `TELEGRAM_ADMIN_CHAT_ID`. Existing `.env` files without the new variables continue to work — the admin becomes the only subscriber.
 

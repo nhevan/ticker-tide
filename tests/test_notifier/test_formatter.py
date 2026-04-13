@@ -15,6 +15,7 @@ from src.notifier.formatter import (
     _add_page_indicators,
     _split_sections_into_messages,
     _split_text_at_line_boundary,
+    filter_results_for_subscriber,
     format_bearish_section,
     format_bullish_section,
     format_daily_summary_section,
@@ -26,6 +27,7 @@ from src.notifier.formatter import (
     format_market_closed_message,
     format_market_context_section,
     format_no_signals_report,
+    format_no_watched_signals_report,
     format_pipeline_error_message,
     format_signal_distribution,
 )
@@ -570,3 +572,144 @@ def test_format_full_report_uses_config_max_chars():
     stats = _make_pipeline_stats()
     messages = format_full_report(results, stats, config_small)
     assert len(messages) > 1
+
+
+# ---------------------------------------------------------------------------
+# filter_results_for_subscriber
+# ---------------------------------------------------------------------------
+
+class TestFilterResultsForSubscriber:
+    def test_keeps_watched_bullish_ticker(self):
+        """Bullish tickers in the watchlist are kept."""
+        results = _make_results(
+            bullish=[_make_bullish("AAPL", 75.0, 40.0), _make_bullish("MSFT", 72.0, 38.0)],
+        )
+        filtered = filter_results_for_subscriber(results, ["AAPL"])
+        tickers = [item["ticker"] for item in filtered["bullish"]]
+        assert tickers == ["AAPL"]
+
+    def test_removes_unwatched_bearish_ticker(self):
+        """Bearish tickers not in the watchlist are removed."""
+        results = _make_results(
+            bearish=[_make_bearish("TSLA", 65.0, -30.0), _make_bearish("NVDA", 70.0, -35.0)],
+        )
+        filtered = filter_results_for_subscriber(results, ["AAPL"])
+        assert filtered["bearish"] == []
+
+    def test_keeps_watched_flip(self):
+        """Flips for watched tickers are preserved."""
+        results = _make_results(
+            flips=[
+                _make_flip("AAPL", "NEUTRAL", "BULLISH", 45.0, 72.0),
+                _make_flip("TSLA", "BULLISH", "BEARISH", 70.0, 65.0),
+            ],
+        )
+        filtered = filter_results_for_subscriber(results, ["AAPL"])
+        assert len(filtered["flips"]) == 1
+        assert filtered["flips"][0]["ticker"] == "AAPL"
+
+    def test_removes_unwatched_flip(self):
+        """Flips for unwatched tickers are excluded."""
+        results = _make_results(
+            flips=[_make_flip("TSLA", "NEUTRAL", "BULLISH", 45.0, 72.0)],
+        )
+        filtered = filter_results_for_subscriber(results, ["AAPL", "MSFT"])
+        assert filtered["flips"] == []
+
+    def test_preserves_daily_summary(self):
+        """The daily_summary is always included unchanged."""
+        results = _make_results(daily_summary="Strong rally across tech sector.")
+        filtered = filter_results_for_subscriber(results, ["AAPL"])
+        assert filtered["daily_summary"] == "Strong rally across tech sector."
+
+    def test_preserves_market_context_summary(self):
+        """The market_context_summary is always included unchanged."""
+        results = _make_results(market_context_summary="VIX: 22.1 | SPY: ranging")
+        filtered = filter_results_for_subscriber(results, ["AAPL"])
+        assert filtered["market_context_summary"] == "VIX: 22.1 | SPY: ranging"
+
+    def test_empty_watchlist_returns_empty_signals(self):
+        """An empty watchlist produces empty bullish/bearish/flips."""
+        results = _make_results(
+            bullish=[_make_bullish("AAPL", 75.0, 40.0)],
+            bearish=[_make_bearish("TSLA", 65.0, -30.0)],
+        )
+        filtered = filter_results_for_subscriber(results, [])
+        assert filtered["bullish"] == []
+        assert filtered["bearish"] == []
+
+    def test_case_insensitive_ticker_matching(self):
+        """Watchlist matching is case-insensitive; both 'aapl' and 'AAPL' match."""
+        results = _make_results(bullish=[_make_bullish("AAPL", 75.0, 40.0)])
+        filtered = filter_results_for_subscriber(results, ["aapl"])
+        assert len(filtered["bullish"]) == 1
+
+    def test_mixed_watched_and_unwatched(self):
+        """Mixed signal list is correctly partitioned between watched and unwatched."""
+        results = _make_results(
+            bullish=[
+                _make_bullish("AAPL", 75.0, 40.0),
+                _make_bullish("GOOG", 80.0, 45.0),
+                _make_bullish("MSFT", 72.0, 38.0),
+            ],
+            bearish=[_make_bearish("TSLA", 65.0, -30.0)],
+        )
+        filtered = filter_results_for_subscriber(results, ["AAPL", "TSLA"])
+        assert [item["ticker"] for item in filtered["bullish"]] == ["AAPL"]
+        assert [item["ticker"] for item in filtered["bearish"]] == ["TSLA"]
+
+
+# ---------------------------------------------------------------------------
+# format_no_watched_signals_report
+# ---------------------------------------------------------------------------
+
+class TestFormatNoWatchedSignalsReport:
+    def _base_stats(self) -> dict:
+        return _make_pipeline_stats(bullish_count=5, bearish_count=3, neutral_count=51)
+
+    def test_contains_global_signal_distribution(self):
+        """Shows the full pipeline signal distribution, not just watched tickers."""
+        stats = self._base_stats()
+        messages = format_no_watched_signals_report(["AAPL", "MSFT"], stats, SAMPLE_CONFIG)
+        full_text = "\n".join(messages)
+        assert "🟢 5" in full_text
+        assert "🔴 3" in full_text
+        assert "🟡 51" in full_text
+
+    def test_contains_watched_ticker_list(self):
+        """Lists the subscriber's watched tickers in the message."""
+        stats = self._base_stats()
+        messages = format_no_watched_signals_report(["AAPL", "TSLA"], stats, SAMPLE_CONFIG)
+        full_text = "\n".join(messages)
+        assert "AAPL" in full_text
+        assert "TSLA" in full_text
+
+    def test_contains_no_signals_notice(self):
+        """Indicates that no signals were found for the watched tickers."""
+        stats = self._base_stats()
+        messages = format_no_watched_signals_report(["AAPL"], stats, SAMPLE_CONFIG)
+        full_text = "\n".join(messages)
+        assert "no signals" in full_text.lower() or "No signals" in full_text
+
+    def test_contains_market_context_when_provided(self):
+        """Market context is included when non-empty."""
+        stats = self._base_stats()
+        messages = format_no_watched_signals_report(
+            ["AAPL"], stats, SAMPLE_CONFIG, market_context="VIX: 22.1 | SPY: ranging"
+        )
+        full_text = "\n".join(messages)
+        assert "VIX: 22.1" in full_text
+
+    def test_omits_heartbeat_by_default(self):
+        """Does not include the pipeline heartbeat (include_heartbeat defaults to False)."""
+        stats = self._base_stats()
+        messages = format_no_watched_signals_report(["AAPL"], stats, SAMPLE_CONFIG)
+        full_text = "\n".join(messages)
+        assert "Pipeline completed" not in full_text
+
+    def test_returns_list_of_strings(self):
+        """Always returns a list (even a single message is wrapped in a list)."""
+        stats = self._base_stats()
+        result = format_no_watched_signals_report(["AAPL"], stats, SAMPLE_CONFIG)
+        assert isinstance(result, list)
+        assert all(isinstance(m, str) for m in result)

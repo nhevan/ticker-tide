@@ -369,3 +369,247 @@ class TestGetTelegramConfig:
         result = get_telegram_config(config)
 
         assert result["admin_chat_id"] == "legacy_chat"
+
+
+class TestGetTelegramConfigSubscriberTickers:
+    def test_subscriber_ticker_filters_parsed_from_env(self, monkeypatch):
+        """TELEGRAM_SUBSCRIBER_TICKERS is parsed into a dict of chat_id → ticker list."""
+        from src.notifier.telegram import get_telegram_config
+
+        monkeypatch.setenv("TELEGRAM_SUBSCRIBER_TICKERS", "chat1:AAPL,MSFT;chat2:NVDA,AMD")
+        monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_SUBSCRIBER_CHAT_IDS", raising=False)
+
+        config = {"telegram": {"admin_chat_id": "", "subscriber_chat_ids": []}}
+        result = get_telegram_config(config)
+
+        assert result["subscriber_ticker_filters"] == {
+            "chat1": ["AAPL", "MSFT"],
+            "chat2": ["NVDA", "AMD"],
+        }
+
+    def test_subscriber_ticker_filters_empty_when_env_unset(self, monkeypatch):
+        """subscriber_ticker_filters is an empty dict when the env var is absent."""
+        from src.notifier.telegram import get_telegram_config
+
+        monkeypatch.delenv("TELEGRAM_SUBSCRIBER_TICKERS", raising=False)
+        monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_SUBSCRIBER_CHAT_IDS", raising=False)
+
+        config = {"telegram": {"admin_chat_id": "", "subscriber_chat_ids": []}}
+        result = get_telegram_config(config)
+
+        assert result["subscriber_ticker_filters"] == {}
+
+    def test_subscriber_ticker_tickers_uppercased(self, monkeypatch):
+        """Ticker symbols in the filter are uppercased regardless of input."""
+        from src.notifier.telegram import get_telegram_config
+
+        monkeypatch.setenv("TELEGRAM_SUBSCRIBER_TICKERS", "chat1:aapl,msft")
+        monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_SUBSCRIBER_CHAT_IDS", raising=False)
+
+        config = {"telegram": {"admin_chat_id": "", "subscriber_chat_ids": []}}
+        result = get_telegram_config(config)
+
+        assert result["subscriber_ticker_filters"]["chat1"] == ["AAPL", "MSFT"]
+
+    def test_subscriber_ticker_handles_whitespace(self, monkeypatch):
+        """Whitespace around chat IDs and ticker symbols is stripped."""
+        from src.notifier.telegram import get_telegram_config
+
+        monkeypatch.setenv("TELEGRAM_SUBSCRIBER_TICKERS", " chat1 : AAPL , MSFT ; chat2 : NVDA ")
+        monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+        monkeypatch.delenv("TELEGRAM_SUBSCRIBER_CHAT_IDS", raising=False)
+
+        config = {"telegram": {"admin_chat_id": "", "subscriber_chat_ids": []}}
+        result = get_telegram_config(config)
+
+        assert result["subscriber_ticker_filters"] == {
+            "chat1": ["AAPL", "MSFT"],
+            "chat2": ["NVDA"],
+        }
+
+
+class TestSendDailyReportFiltered:
+    def _make_results(self) -> dict:
+        return {
+            "bullish": [
+                {"ticker": "AAPL", "score": {"confidence": 75.0, "final_score": 40.0}, "reasoning": "Bullish."},
+                {"ticker": "GOOG", "score": {"confidence": 80.0, "final_score": 45.0}, "reasoning": "Bullish."},
+            ],
+            "bearish": [
+                {"ticker": "TSLA", "score": {"confidence": 70.0, "final_score": -35.0}, "reasoning": "Bearish."},
+            ],
+            "flips": [],
+            "daily_summary": "Market rallied today.",
+            "market_context_summary": "VIX: 18.5",
+        }
+
+    def _make_pipeline_stats(self) -> dict:
+        return {
+            "scoring_date": "2026-03-16",
+            "bullish_count": 2,
+            "bearish_count": 1,
+            "neutral_count": 56,
+            "fetcher_duration": 10.0,
+            "calculator_duration": 20.0,
+            "scorer_duration": 5.0,
+            "tickers_processed": 59,
+            "tickers_total": 59,
+            "tickers_failed": 0,
+            "failed_tickers": [],
+            "display_timezone": "Europe/Amsterdam",
+        }
+
+    def _make_config(self) -> dict:
+        return {"telegram": {"display_timezone": "Europe/Amsterdam", "max_message_chars": 4000}}
+
+    def test_filtered_subscriber_only_sees_watched_tickers(self, mocker):
+        """A subscriber with a ticker filter receives messages containing only their watched tickers."""
+        from src.notifier.telegram import send_daily_report
+
+        sent_texts = {}
+
+        def capture(bot_token, chat_id, text):
+            sent_texts.setdefault(chat_id, []).append(text)
+            return 100
+
+        mocker.patch("src.notifier.telegram.send_telegram_message", side_effect=capture)
+
+        results = self._make_results()
+        pipeline_stats = self._make_pipeline_stats()
+        config = self._make_config()
+        subscriber_ticker_filters = {"chat_filtered": ["AAPL"]}
+
+        send_daily_report(
+            messages=["Full unfiltered report"],
+            bot_token="token",
+            subscriber_chat_ids=["chat_filtered"],
+            subscriber_ticker_filters=subscriber_ticker_filters,
+            results=results,
+            pipeline_stats=pipeline_stats,
+            config=config,
+        )
+
+        full_text = "\n".join(sent_texts.get("chat_filtered", []))
+        assert "AAPL" in full_text
+        assert "GOOG" not in full_text
+        assert "TSLA" not in full_text
+
+    def test_unfiltered_subscriber_gets_full_pre_formatted_messages(self, mocker):
+        """A subscriber without a filter receives the pre-formatted messages unchanged."""
+        from src.notifier.telegram import send_daily_report
+
+        sent_texts = {}
+
+        def capture(bot_token, chat_id, text):
+            sent_texts.setdefault(chat_id, []).append(text)
+            return 100
+
+        mocker.patch("src.notifier.telegram.send_telegram_message", side_effect=capture)
+
+        send_daily_report(
+            messages=["Pre-formatted full report"],
+            bot_token="token",
+            subscriber_chat_ids=["chat_unfiltered"],
+            subscriber_ticker_filters={"other_chat": ["AAPL"]},
+            results=self._make_results(),
+            pipeline_stats=self._make_pipeline_stats(),
+            config=self._make_config(),
+        )
+
+        assert sent_texts["chat_unfiltered"] == ["Pre-formatted full report"]
+
+    def test_no_watched_signals_sends_no_watched_message(self, mocker):
+        """When watched tickers have no qualifying signals, a 'no watched signals' message is sent."""
+        from src.notifier.telegram import send_daily_report
+
+        sent_texts = {}
+
+        def capture(bot_token, chat_id, text):
+            sent_texts.setdefault(chat_id, []).append(text)
+            return 100
+
+        mocker.patch("src.notifier.telegram.send_telegram_message", side_effect=capture)
+
+        results = {
+            "bullish": [{"ticker": "GOOG", "score": {"confidence": 80.0, "final_score": 45.0}, "reasoning": "Bullish."}],
+            "bearish": [],
+            "flips": [],
+            "daily_summary": "Markets rallied.",
+            "market_context_summary": "VIX: 18.5",
+        }
+
+        send_daily_report(
+            messages=["Full report"],
+            bot_token="token",
+            subscriber_chat_ids=["chat_filtered"],
+            subscriber_ticker_filters={"chat_filtered": ["AAPL", "TSLA"]},
+            results=results,
+            pipeline_stats=self._make_pipeline_stats(),
+            config=self._make_config(),
+        )
+
+        full_text = "\n".join(sent_texts.get("chat_filtered", []))
+        # Should not contain GOOG (not watched)
+        assert "GOOG" not in full_text
+        # Should contain some "no signals" indication for watched tickers
+        assert "AAPL" in full_text or "no signals" in full_text.lower()
+
+    def test_filter_always_includes_watched_flips(self, mocker):
+        """Flips for watched tickers are always included in the filtered report."""
+        from src.notifier.telegram import send_daily_report
+
+        sent_texts = {}
+
+        def capture(bot_token, chat_id, text):
+            sent_texts.setdefault(chat_id, []).append(text)
+            return 100
+
+        mocker.patch("src.notifier.telegram.send_telegram_message", side_effect=capture)
+
+        results = {
+            "bullish": [],
+            "bearish": [],
+            "flips": [
+                {
+                    "ticker": "AAPL",
+                    "flip": {"previous_signal": "NEUTRAL", "new_signal": "BULLISH", "previous_confidence": 45.0, "new_confidence": 72.0},
+                    "score": {"confidence": 72.0, "final_score": 35.0},
+                    "reasoning": "Momentum shifted.",
+                }
+            ],
+            "daily_summary": "",
+            "market_context_summary": "",
+        }
+
+        send_daily_report(
+            messages=["Full report"],
+            bot_token="token",
+            subscriber_chat_ids=["chat_filtered"],
+            subscriber_ticker_filters={"chat_filtered": ["AAPL"]},
+            results=results,
+            pipeline_stats=self._make_pipeline_stats(),
+            config=self._make_config(),
+        )
+
+        full_text = "\n".join(sent_texts.get("chat_filtered", []))
+        assert "AAPL" in full_text
+        assert "NEUTRAL" in full_text or "BULLISH" in full_text
+
+    def test_backward_compatible_no_filter_params(self, mocker):
+        """Calling send_daily_report without filter params works exactly as before."""
+        from src.notifier.telegram import send_daily_report
+
+        mock_send = mocker.patch("src.notifier.telegram.send_telegram_message", return_value=100)
+
+        result = send_daily_report(["Message A", "Message B"], "token", ["chat_1"])
+
+        assert mock_send.call_count == 2
+        assert result["sent"] == 1
+        assert result["failed"] == 0

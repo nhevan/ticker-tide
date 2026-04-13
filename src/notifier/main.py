@@ -181,6 +181,7 @@ def run_notifier(
     bot_token = tg_config["bot_token"]
     admin_chat_id = tg_config["admin_chat_id"]
     subscriber_chat_ids = tg_config["subscriber_chat_ids"]
+    subscriber_ticker_filters = tg_config["subscriber_ticker_filters"]
 
     resolved_db_path = db_path or db_config["path"]
     db_conn = get_connection(resolved_db_path)
@@ -268,7 +269,15 @@ def run_notifier(
         if not subscriber_chat_ids:
             logger.warning("phase=notifier run_notifier: No subscribers configured — skipping signal report")
         else:
-            send_result = send_daily_report(messages, bot_token, subscriber_chat_ids)
+            send_result = send_daily_report(
+                messages,
+                bot_token,
+                subscriber_chat_ids,
+                subscriber_ticker_filters=subscriber_ticker_filters,
+                results=results,
+                pipeline_stats=pipeline_stats,
+                config=config,
+            )
             telegram_sent = send_result["sent"] > 0
     except Exception as exc:
         logger.error(f"phase=notifier date={scoring_date} Telegram send failed: {exc}")

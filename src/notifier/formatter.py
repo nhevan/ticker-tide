@@ -528,6 +528,99 @@ def format_no_signals_report(
     return _split_sections_into_messages(parts, max_chars)
 
 
+def filter_results_for_subscriber(results: dict, watched_tickers: list[str]) -> dict:
+    """
+    Filter AI reasoning results to only include a subscriber's watched tickers.
+
+    The global daily_summary and market_context_summary are preserved unchanged
+    so subscribers still see broader market context. Signal distribution counts
+    are NOT part of results (they live in pipeline_stats) and are unaffected.
+
+    Parameters:
+        results: Dict from reason_all_qualifying_tickers with keys: bullish,
+            bearish, flips, daily_summary, market_context_summary.
+        watched_tickers: List of ticker symbols to keep. Case-insensitive.
+
+    Returns:
+        New results dict with bullish/bearish/flips filtered to watched tickers.
+        daily_summary and market_context_summary are copied through unchanged.
+    """
+    watched_upper = {t.upper() for t in watched_tickers}
+
+    return {
+        "bullish": [item for item in results.get("bullish", []) if item["ticker"].upper() in watched_upper],
+        "bearish": [item for item in results.get("bearish", []) if item["ticker"].upper() in watched_upper],
+        "flips": [item for item in results.get("flips", []) if item["ticker"].upper() in watched_upper],
+        "daily_summary": results.get("daily_summary", ""),
+        "market_context_summary": results.get("market_context_summary", ""),
+    }
+
+
+def format_no_watched_signals_report(
+    watched_tickers: list[str],
+    pipeline_stats: dict,
+    config: dict,
+    include_heartbeat: bool = False,
+    market_context: str = "",
+) -> list[str]:
+    """
+    Format a minimal report for filtered subscribers whose watched tickers had no signals.
+
+    Shows the global signal distribution (all tickers, not just watched) so the
+    subscriber still understands overall market activity. Lists their watched
+    tickers and notes that none had qualifying signals today.
+
+    Parameters:
+        watched_tickers: List of ticker symbols in this subscriber's watchlist.
+        pipeline_stats: Dict with timing and global ticker counts.
+        config: Notifier config dict.
+        include_heartbeat: When True, appends the pipeline heartbeat section.
+        market_context: Optional market context summary text.
+
+    Returns:
+        List of message strings (usually just one).
+    """
+    display_timezone = config.get("telegram", {}).get("display_timezone", "Europe/Amsterdam")
+    scoring_date = pipeline_stats.get("scoring_date", "")
+
+    bullish_count = pipeline_stats.get("bullish_count", 0)
+    bearish_count = pipeline_stats.get("bearish_count", 0)
+    neutral_count = pipeline_stats.get("neutral_count", 0)
+
+    header = format_header(scoring_date, display_timezone)
+    dist = format_signal_distribution(bullish_count, bearish_count, neutral_count)
+
+    watching_str = ", ".join(watched_tickers) if watched_tickers else "—"
+    no_signals_text = (
+        f"\n📌 No signals for your watched tickers today.\n"
+        f"Watching: {watching_str}"
+    )
+
+    parts = [f"{header}\n{dist}", no_signals_text]
+
+    if market_context:
+        context_section = format_market_context_section(market_context)
+        if context_section:
+            parts.append(context_section)
+
+    if include_heartbeat:
+        stats_with_tz = {
+            **pipeline_stats,
+            "display_timezone": display_timezone,
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+            "neutral_count": neutral_count,
+        }
+        parts.append(f"\n{format_heartbeat(stats_with_tz)}")
+
+    max_chars = config.get("telegram", {}).get("max_message_chars", MAX_TELEGRAM_LENGTH)
+    full_text = "\n".join(parts)
+    if len(full_text) <= max_chars - _PAGE_INDICATOR_OVERHEAD:
+        return [full_text]
+
+    return _split_sections_into_messages(parts, max_chars)
+
+
 def format_market_closed_message(date: str, config: dict) -> str:
     """
     Format the market-closed notification message.

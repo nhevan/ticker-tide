@@ -29,6 +29,7 @@ SAMPLE_TELEGRAM_CONFIG = {
     "bot_token": "test-token",
     "admin_chat_id": "admin-chat",
     "subscriber_chat_ids": ["subscriber-chat"],
+    "subscriber_ticker_filters": {},
 }
 
 SAMPLE_RESULTS = {
