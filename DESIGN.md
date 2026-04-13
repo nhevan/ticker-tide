@@ -645,7 +645,7 @@ Enable WAL mode on connection.
 - chat_id TEXT NOT NULL — Telegram chat ID of the sender
 - user_id TEXT — Telegram user ID (NULL if unavailable)
 - username TEXT — Telegram @username (NULL if user has no username)
-- command TEXT — extracted command prefix e.g. `/detail`, `/help`, `/tickers` (NULL if none)
+- command TEXT — extracted command prefix e.g. `/detail`, `/scatter`, `/help`, `/tickers` (NULL if none)
 - message_text TEXT NOT NULL — full raw message text
 - received_at TEXT NOT NULL — UTC ISO 8601 timestamp
 
@@ -888,7 +888,7 @@ If no subscribers are configured, logs a warning but does not crash.
 
 Returns: `{scoring_date, bullish_count, bearish_count, neutral_count, flips_count, tickers_reasoned, telegram_sent, subscribers_notified, duration_seconds}`.
 
-### 13.5 Telegram Bot & /detail Command (`src/notifier/bot.py`, `src/notifier/detail_command.py`)
+### 13.5 Telegram Bot & Interactive Commands (`src/notifier/bot.py`, `src/notifier/detail_command.py`, `src/notifier/scatter_command.py`)
 
 An interactive Telegram bot (`python-telegram-bot`) that responds to subscriber commands.
 
@@ -897,11 +897,18 @@ An interactive Telegram bot (`python-telegram-bot`) that responds to subscriber 
 | Command | Description |
 |---|---|
 | `/detail <TICKER> [days]` | Sends a 4-panel technical chart image + AI summary for the ticker |
+| `/scatter N [TICKER] [days_back]` | Sends a confidence vs N-day forward return scatter plot; BEARISH returns inverted so correct bearish calls appear positive; per-signal-type regression lines via `np.polyfit` |
+| `/tickers` | Lists all watched tickers grouped by sector |
 | `/start` | Welcome message |
 | `/help` | Lists available commands |
 
 The `/detail` flow calls `generate_chart()` to produce the image, then `cleanup_chart()` to delete
 the temporary file after delivery.
+
+The `/scatter` flow calls `fetch_signals_with_forward_returns()` (finds the Nth future trading-day
+close using `LIMIT 1 OFFSET N-1` against `ohlcv_daily`) and `generate_scatter_chart()` (dark-mode
+matplotlib scatter, dots colored green/red/gray by signal type, one regression line per type),
+then deletes the temp PNG after delivery.
 
 #### Chart Generator (`src/notifier/chart_generator.py`)
 

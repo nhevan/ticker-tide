@@ -105,8 +105,9 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/notifier/sentiment_enrichment.py` | Finnhub sentiment enrichment via Claude Haiku; `run_sentiment_enrichment()` + `enrich_batch()` |
 | `src/notifier/formatter.py` | Formats full report, heartbeat, and no-signals variants |
 | `src/notifier/telegram.py` | Telegram send/edit helpers |
-| `src/notifier/bot.py` | Long-polling bot; `/detail` and `/help` handlers; logs every incoming command to `telegram_message_log` |
+| `src/notifier/bot.py` | Long-polling bot; `/detail`, `/scatter`, `/tickers`, `/help` handlers; logs every incoming command to `telegram_message_log` |
 | `src/notifier/tickers_command.py` | `/tickers` Telegram bot command handler; logs invocations to `telegram_message_log` |
+| `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward returns, generates confidence vs return scatter plot, sends PNG via Telegram |
 
 ### Module dependency graph
 
