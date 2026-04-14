@@ -310,9 +310,15 @@ class TestFetchSignalsWithForwardReturns:
     ) -> None:
         from src.notifier.scatter_command import fetch_signals_with_forward_returns
 
-        # Two signals: one recent, one old
+        # Two signals: one recent, one old. Use Monday-aligned dates
+        # so OHLCV helper doesn't skip the signal date itself.
         recent_date = date.today() - timedelta(days=10)
+        # Adjust to previous Monday if weekend
+        while recent_date.weekday() >= 5:
+            recent_date -= timedelta(days=1)
         old_date = date.today() - timedelta(days=200)
+        while old_date.weekday() >= 5:
+            old_date -= timedelta(days=1)
 
         for signal_date in (recent_date, old_date):
             closes = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]

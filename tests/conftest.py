@@ -392,6 +392,9 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             sentiment_score REAL,
             fundamental_score REAL,
             macro_score REAL,
+            calibrated_score REAL,
+            raw_composite_score REAL,
+            model_r2 REAL,
             data_completeness TEXT,
             key_signals TEXT,
             UNIQUE(ticker, date)

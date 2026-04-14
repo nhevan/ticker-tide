@@ -97,7 +97,8 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/scorer/pattern_scorer.py` | Scores patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Aggregates component scores into 9 categories; applies adaptive weights |
 | `src/scorer/sector_adjuster.py` | Sector ETF trend score → ±5 to ±10 adjustment on final score |
-| `src/scorer/timeframe_merger.py` | Merges daily (×0.2) + weekly (×0.8) into `final_score`; `compute_weekly_score(db_conn, ticker, config, scoring_date, regime)` scores all 14 indicators from `indicators_weekly` using the same pipeline as daily (score_all_indicators → 4-category rollup → weekly adaptive weights → expansion factor); requires `scoring_date` (prevents look-ahead bias) and passes `regime` for oscillator direction |
+| `src/scorer/timeframe_merger.py` | Merges daily + weekly into composite score using regime-adaptive weights (trending: 0.2d/0.8w, ranging: 0.8d/0.2w, volatile: 0.5/0.5); `compute_weekly_score()` scores all 14 indicators from `indicators_weekly`; requires `scoring_date` and `regime` |
+| `src/scorer/calibrator.py` | Rolling ridge regression calibrator: trains on recent signals + realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 15 features (6 category scores + 6 raw indicators + 3 EMA spreads); cold-start fallback when < 30 samples; `calibrate_score()` is the main entry point |
 | `src/scorer/confidence.py` | Signal classification; confidence modifiers; `data_completeness`; `key_signals` |
 | `src/scorer/flip_detector.py` | Detects signal direction changes → `signal_flips` |
 | `src/notifier/main.py` | `run_notifier()` — queries scores, calls AI reasoner, formats, sends Telegram |
@@ -107,7 +108,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/notifier/telegram.py` | Telegram send/edit helpers |
 | `src/notifier/bot.py` | Long-polling bot; `/detail`, `/scatter`, `/tickers`, `/help` handlers; logs every incoming command to `telegram_message_log` |
 | `src/notifier/tickers_command.py` | `/tickers` Telegram bot command handler; logs invocations to `telegram_message_log` |
-| `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward returns, generates confidence vs return scatter plot, sends PNG via Telegram |
+| `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward excess returns (vs SPY), plots calibrated_score (predicted) vs actual excess return scatter chart, sends PNG via Telegram |
 
 ### Module dependency graph
 

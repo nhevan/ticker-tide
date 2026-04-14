@@ -20,11 +20,16 @@ def merge_timeframes(
     daily_score: float,
     weekly_score: Optional[float],
     config: dict,
+    regime: str = "ranging",
 ) -> float:
     """
     Merge daily and weekly composite scores into a final score.
 
-    Uses configurable weights from config['timeframe_weights'].
+    Uses regime-adaptive weights from config['timeframe_weights']. The config
+    supports two formats:
+      - Nested (regime-specific): {"trending": {"daily": 0.2, "weekly": 0.8}, ...}
+      - Flat (backward-compatible): {"daily": 0.2, "weekly": 0.8}
+
     Falls back to 100% daily score if weekly is unavailable.
     Result is clamped to [-100, +100].
 
@@ -32,6 +37,7 @@ def merge_timeframes(
         daily_score: Daily composite score (-100 to +100).
         weekly_score: Weekly composite score (-100 to +100), or None if unavailable.
         config: Scorer config dict containing timeframe_weights.
+        regime: Market regime — "trending", "ranging", or "volatile".
 
     Returns:
         Float merged score clamped to [-100, +100].
@@ -40,7 +46,16 @@ def merge_timeframes(
         logger.debug("Weekly score not available — using daily score only")
         return max(-100.0, min(100.0, daily_score))
 
-    weights = config.get("timeframe_weights", {})
+    tf_weights = config.get("timeframe_weights", {})
+
+    # Support nested (regime-specific) or flat format
+    if regime in tf_weights and isinstance(tf_weights[regime], dict):
+        weights = tf_weights[regime]
+    elif "daily" in tf_weights and isinstance(tf_weights["daily"], (int, float)):
+        weights = tf_weights
+    else:
+        weights = tf_weights.get("ranging", {"daily": 0.5, "weekly": 0.5})
+
     daily_weight: float = weights.get("daily", 0.2)
     weekly_weight: float = weights.get("weekly", 0.8)
 

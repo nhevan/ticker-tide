@@ -58,6 +58,7 @@ from src.scorer.pattern_scorer import (
     score_short_interest,
     score_structural_patterns,
 )
+from src.scorer.calibrator import build_feature_vector, calibrate_score
 from src.scorer.regime import detect_regime, get_atr_sma, get_current_vix, get_regime_weights
 from src.scorer.sector_adjuster import apply_sector_adjustment, compute_sector_etf_score
 from src.scorer.timeframe_merger import compute_weekly_score, merge_timeframes
@@ -422,8 +423,9 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
              daily_score, weekly_score, trend_score, momentum_score,
              volume_score, volatility_score, candlestick_score, structural_score,
              sentiment_score, fundamental_score, macro_score,
+             calibrated_score, raw_composite_score, model_r2,
              data_completeness, key_signals)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score["ticker"],
@@ -443,6 +445,9 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
             score.get("sentiment_score"),
             score.get("fundamental_score"),
             score.get("macro_score"),
+            score.get("calibrated_score"),
+            score.get("raw_composite_score"),
+            score.get("model_r2"),
             data_completeness,
             key_signals,
         ),
@@ -472,9 +477,9 @@ def score_ticker(
     5. Score fundamentals and macro
     6. Compute all 9 category scores → apply adaptive weights → daily_score
     7. Apply sector adjustment
-    8. Compute weekly score (if available)
-    9. Merge daily + weekly → final_score
-    10. Classify signal; compute confidence; build key_signals
+    8. Compute weekly score → merge with regime-adaptive timeframe weights
+    9. Calibrate score via rolling ridge regression (predicted excess return)
+    10. Classify signal using calibrated score; compute confidence
     11. Save to scores_daily; detect and save any signal flip
 
     Parameters:
@@ -628,20 +633,53 @@ def score_ticker(
     weekly_score = compute_weekly_score(db_conn, ticker, config, scoring_date=scoring_date, regime=regime)
     weekly_available = weekly_score is not None
 
-    # 14. Merge timeframes → final score
-    final_score = merge_timeframes(daily_score, weekly_score, config)
+    # 14. Merge timeframes → final score (regime-adaptive weights)
+    final_score = merge_timeframes(daily_score, weekly_score, config, regime=regime)
 
-    # 15. Classify signal
-    signal = classify_signal(final_score, config)
+    # 15. Calibrate score using rolling ridge regression
+    ema_9 = indicators.get("ema_9")
+    ema_21 = indicators.get("ema_21")
+    ema_50 = indicators.get("ema_50")
+    ema_positions = {
+        "price_ema9_spread": ((close - ema_9) / ema_9 * 100.0) if ema_9 and ema_9 != 0 else 0.0,
+        "ema9_ema21_spread": ((ema_9 - ema_21) / ema_21 * 100.0) if ema_9 and ema_21 and ema_21 != 0 else 0.0,
+        "ema21_ema50_spread": ((ema_21 - ema_50) / ema_50 * 100.0) if ema_21 and ema_50 and ema_50 != 0 else 0.0,
+    }
+    raw_indicators_for_calibrator = {
+        "rsi_14": indicators.get("rsi_14"),
+        "adx": indicators.get("adx"),
+        "macd_histogram": indicators.get("macd_histogram"),
+        "stoch_k": indicators.get("stoch_k"),
+        "bb_pctb": indicators.get("bb_pctb"),
+        "cmf_20": indicators.get("cmf_20"),
+    }
+    calibration_config = config.get("calibration", {})
+    calibration_result = calibrate_score(
+        conn=db_conn,
+        scoring_date=scoring_date,
+        category_scores=category_scores,
+        raw_indicators=raw_indicators_for_calibrator,
+        ema_positions=ema_positions,
+        config=calibration_config,
+    )
+    calibrated_score = calibration_result["calibrated_score"]
+    model_r2 = calibration_result["model_r2"]
 
-    # 16. Compute confidence
+    # Use calibrated_score for signal classification when available;
+    # fall back to final_score (static composite) during cold start.
+    effective_score = calibrated_score if calibrated_score is not None else final_score
+
+    # 16. Classify signal
+    signal = classify_signal(effective_score, config)
+
+    # 17. Compute confidence
     next_earnings = get_next_earnings_date(db_conn, ticker, scoring_date)
     filings_row = db_conn.execute(
         "SELECT 1 FROM filings_8k WHERE ticker = ? LIMIT 1", (ticker,)
     ).fetchone()
 
     confidence_result = compute_full_confidence(
-        final_score=final_score,
+        final_score=effective_score,
         daily_score=daily_score,
         weekly_score=weekly_score,
         category_scores=category_scores,
@@ -656,7 +694,7 @@ def score_ticker(
         config=config,
     )
 
-    # 17. Build data completeness
+    # 18. Build data completeness
     data_completeness = build_data_completeness(
         news_available=news is not None,
         fundamentals_available=fundamentals_data is not None,
@@ -666,7 +704,7 @@ def score_ticker(
         earnings_available=next_earnings is not None,
     )
 
-    # 18. Build key signals
+    # 19. Build key signals
     key_signals = build_key_signals(
         indicator_scores=indicator_scores,
         pattern_scores=pattern_scores,
@@ -681,7 +719,7 @@ def score_ticker(
         "date": scoring_date,
         "signal": signal,
         "confidence": confidence_result["confidence"],
-        "final_score": final_score,
+        "final_score": effective_score,
         "regime": regime,
         "daily_score": daily_score,
         "weekly_score": weekly_score,
@@ -694,16 +732,20 @@ def score_ticker(
         "sentiment_score": category_scores.get("sentiment"),
         "fundamental_score": category_scores.get("fundamental"),
         "macro_score": category_scores.get("macro"),
+        "calibrated_score": calibrated_score,
+        "raw_composite_score": final_score,
+        "model_r2": model_r2,
         "data_completeness": json.dumps(data_completeness),
         "key_signals": json.dumps(key_signals),
     }
 
-    # 19. Save to DB
+    # 20. Save to DB
     save_score_to_db(db_conn, score)
 
     logger.info(
         f"{ticker}: {signal} (confidence={confidence_result['confidence']:.0f}%, "
-        f"final_score={final_score:.1f}) on {scoring_date}"
+        f"final_score={effective_score:.1f}, calibrated={calibrated_score}, "
+        f"raw_composite={final_score:.1f}) on {scoring_date}"
     )
     return score
 

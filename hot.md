@@ -10,17 +10,20 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
+| 2026-04-14 | Rolling ridge regression calibrator — replaces static composite with data-driven predicted excess return | ✅ Implemented & integrated |
 | 2026-04-14 | EMA stack alignment override for regime detection | ✅ Merged & re-scored |
 | 2026-04-14 | Widen weekly score distribution (full 14-indicator pipeline) | ✅ Merged & re-scored |
-| 2026-04-14 | Bearish accuracy analysis across 62 tickers | ✅ Complete |
 
 ## Key Decisions
 <!-- Recent trade-offs and choices that affect future work -->
-- Signal thresholds raised from ±20 to ±30 (committed)
-- Bearish accuracy improved 42% → 48.7% via EMA override; ranging bearish still weak at 39.1%
-- Weekly scoring now uses full indicator pipeline (was 6 of 14), weight split remains 0.2 daily / 0.8 weekly
+- Rolling ridge calibrator: window=90, lambda=0.1, 15 features (6 category + 6 raw + 3 EMA spreads), validated R=0.47 across all 62 tickers
+- Anti-predictive categories (candlestick, structural, sentiment) zeroed in adaptive weights; calibrator independently ignores them
+- Timeframe weights now regime-adaptive: trending 0.2d/0.8w, ranging 0.8d/0.2w, volatile 0.5/0.5
+- Scatter plot now shows predicted vs actual excess return (vs SPY) with R correlation display
+- DB migration script: `scripts/migrate_add_calibration_columns.py` (must run before deploying)
 
 ## Next Up
 <!-- Known upcoming tasks or follow-ups -->
-- Consider further raising signal thresholds (±30 → ±35) based on accuracy data
-- Investigate remaining ranging-regime bearish underperformance (39.1%)
+- Deploy: run migration script, then `run_scorer.py --force` to populate calibrated_score
+- Re-run scatter plot to verify improved correlation (target: R > 0.4)
+- Monitor calibrated_score distribution and quintile separation

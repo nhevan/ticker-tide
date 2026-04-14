@@ -13,8 +13,9 @@ from src.scorer.timeframe_merger import compute_weekly_score, merge_timeframes
 
 SAMPLE_CONFIG = {
     "timeframe_weights": {
-        "daily": 0.2,
-        "weekly": 0.8,
+        "trending": { "daily": 0.2, "weekly": 0.8 },
+        "ranging":  { "daily": 0.8, "weekly": 0.2 },
+        "volatile": { "daily": 0.5, "weekly": 0.5 },
     },
     "weekly_adaptive_weights": {
         "trending": {"trend": 0.45, "momentum": 0.25, "volume": 0.15, "volatility": 0.15},
@@ -438,7 +439,7 @@ class TestComputeWeeklyScoreFullPipeline:
     def test_fallback_when_no_weekly_adaptive_weights(self, tmp_path) -> None:
         """When weekly_adaptive_weights is missing from config, re-normalize daily weights."""
         config_no_weekly_weights = {
-            "timeframe_weights": {"daily": 0.2, "weekly": 0.8},
+            "timeframe_weights": {"ranging": {"daily": 0.8, "weekly": 0.2}},
             "adaptive_weights": {
                 "ranging": {
                     "trend": 0.10, "momentum": 0.25, "volume": 0.10, "volatility": 0.10,
@@ -455,28 +456,39 @@ class TestComputeWeeklyScoreFullPipeline:
 
 
 class TestMergeTimeframes:
-    def test_merge_daily_weekly_same_direction(self) -> None:
-        """daily=+60, weekly=+50, weights 0.2/0.8 → 0.2*60 + 0.8*50 = 52.0."""
-        result = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG)
+    def test_merge_trending_regime_weekly_dominant(self) -> None:
+        """In trending regime, weights are 0.2/0.8 → 0.2*60 + 0.8*50 = 52.0."""
+        result = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG, regime="trending")
         assert result == pytest.approx(52.0, abs=0.01)
 
-    def test_merge_daily_weekly_opposite_direction(self) -> None:
-        """daily=+60, weekly=-40 → 0.2*60 + 0.8*(-40) = -20.0 (weekly dominates → bearish)."""
-        result = merge_timeframes(daily_score=60.0, weekly_score=-40.0, config=SAMPLE_CONFIG)
-        assert result == pytest.approx(-20.0, abs=0.01)
+    def test_merge_ranging_regime_daily_dominant(self) -> None:
+        """In ranging regime, weights are 0.8/0.2 → 0.8*60 + 0.2*50 = 58.0."""
+        result = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG, regime="ranging")
+        assert result == pytest.approx(58.0, abs=0.01)
+
+    def test_merge_volatile_regime_equal(self) -> None:
+        """In volatile regime, weights are 0.5/0.5 → 0.5*60 + 0.5*50 = 55.0."""
+        result = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG, regime="volatile")
+        assert result == pytest.approx(55.0, abs=0.01)
 
     def test_merge_weekly_not_available(self) -> None:
         """weekly_score=None → merged = daily_score only."""
         result = merge_timeframes(daily_score=60.0, weekly_score=None, config=SAMPLE_CONFIG)
         assert result == pytest.approx(60.0, abs=0.01)
 
-    def test_merge_uses_config_weights(self) -> None:
-        """daily=+100, weekly=0, custom weights daily=0.7/weekly=0.3 → 70.0."""
+    def test_merge_uses_flat_config_weights(self) -> None:
+        """Flat (non-nested) config format still works for backward compatibility."""
         config = {"timeframe_weights": {"daily": 0.7, "weekly": 0.3}}
         result = merge_timeframes(daily_score=100.0, weekly_score=0.0, config=config)
         assert result == pytest.approx(70.0, abs=0.01)
 
     def test_merge_result_is_clamped(self) -> None:
         """daily=+100, weekly=+100 → merged does not exceed +100."""
-        result = merge_timeframes(daily_score=100.0, weekly_score=100.0, config=SAMPLE_CONFIG)
+        result = merge_timeframes(daily_score=100.0, weekly_score=100.0, config=SAMPLE_CONFIG, regime="trending")
         assert result == pytest.approx(100.0, abs=0.01)
+
+    def test_default_regime_is_ranging(self) -> None:
+        """Default regime (omitted) should use ranging weights."""
+        result_default = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG)
+        result_ranging = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG, regime="ranging")
+        assert result_default == pytest.approx(result_ranging, abs=0.01)

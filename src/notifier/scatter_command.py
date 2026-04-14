@@ -163,15 +163,15 @@ def fetch_signals_with_forward_returns(
     days_back: int,
 ) -> list[dict]:
     """
-    Query historical signals and compute the actual % price change N trading
-    days after each signal date.
+    Query historical signals and compute the actual excess return (vs SPY)
+    N trading days after each signal date.
+
+    Uses calibrated_score (predicted excess return from ridge regression) for
+    the X-axis when available. Falls back to final_score / 100 for signals
+    that predate calibration.
 
     Signals without OHLCV data on the signal date, or without a closing price
     N trading days later, are silently dropped.
-
-    Direction is encoded as a signed confidence score (final_score / 100):
-    negative for BEARISH, positive for BULLISH, near-zero for NEUTRAL.
-    The forward return is the raw unmodified price change — no inversion applied.
 
     Parameters:
         conn: Open SQLite connection (row_factory=sqlite3.Row expected).
@@ -182,13 +182,15 @@ def fetch_signals_with_forward_returns(
     Returns:
         List of dicts, each with keys:
             ticker (str), signal_date (str), signal (str),
-            confidence (float), signed_confidence (float), forward_return_pct (float).
+            confidence (float), signed_confidence (float),
+            forward_return_pct (float), model_r2 (float).
     """
     cutoff_date = (date.today() - timedelta(days=days_back)).isoformat()
 
     if ticker_filter:
         query = (
-            "SELECT ticker, date, signal, confidence, final_score "
+            "SELECT ticker, date, signal, confidence, final_score, "
+            "calibrated_score, model_r2 "
             "FROM scores_daily "
             "WHERE date >= ? AND ticker = ? AND signal IS NOT NULL "
             "ORDER BY ticker, date"
@@ -196,7 +198,8 @@ def fetch_signals_with_forward_returns(
         params: tuple = (cutoff_date, ticker_filter)
     else:
         query = (
-            "SELECT ticker, date, signal, confidence, final_score "
+            "SELECT ticker, date, signal, confidence, final_score, "
+            "calibrated_score, model_r2 "
             "FROM scores_daily "
             "WHERE date >= ? AND signal IS NOT NULL "
             "ORDER BY ticker, date"
@@ -213,6 +216,8 @@ def fetch_signals_with_forward_returns(
         signal = row["signal"]
         confidence = row["confidence"]
         final_score = row["final_score"]
+        cal_score = row["calibrated_score"]
+        r2 = row["model_r2"]
 
         if confidence is None:
             continue
@@ -240,10 +245,31 @@ def fetch_signals_with_forward_returns(
             continue
         future_close: float = future_close_row["close"]
 
-        raw_return_pct = (future_close - signal_close) / signal_close * 100.0
+        ticker_return_pct = (future_close - signal_close) / signal_close * 100.0
 
-        # Direction is encoded on the X-axis via signed_confidence; Y is raw return.
-        signed_confidence = (final_score / 100.0) if final_score is not None else 0.0
+        # Compute SPY's return over the same period for excess return
+        spy_sig_row = conn.execute(
+            "SELECT close FROM ohlcv_daily WHERE ticker = 'SPY' AND date = ?",
+            (signal_date,),
+        ).fetchone()
+        spy_fwd_row = conn.execute(
+            "SELECT close FROM ohlcv_daily "
+            "WHERE ticker = 'SPY' AND date > ? "
+            "ORDER BY date LIMIT 1 OFFSET ?",
+            (signal_date, n_days - 1),
+        ).fetchone()
+
+        if spy_sig_row and spy_fwd_row and spy_sig_row["close"] and spy_sig_row["close"] > 0:
+            spy_return = (spy_fwd_row["close"] - spy_sig_row["close"]) / spy_sig_row["close"] * 100.0
+            excess_return_pct = ticker_return_pct - spy_return
+        else:
+            excess_return_pct = ticker_return_pct
+
+        # X-axis: calibrated_score when available, else fall back to final_score / 100
+        if cal_score is not None:
+            signed_confidence = float(cal_score)
+        else:
+            signed_confidence = (final_score / 100.0) if final_score is not None else 0.0
 
         result.append(
             {
@@ -252,7 +278,8 @@ def fetch_signals_with_forward_returns(
                 "signal": signal,
                 "confidence": confidence,
                 "signed_confidence": round(signed_confidence, 4),
-                "forward_return_pct": round(raw_return_pct, 4),
+                "forward_return_pct": round(excess_return_pct, 4),
+                "model_r2": float(r2) if r2 is not None else 0.0,
             }
         )
 
@@ -307,7 +334,7 @@ def generate_scatter_chart(
         _render_empty_chart(ax, n_days, ticker_filter, days_back)
     else:
         _render_scatter_with_regression(ax, data, n_days)
-        _apply_axis_labels(ax, n_days, ticker_filter, days_back, len(data))
+        _apply_axis_labels(ax, n_days, ticker_filter, days_back, len(data), data=data)
 
     _apply_common_style(ax)
 
@@ -343,7 +370,7 @@ def _render_empty_chart(
     )
     scope = ticker_filter or "All tickers"
     ax.set_title(
-        f"Confidence vs {n_days}-Day Forward Return\n{scope} · last {days_back} days",
+        f"Predicted vs Actual Excess Return ({n_days}d)\n{scope} · last {days_back} days",
         color="#e0e0ff",
         fontsize=13,
         pad=12,
@@ -381,9 +408,15 @@ def _render_scatter_with_regression(
             y_line = np.polyval(coeffs, x_line)
             ax.plot(x_line, y_line, color=color, linewidth=1.5, alpha=0.8, zorder=4)
 
-    ax.set_xlim(-1.05, 1.05)
-    ax.set_xticks([-1, -0.5, 0, 0.5, 1])
-    ax.set_xticklabels(["-1\n(Bearish)", "-0.5", "0\n(Neutral)", "+0.5", "+1\n(Bullish)"])
+    # Auto-scale X-axis; add 45-degree reference line (perfect prediction)
+    all_x = [row["signed_confidence"] for row in data]
+    all_y = [row["forward_return_pct"] for row in data]
+    if all_x and all_y:
+        xy_min = min(min(all_x), min(all_y))
+        xy_max = max(max(all_x), max(all_y))
+        ref_range = np.linspace(xy_min, xy_max, 100)
+        ax.plot(ref_range, ref_range, color="#555577", linewidth=1.0, linestyle=":",
+                alpha=0.6, zorder=2, label="Perfect prediction")
 
 
 def _apply_axis_labels(
@@ -392,17 +425,29 @@ def _apply_axis_labels(
     ticker_filter: Optional[str],
     days_back: int,
     count: int,
+    data: Optional[list[dict]] = None,
 ) -> None:
-    """Set axis labels and chart title."""
+    """Set axis labels and chart title with R² annotation."""
     scope = ticker_filter or "All tickers"
+
+    # Compute overall correlation R between predicted and actual
+    r_text = ""
+    if data and len(data) >= 2:
+        xs = np.array([row["signed_confidence"] for row in data])
+        ys = np.array([row["forward_return_pct"] for row in data])
+        if np.std(xs) > 0 and np.std(ys) > 0:
+            correlation = float(np.corrcoef(xs, ys)[0, 1])
+            r_text = f" · R={correlation:.2f}"
+
     ax.set_title(
-        f"Confidence vs {n_days}-Day Forward Return\n{scope} · last {days_back} days · {count} signals",
+        f"Predicted vs Actual Excess Return ({n_days}d)\n"
+        f"{scope} · last {days_back} days · {count} signals{r_text}",
         color="#e0e0ff",
         fontsize=13,
         pad=12,
     )
-    ax.set_xlabel("Confidence Score  ←Bearish · Neutral · Bullish→", color="#aaaacc", fontsize=11)
-    ax.set_ylabel(f"{n_days}-Day Forward Return (%)", color="#aaaacc", fontsize=11)
+    ax.set_xlabel("Predicted Excess Return (%)", color="#aaaacc", fontsize=11)
+    ax.set_ylabel(f"Actual {n_days}-Day Excess Return (%)", color="#aaaacc", fontsize=11)
 
 
 def _apply_common_style(ax: plt.Axes) -> None:
@@ -501,7 +546,7 @@ def handle_scatter_command(
     scope = ticker_filter or "all tickers"
     count_label = f"{len(data)} signal{'s' if len(data) != 1 else ''}"
     caption = (
-        f"📊 Confidence vs {n_days}-Day Forward Return\n"
+        f"📊 Predicted vs Actual Excess Return ({n_days}d)\n"
         f"{scope} · last {days_back} days · {count_label}"
     )
 

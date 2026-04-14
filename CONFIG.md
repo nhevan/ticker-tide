@@ -307,6 +307,36 @@ If this section is missing, daily `adaptive_weights` are re-normalized to these 
 | `weekly_adaptive_weights.volatile.volume` | float | `0.15` | Volume category weight in volatile regime |
 | `weekly_adaptive_weights.volatile.volatility` | float | `0.30` | Volatility category weight in volatile regime |
 
+### Calibration (rolling ridge regression)
+
+The calibrator trains a ridge regression on recent historical signals and their realized
+excess returns (vs SPY), then predicts the expected excess return for the current signal.
+When enabled and sufficient training data exists, `calibrated_score` replaces the static
+composite as the primary signal classification input.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `calibration.enabled` | bool | `true` | Master switch for rolling ridge calibration |
+| `calibration.window_size` | int | `90` | Number of most recent scored signals to train on |
+| `calibration.ridge_lambda` | float | `0.1` | L2 regularisation strength (higher = more conservative) |
+| `calibration.min_training_samples` | int | `30` | Minimum samples required; fewer triggers cold-start fallback to static composite |
+| `calibration.benchmark_ticker` | string | `"SPY"` | Ticker whose return is subtracted from each signal's return to compute excess return |
+| `calibration.forward_days` | int | `10` | Trading-day horizon for measuring forward returns in training data |
+
+### Timeframe weights (regime-adaptive)
+
+Regime-specific daily/weekly blending weights. In trending markets, weekly dominates;
+in ranging markets, daily dominates; volatile is 50/50.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `timeframe_weights.trending.daily` | float | `0.2` | Daily weight in trending regime |
+| `timeframe_weights.trending.weekly` | float | `0.8` | Weekly weight in trending regime |
+| `timeframe_weights.ranging.daily` | float | `0.8` | Daily weight in ranging regime |
+| `timeframe_weights.ranging.weekly` | float | `0.2` | Weekly weight in ranging regime |
+| `timeframe_weights.volatile.daily` | float | `0.5` | Daily weight in volatile regime |
+| `timeframe_weights.volatile.weekly` | float | `0.5` | Weekly weight in volatile regime |
+
 ---
 
 ## config/notifier.json

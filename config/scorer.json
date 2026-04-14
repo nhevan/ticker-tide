@@ -9,19 +9,19 @@
   },
   "adaptive_weights": {
     "trending": {
-      "trend": 0.30, "momentum": 0.15, "volume": 0.10, "volatility": 0.05,
-      "candlestick": 0.05, "structural": 0.15, "sentiment": 0.10,
-      "fundamental": 0.05, "macro": 0.05
+      "trend": 0.30, "momentum": 0.20, "volume": 0.10, "volatility": 0.05,
+      "candlestick": 0.0, "structural": 0.0, "sentiment": 0.0,
+      "fundamental": 0.05, "macro": 0.30
     },
     "ranging": {
-      "trend": 0.10, "momentum": 0.25, "volume": 0.10, "volatility": 0.10,
-      "candlestick": 0.10, "structural": 0.15, "sentiment": 0.10,
-      "fundamental": 0.05, "macro": 0.05
+      "trend": 0.15, "momentum": 0.25, "volume": 0.15, "volatility": 0.10,
+      "candlestick": 0.0, "structural": 0.0, "sentiment": 0.0,
+      "fundamental": 0.10, "macro": 0.25
     },
     "volatile": {
-      "trend": 0.20, "momentum": 0.15, "volume": 0.10, "volatility": 0.15,
-      "candlestick": 0.10, "structural": 0.10, "sentiment": 0.10,
-      "fundamental": 0.05, "macro": 0.05
+      "trend": 0.20, "momentum": 0.20, "volume": 0.10, "volatility": 0.15,
+      "candlestick": 0.0, "structural": 0.0, "sentiment": 0.0,
+      "fundamental": 0.05, "macro": 0.30
     }
   },
   "sector_adjustment": {
@@ -30,8 +30,17 @@
     "max_adjustment": 10
   },
   "timeframe_weights": {
-    "daily": 0.2,
-    "weekly": 0.8
+    "trending": { "daily": 0.2, "weekly": 0.8 },
+    "ranging":  { "daily": 0.8, "weekly": 0.2 },
+    "volatile": { "daily": 0.5, "weekly": 0.5 }
+  },
+  "calibration": {
+    "enabled": true,
+    "window_size": 90,
+    "ridge_lambda": 0.1,
+    "min_training_samples": 30,
+    "benchmark_ticker": "SPY",
+    "forward_days": 10
   },
   "signal_thresholds": {
     "bullish": 20,

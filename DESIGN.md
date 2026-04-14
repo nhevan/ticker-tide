@@ -242,14 +242,17 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 | `src/scorer/pattern_scorer.py` | Scores candlestick/structural patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Rolls up component scores into 9 categories; applies regime-based adaptive weights |
 | `src/scorer/sector_adjuster.py` | Computes sector ETF trend score and applies adjustment (±5 to ±10) |
-| `src/scorer/timeframe_merger.py` | Merges daily (×0.2) + weekly (×0.8) composite scores; computes weekly score from all indicators in indicators_weekly using the same scoring primitives as daily (score_all_indicators, category rollup, adaptive weights, expansion factor); uses `scoring_date` to prevent look-ahead bias and regime-aware oscillator direction |
+| `src/scorer/timeframe_merger.py` | Merges daily + weekly composite scores with regime-adaptive weights (trending: 0.2d/0.8w, ranging: 0.8d/0.2w, volatile: 0.5/0.5); computes weekly score from all indicators in indicators_weekly; uses `scoring_date` to prevent look-ahead bias and regime-aware oscillator direction |
+| `src/scorer/calibrator.py` | Rolling ridge regression: trains on recent signals + their realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 15 features (6 category scores + 6 raw indicators + 3 EMA spreads); cold-start fallback when < 30 samples |
 | `src/scorer/confidence.py` | Signal classification (BULLISH/BEARISH/NEUTRAL), confidence modifiers, data_completeness dict, key_signals list |
 | `src/scorer/flip_detector.py` | Detects signal direction changes; saves to signal_flips table |
 | `src/scorer/main.py` | Orchestrator: per-ticker score_ticker() + run_scorer() for daily pipeline + run_historical_scoring() for Option E |
 
 ### Signal Classification
-- `final_score >= +30` → BULLISH
-- `final_score <= -30` → BEARISH
+Uses `calibrated_score` (rolling ridge predicted excess return in %) when available
+(>= 30 training samples); falls back to static `final_score` during cold start.
+- Score >= bullish_threshold (config: +20) → BULLISH
+- Score <= bearish_threshold (config: -20) → BEARISH
 - Otherwise → NEUTRAL
 
 ### Confidence Modifiers (applied to base = |final_score|):
@@ -301,15 +304,17 @@ Final confidence is clamped to [0, 100].
 6. Score fundamentals; compute macro (SPY trend + VIX + sector ETF + treasury + RS).
 7. Compute 9 category scores → apply adaptive weights → daily_score.
 8. Apply sector adjustment.
-9. Compute weekly score (`compute_weekly_score`): loads the most recent weekly candle
-   with `week_start <= scoring_date` (no look-ahead bias), scores all 14 indicators
-   using `score_all_indicators` with daily profiles as fallback, rolls up into 4
-   categories (trend, momentum, volume, volatility), applies weekly adaptive weights
-   and expansion factor; merge timeframes → final_score.
-10. Classify signal; compute confidence + modifiers.
-11. Build data_completeness JSON; build key_signals list.
-12. Save to `scores_daily` (INSERT OR REPLACE).
-13. Detect and save any signal flip to `signal_flips`.
+9. Compute weekly score; merge timeframes with regime-adaptive weights → static composite.
+10. **Calibrate score** via rolling ridge regression: fetch recent signals with realized
+    forward excess returns (vs SPY) as training data, train ridge on 15 features
+    (6 category scores + 6 raw indicators + 3 EMA spreads), predict expected excess
+    return for current signal → `calibrated_score`. Falls back to None (cold start)
+    if fewer than `min_training_samples` are available.
+11. Classify signal using `calibrated_score` if available, otherwise static composite.
+12. Compute confidence + modifiers; build data_completeness and key_signals.
+13. Save to `scores_daily` (INSERT OR REPLACE) — includes `calibrated_score`,
+    `raw_composite_score`, `model_r2`.
+14. Detect and save any signal flip to `signal_flips`.
 
 **Entry point script:** `scripts/run_scorer.py` with `--ticker` (optional), `--historical` (flag), `--db-path` (optional).
 
