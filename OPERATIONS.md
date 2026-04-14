@@ -67,7 +67,11 @@ tail -f /home/ec2-user/ticker-tide/logs/bot.log
 
 ### How it is managed
 
-`deploy.sh` installs `deploy/ticker-tide-bot.service` to `/etc/systemd/system/` on every deploy, then runs `systemctl enable` + `systemctl restart`. The service:
+Every push to `main` triggers the GitHub Actions deploy workflow, which:
+1. SSHes into EC2 and runs `./deploy.sh` (installs/updates the systemd service, runs tests, etc.)
+2. Runs a dedicated **"Restart Telegram bot"** step that explicitly calls `sudo systemctl restart ticker-tide-bot` and verifies the service is active — visible as its own step in the Actions UI.
+
+`deploy.sh` also handles the service on **manual deploys**: it installs `deploy/ticker-tide-bot.service` to `/etc/systemd/system/`, runs `systemctl enable` + `systemctl restart`. The service:
 - Auto-starts on EC2 reboot
 - Restarts automatically within 5 seconds on any crash or clean exit
 - Reads credentials directly from `.env` via `EnvironmentFile`
