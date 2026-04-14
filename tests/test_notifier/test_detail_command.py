@@ -330,7 +330,7 @@ class TestBuildSignalHistory:
             day = base + timedelta(days=i)
             _insert_score(db_connection, "AAPL", date_str=day.isoformat(), final_score=1.0 + i * 0.5)
 
-        result = build_signal_history(db_connection, "AAPL", days=30)
+        result = build_signal_history(db_connection, "AAPL", days=30, reference_date="2026-03-15")
 
         assert "NEUTRAL" in result
 
@@ -344,7 +344,7 @@ class TestBuildSignalHistory:
             day = base + timedelta(days=i)
             _insert_score(db_connection, "AAPL", signal=sig, date_str=day.isoformat())
 
-        result = build_signal_history(db_connection, "AAPL", days=30)
+        result = build_signal_history(db_connection, "AAPL", days=30, reference_date="2026-03-15")
 
         assert "🟢" in result
         assert "🔴" in result
@@ -368,7 +368,7 @@ class TestBuildSignalHistory:
             day = base + timedelta(days=i)
             _insert_score(db_connection, "AAPL", date_str=day.isoformat(), final_score=20.0 - i * 2.0)
 
-        result = build_signal_history(db_connection, "AAPL", days=30)
+        result = build_signal_history(db_connection, "AAPL", days=30, reference_date="2026-03-15")
 
         trend_words = ["improving", "deteriorating", "stable"]
         assert any(word in result.lower() for word in trend_words)

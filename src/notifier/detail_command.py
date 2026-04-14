@@ -625,7 +625,10 @@ def build_signal_change_triggers(
 
 
 def build_signal_history(
-    db_conn: sqlite3.Connection, ticker: str, days: int = 30
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    days: int = 30,
+    reference_date: Optional[str] = None,
 ) -> str:
     """
     Format recent signal history for a ticker.
@@ -638,11 +641,13 @@ def build_signal_history(
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         days: Number of days to look back.
+        reference_date: YYYY-MM-DD string to compute cutoff from. Defaults to today.
 
     Returns:
         Formatted string section, or 'No signal history available.' if no data.
     """
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    ref = date.fromisoformat(reference_date) if reference_date else date.today()
+    cutoff = (ref - timedelta(days=days)).isoformat()
     rows = db_conn.execute(
         "SELECT date, signal, confidence, final_score FROM scores_daily "
         "WHERE ticker = ? AND date >= ? ORDER BY date ASC",
@@ -965,7 +970,8 @@ def build_full_breakdown(
         build_key_levels(db_conn, ticker, current_price, indicators, None, sr_levels, config),
         build_signal_change_triggers(indicators, score, config),
         build_signal_history(
-            db_conn, ticker, config.get("detail_command", {}).get("signal_history_days", 30)
+            db_conn, ticker, config.get("detail_command", {}).get("signal_history_days", 30),
+            reference_date=scoring_date,
         ),
         build_earnings_warning(db_conn, ticker, scoring_date),
     ]
@@ -1228,7 +1234,7 @@ def handle_detail_command(
         )
         signal_triggers_text = build_signal_change_triggers(indicators, score, config)
         history_days = config.get("detail_command", {}).get("signal_history_days", 30)
-        signal_history_text = build_signal_history(db_conn, ticker, days=history_days)
+        signal_history_text = build_signal_history(db_conn, ticker, days=history_days, reference_date=scoring_date)
         earnings_text = build_earnings_warning(db_conn, ticker, scoring_date)
         peers_text = build_sector_peers(
             db_conn, ticker, ticker_sector, active_tickers, scoring_date, config

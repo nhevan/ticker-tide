@@ -10,6 +10,7 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
+| 2026-04-14 | Fix build_signal_history date.today() drift — added reference_date param | ✅ Fixed |
 | 2026-04-14 | Rolling ridge regression calibrator — replaces static composite with data-driven predicted excess return | ✅ Implemented & integrated |
 | 2026-04-14 | EMA stack alignment override for regime detection | ✅ Merged & re-scored |
 | 2026-04-14 | Widen weekly score distribution (full 14-indicator pipeline) | ✅ Merged & re-scored |
