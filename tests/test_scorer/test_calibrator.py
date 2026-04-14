@@ -364,18 +364,25 @@ class TestFetchTrainingData:
         assert len(y) > 0
 
     def test_respects_window_size(self, db_connection, calibration_config):
-        """Training data is limited to the configured window_size."""
+        """Training data is limited to signals within window_size calendar days."""
         _populate_training_data(db_connection, n_signals=50)
-        calibration_config["window_size"] = 20
+        scoring_date = "2025-02-20"
 
-        X, y = fetch_training_data(
-            db_connection,
-            scoring_date="2025-02-20",
-            config=calibration_config,
+        # 5-day window: cutoff = 2025-02-15 (Sat), eligible trading days = Feb 17, 18, 19
+        # At most 3 trading days × 3 tickers = 9 samples
+        calibration_config["window_size"] = 5
+        X_small, _ = fetch_training_data(
+            db_connection, scoring_date=scoring_date, config=calibration_config
         )
 
-        # Should have at most 20 * 3 tickers = 60 samples (or fewer if some lack forward returns)
-        assert len(X) <= 60
+        # 60-day window: covers all signals inserted (back to 2025-01-02)
+        calibration_config["window_size"] = 60
+        X_large, _ = fetch_training_data(
+            db_connection, scoring_date=scoring_date, config=calibration_config
+        )
+
+        assert len(X_small) < len(X_large)
+        assert len(X_small) <= 9
 
     def test_empty_when_no_data(self, db_connection, calibration_config):
         """Returns empty arrays when no training data exists."""

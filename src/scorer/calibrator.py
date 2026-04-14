@@ -14,7 +14,7 @@ Features (15 total):
 
 Config keys (under scorer.json → "calibration"):
   enabled             — master switch (bool)
-  window_size         — number of most recent scored signals to train on (int)
+  window_size         — number of calendar days to look back for training signals (int)
   ridge_lambda        — L2 regularisation strength (float)
   min_training_samples — minimum samples required; fewer triggers cold-start fallback (int)
   benchmark_ticker    — ticker whose return is subtracted from each signal's return (str)
@@ -28,6 +28,7 @@ import sqlite3
 from typing import Optional
 
 import numpy as np
+from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,7 @@ def fetch_training_data(
     Fetch historical signals with their 15-feature vectors and realized
     excess returns to serve as training data for the ridge regression.
 
-    Queries the most recent `window_size` scored signals (across all
+    Queries scored signals within the past `window_size` calendar days (across all
     tickers) that have both:
       - A known forward close price N trading days after the signal
       - A known SPY close price for the same forward period
@@ -240,7 +241,11 @@ def fetch_training_data(
     forward_days = config.get("forward_days", 10)
     benchmark = config.get("benchmark_ticker", "SPY")
 
-    # Fetch scored signals before scoring_date, newest first, across all tickers
+    # Compute the calendar-day cutoff: only signals within the last window_size days
+    scoring_dt = date.fromisoformat(scoring_date)
+    cutoff_date = (scoring_dt - timedelta(days=window_size)).isoformat()
+
+    # Fetch scored signals within the calendar window, across all tickers
     rows = conn.execute(
         """
         SELECT s.ticker, s.date,
@@ -253,12 +258,12 @@ def fetch_training_data(
         JOIN indicators_daily i ON s.ticker = i.ticker AND s.date = i.date
         JOIN ohlcv_daily o_sig ON s.ticker = o_sig.ticker AND s.date = o_sig.date
         WHERE s.date < ?
+          AND s.date >= ?
           AND s.signal IS NOT NULL
           AND o_sig.close > 0
         ORDER BY s.date DESC
-        LIMIT ?
         """,
-        (scoring_date, window_size),
+        (scoring_date, cutoff_date),
     ).fetchall()
 
     if not rows:

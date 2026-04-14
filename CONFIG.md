@@ -317,7 +317,7 @@ composite as the primary signal classification input.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `calibration.enabled` | bool | `true` | Master switch for rolling ridge calibration |
-| `calibration.window_size` | int | `90` | Number of most recent scored signals to train on |
+| `calibration.window_size` | int | `90` | Calendar days to look back for training signals |
 | `calibration.ridge_lambda` | float | `0.1` | L2 regularisation strength (higher = more conservative) |
 | `calibration.min_training_samples` | int | `30` | Minimum samples required; fewer triggers cold-start fallback to static composite |
 | `calibration.benchmark_ticker` | string | `"SPY"` | Ticker whose return is subtracted from each signal's return to compute excess return |
