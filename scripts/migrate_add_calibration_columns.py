@@ -13,19 +13,37 @@ SQLite supports ALTER TABLE ADD COLUMN, so this is a simple migration
 Usage:
     python scripts/migrate_add_calibration_columns.py [--db-path PATH]
 
-Defaults to data/ticker_tide.db if --db-path is not specified.
+Defaults to the path defined in config/database.json (typically data/signals.db).
 Safe to run multiple times — skips columns that already exist.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import sqlite3
 import sys
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "config", "database.json"
+)
+_FALLBACK_DB = "data/signals.db"
+
+
+def _resolve_default_db_path() -> str:
+    """Return the DB path from config/database.json, falling back to data/signals.db."""
+    try:
+        with open(_CONFIG_PATH) as fh:
+            db_config = json.load(fh)
+            return db_config.get("path", _FALLBACK_DB)
+    except (OSError, json.JSONDecodeError):
+        return _FALLBACK_DB
+
 
 NEW_COLUMNS = [
     ("calibrated_score", "REAL"),
@@ -68,11 +86,18 @@ def migrate(db_path: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Add calibration columns to scores_daily")
-    parser.add_argument("--db-path", default="data/ticker_tide.db", help="Path to SQLite database")
+    parser.add_argument(
+        "--db-path",
+        default=None,
+        help="Path to SQLite database (default: read from config/database.json)",
+    )
     args = parser.parse_args()
 
+    resolved_db_path = args.db_path or _resolve_default_db_path()
+    logger.info("Using database: %s", resolved_db_path)
+
     try:
-        migrate(args.db_path)
+        migrate(resolved_db_path)
     except Exception as exc:
         logger.error("Migration failed: %s", exc)
         sys.exit(1)

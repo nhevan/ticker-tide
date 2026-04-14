@@ -10,10 +10,10 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
+| 2026-04-14 | Fix migrate_add_calibration_columns.py wrong default DB path (ticker_tide.db → config/database.json) | ✅ Fixed & migration run |
 | 2026-04-14 | Fix build_signal_history date.today() drift — added reference_date param | ✅ Fixed |
 | 2026-04-14 | Rolling ridge regression calibrator — replaces static composite with data-driven predicted excess return | ✅ Implemented & integrated |
 | 2026-04-14 | EMA stack alignment override for regime detection | ✅ Merged & re-scored |
-| 2026-04-14 | Widen weekly score distribution (full 14-indicator pipeline) | ✅ Merged & re-scored |
 
 ## Key Decisions
 <!-- Recent trade-offs and choices that affect future work -->
@@ -25,6 +25,6 @@ _No active task._
 
 ## Next Up
 <!-- Known upcoming tasks or follow-ups -->
-- Deploy: run migration script, then `run_scorer.py --force` to populate calibrated_score
+- Run `python3 scripts/run_scorer.py --force` to populate calibrated_score now that migration is done
 - Re-run scatter plot to verify improved correlation (target: R > 0.4)
 - Monitor calibrated_score distribution and quintile separation
