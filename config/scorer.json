@@ -43,8 +43,8 @@
     "forward_days": 10
   },
   "signal_thresholds": {
-    "bullish": 20,
-    "bearish": -20
+    "bullish": 2,
+    "bearish": -2
   },
   "confidence_modifiers": {
     "timeframe_agree": 10,

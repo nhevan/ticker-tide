@@ -520,3 +520,66 @@ class TestHandleScatterCommand:
         mock_send.assert_called_once()
         mock_msg.assert_called_once()
         assert "❌" in mock_msg.call_args[0][2]
+
+
+# ---------------------------------------------------------------------------
+# compute_ic
+# ---------------------------------------------------------------------------
+
+class TestComputeIc:
+    def test_perfect_positive_correlation_returns_ic_one(self) -> None:
+        from src.notifier.scatter_command import compute_ic
+
+        xs = [0.1, 0.3, 0.5, 0.7, 0.9]
+        ys = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+        result = compute_ic(xs, ys)
+
+        assert result is not None
+        assert result["ic"] == pytest.approx(1.0, abs=0.01)
+        assert result["p_value"] < 0.05
+        assert result["n"] == 5
+
+    def test_perfect_negative_correlation_returns_ic_minus_one(self) -> None:
+        from src.notifier.scatter_command import compute_ic
+
+        xs = [0.9, 0.7, 0.5, 0.3, 0.1]
+        ys = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+        result = compute_ic(xs, ys)
+
+        assert result is not None
+        assert result["ic"] == pytest.approx(-1.0, abs=0.01)
+
+    def test_returns_none_when_fewer_than_3_points(self) -> None:
+        from src.notifier.scatter_command import compute_ic
+
+        assert compute_ic([0.1, 0.5], [1.0, 2.0]) is None
+
+    def test_returns_none_when_empty(self) -> None:
+        from src.notifier.scatter_command import compute_ic
+
+        assert compute_ic([], []) is None
+
+    def test_returns_none_when_all_x_are_same(self) -> None:
+        from src.notifier.scatter_command import compute_ic
+
+        xs = [0.5, 0.5, 0.5, 0.5]
+        ys = [1.0, 2.0, 3.0, 4.0]
+
+        assert compute_ic(xs, ys) is None
+
+    def test_returns_dict_with_ic_p_value_and_n(self) -> None:
+        from src.notifier.scatter_command import compute_ic
+
+        xs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+        ys = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
+
+        result = compute_ic(xs, ys)
+
+        assert result is not None
+        assert "ic" in result
+        assert "p_value" in result
+        assert result["n"] == 8
+        assert 0.0 <= result["p_value"] <= 1.0
+        assert -1.0 <= result["ic"] <= 1.0

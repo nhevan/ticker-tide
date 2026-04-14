@@ -914,7 +914,7 @@ An interactive Telegram bot (`python-telegram-bot`) that responds to subscriber 
 | Command | Description |
 |---|---|
 | `/detail <TICKER> [days]` | Sends a 4-panel technical chart image + AI summary for the ticker |
-| `/scatter N [TICKER] [days_back]` | Sends a confidence vs N-day forward return scatter plot; BEARISH returns inverted so correct bearish calls appear positive; per-signal-type regression lines via `np.polyfit` |
+| `/scatter N [TICKER] [days_back]` | Sends a predicted vs actual excess return scatter plot; X-axis is a signed confidence score (`calibrated_score` or `final_score/100`), Y-axis is the raw N-day excess return vs SPY; per-signal-type regression lines via `np.polyfit`; IC (Information Coefficient = Spearman rank correlation) annotated in upper-right text box |
 | `/tickers` | Lists all watched tickers grouped by sector |
 | `/start` | Welcome message |
 | `/help` | Lists available commands |
@@ -923,8 +923,10 @@ The `/detail` flow calls `generate_chart()` to produce the image, then `cleanup_
 the temporary file after delivery.
 
 The `/scatter` flow calls `fetch_signals_with_forward_returns()` (finds the Nth future trading-day
-close using `LIMIT 1 OFFSET N-1` against `ohlcv_daily`) and `generate_scatter_chart()` (dark-mode
-matplotlib scatter, dots colored green/red/gray by signal type, one regression line per type),
+close using `LIMIT 1 OFFSET N-1` against `ohlcv_daily`, computes excess return vs SPY) and
+`generate_scatter_chart()` (dark-mode matplotlib scatter, dots colored green/red/gray by signal
+type, one regression line per type, IC annotation text box in upper-right corner showing Spearman
+rank correlation, p-value, and sample count),
 then deletes the temp PNG after delivery.
 
 #### Chart Generator (`src/notifier/chart_generator.py`)

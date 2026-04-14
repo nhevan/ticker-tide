@@ -31,6 +31,7 @@ from typing import Optional
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.stats import spearmanr
 
 from src.common.progress import send_telegram_message
 from src.notifier.detail_command import send_photo_to_chat
@@ -297,6 +298,48 @@ def fetch_signals_with_forward_returns(
 
 
 # ---------------------------------------------------------------------------
+# Information Coefficient computation
+# ---------------------------------------------------------------------------
+
+def compute_ic(
+    xs: list[float],
+    ys: list[float],
+) -> Optional[dict]:
+    """
+    Compute the Information Coefficient (IC) as Spearman rank correlation.
+
+    IC is the standard quant finance metric for signal predictive power.
+    A positive IC means higher signed-confidence scores predict higher returns.
+    Uses Spearman (rank-based) rather than Pearson to handle non-linearity
+    and outliers robustly.
+
+    Parameters:
+        xs: List of signed confidence scores (X-axis values).
+        ys: List of forward return values (Y-axis values).
+
+    Returns:
+        Dict with keys ic (float), p_value (float), n (int), or None if there
+        are fewer than 3 data points or zero variance in either series.
+    """
+    if len(xs) < 3 or len(ys) < 3:
+        return None
+
+    x_arr = np.array(xs)
+    y_arr = np.array(ys)
+
+    if np.std(x_arr) == 0 or np.std(y_arr) == 0:
+        return None
+
+    corr_result = spearmanr(x_arr, y_arr)
+    # SpearmanrResult is a named tuple; index 0 = correlation, index 1 = pvalue
+    # across all scipy versions.
+    ic = float(corr_result[0])
+    p_value = float(corr_result[1])
+
+    return {"ic": ic, "p_value": p_value, "n": len(xs)}
+
+
+# ---------------------------------------------------------------------------
 # Chart generation
 # ---------------------------------------------------------------------------
 
@@ -334,6 +377,7 @@ def generate_scatter_chart(
         _render_empty_chart(ax, n_days, ticker_filter, days_back)
     else:
         _render_scatter_with_regression(ax, data, n_days)
+        _render_ic_annotation(ax, data)
         _apply_axis_labels(ax, n_days, ticker_filter, days_back, len(data), data=data)
 
     _apply_common_style(ax)
@@ -417,6 +461,62 @@ def _render_scatter_with_regression(
         ref_range = np.linspace(xy_min, xy_max, 100)
         ax.plot(ref_range, ref_range, color="#555577", linewidth=1.0, linestyle=":",
                 alpha=0.6, zorder=2, label="Perfect prediction")
+
+
+def _render_ic_annotation(
+    ax: plt.Axes,
+    data: list[dict],
+) -> None:
+    """
+    Draw an IC (Information Coefficient) text box in the upper-right corner.
+
+    IC is the Spearman rank correlation between signed_confidence (X) and
+    forward_return_pct (Y). Shows IC value, p-value, and sample count.
+    Color-coded: green for IC > 0.1 (useful signal), red for IC < -0.1
+    (signal is inverted), grey for near-zero (no predictive power).
+
+    Parameters:
+        ax: Matplotlib axes to annotate.
+        data: Signal data dicts with signed_confidence and forward_return_pct keys.
+    """
+    xs = [row["signed_confidence"] for row in data]
+    ys = [row["forward_return_pct"] for row in data]
+
+    ic_result = compute_ic(xs, ys)
+    if ic_result is None:
+        return
+
+    ic = ic_result["ic"]
+    p_value = ic_result["p_value"]
+    n = ic_result["n"]
+
+    if ic > 0.1:
+        ic_color = "#4caf50"
+    elif ic < -0.1:
+        ic_color = "#ef5350"
+    else:
+        ic_color = "#aaaacc"
+
+    text = f"IC  = {ic:+.2f}\np   = {p_value:.3f}\nn   = {n}"
+
+    ax.text(
+        0.98,
+        0.97,
+        text,
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=10,
+        color=ic_color,
+        fontfamily="monospace",
+        bbox=dict(
+            boxstyle="round,pad=0.4",
+            facecolor="#2a2a4a",
+            edgecolor="#3a3a5a",
+            alpha=0.9,
+        ),
+        zorder=5,
+    )
 
 
 def _apply_axis_labels(

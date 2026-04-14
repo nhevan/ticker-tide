@@ -108,7 +108,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/notifier/telegram.py` | Telegram send/edit helpers |
 | `src/notifier/bot.py` | Long-polling bot; `/detail`, `/scatter`, `/tickers`, `/help` handlers; logs every incoming command to `telegram_message_log` |
 | `src/notifier/tickers_command.py` | `/tickers` Telegram bot command handler; logs invocations to `telegram_message_log` |
-| `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward excess returns (vs SPY), plots calibrated_score (predicted) vs actual excess return scatter chart, sends PNG via Telegram |
+| `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward excess returns (vs SPY), plots calibrated_score (predicted) vs actual excess return scatter chart with IC annotation (Spearman rank correlation via `compute_ic()`), sends PNG via Telegram |
 
 ### Module dependency graph
 
