@@ -251,11 +251,18 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 ### Signal Classification
 Uses `calibrated_score` (rolling ridge predicted excess return in %) when available
 (>= 30 training samples); falls back to static `final_score` during cold start.
-- Score >= bullish_threshold (config: +20) → BULLISH
-- Score <= bearish_threshold (config: -20) → BEARISH
+- Score >= bullish_threshold (config: +2) → BULLISH
+- Score <= bearish_threshold (config: -2) → BEARISH
 - Otherwise → NEUTRAL
 
-### Confidence Modifiers (applied to base = |final_score|):
+### Confidence Calculation
+
+**Base score:** `abs(raw_composite_score)` — the pre-calibration ±100 composite score. This keeps
+the confidence base on the scale the modifiers were designed for (30–70 typical). The
+`calibrated_score` (predicted excess return %, range ≈ ±8) is used only for signal classification
+and ranking; it is not used as the confidence base.
+
+**Modifiers** (applied to base):
 | Modifier | Condition | Value |
 |---|---|---|
 | timeframe_agree | Daily and weekly both same direction | +10 |
@@ -311,7 +318,8 @@ Final confidence is clamped to [0, 100].
     return for current signal → `calibrated_score`. Falls back to None (cold start)
     if fewer than `min_training_samples` are available.
 11. Classify signal using `calibrated_score` if available, otherwise static composite.
-12. Compute confidence + modifiers; build data_completeness and key_signals.
+12. Compute confidence: base = `abs(raw_composite_score)` (pre-calibration ±100 scale) + modifiers.
+    Build data_completeness and key_signals.
 13. Save to `scores_daily` (INSERT OR REPLACE) — includes `calibrated_score`,
     `raw_composite_score`, `model_r2`.
 14. Detect and save any signal flip to `signal_flips`.

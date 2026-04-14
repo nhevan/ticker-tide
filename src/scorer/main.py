@@ -678,8 +678,11 @@ def score_ticker(
         "SELECT 1 FROM filings_8k WHERE ticker = ? LIMIT 1", (ticker,)
     ).fetchone()
 
+    # Use raw_composite_score (±100 scale) as confidence base so that modifiers
+    # (designed for a 30-70 base) operate on the correct scale. effective_score
+    # (calibrated_score ≈ ±8) is used only for signal classification above.
     confidence_result = compute_full_confidence(
-        final_score=effective_score,
+        final_score=final_score,
         daily_score=daily_score,
         weekly_score=weekly_score,
         category_scores=category_scores,
