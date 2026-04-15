@@ -423,9 +423,9 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
              daily_score, weekly_score, trend_score, momentum_score,
              volume_score, volatility_score, candlestick_score, structural_score,
              sentiment_score, fundamental_score, macro_score,
-             calibrated_score, raw_composite_score, model_r2,
+             calibrated_score, model_r2,
              data_completeness, key_signals)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score["ticker"],
@@ -446,7 +446,6 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
             score.get("fundamental_score"),
             score.get("macro_score"),
             score.get("calibrated_score"),
-            score.get("raw_composite_score"),
             score.get("model_r2"),
             data_completeness,
             key_signals,
@@ -678,9 +677,9 @@ def score_ticker(
         "SELECT 1 FROM filings_8k WHERE ticker = ? LIMIT 1", (ticker,)
     ).fetchone()
 
-    # Use raw_composite_score (±100 scale) as confidence base so that modifiers
+    # Use final_score (±100 scale) as confidence base so that modifiers
     # (designed for a 30-70 base) operate on the correct scale. effective_score
-    # (calibrated_score ≈ ±8) is used only for signal classification above.
+    # (calibrated_score ≈ ±2-15%) is used only for signal classification above.
     confidence_result = compute_full_confidence(
         final_score=final_score,
         daily_score=daily_score,
@@ -722,7 +721,7 @@ def score_ticker(
         "date": scoring_date,
         "signal": signal,
         "confidence": confidence_result["confidence"],
-        "final_score": effective_score,
+        "final_score": final_score,
         "regime": regime,
         "daily_score": daily_score,
         "weekly_score": weekly_score,
@@ -736,7 +735,6 @@ def score_ticker(
         "fundamental_score": category_scores.get("fundamental"),
         "macro_score": category_scores.get("macro"),
         "calibrated_score": calibrated_score,
-        "raw_composite_score": final_score,
         "model_r2": model_r2,
         "data_completeness": json.dumps(data_completeness),
         "key_signals": json.dumps(key_signals),
@@ -747,8 +745,8 @@ def score_ticker(
 
     logger.info(
         f"{ticker}: {signal} (confidence={confidence_result['confidence']:.0f}%, "
-        f"final_score={effective_score:.1f}, calibrated={calibrated_score}, "
-        f"raw_composite={final_score:.1f}) on {scoring_date}"
+        f"final_score={final_score:.1f}, calibrated={calibrated_score}, "
+        f"effective={effective_score:.1f}) on {scoring_date}"
     )
     return score
 

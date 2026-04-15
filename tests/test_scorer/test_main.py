@@ -305,6 +305,70 @@ class TestScoreTicker:
         )
         assert result is None
 
+    def test_final_score_is_raw_composite_not_calibrated(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """final_score must be the ±100 merged composite, never the calibrated value.
+
+        When calibration returns a warm result (small predicted excess return),
+        final_score in the returned dict must still be the raw timeframe-merged
+        composite (±100 scale), not the calibrated_score (≈ ±2-15% scale).
+        """
+        from unittest.mock import patch
+        from src.scorer.main import score_ticker
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        fake_calibrated = 4.37  # typical calibrated scale (≈ ±2–15%)
+        with patch(
+            "src.scorer.main.calibrate_score",
+            return_value={"calibrated_score": fake_calibrated, "model_r2": 0.42, "weights": None},
+        ):
+            result = score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert result is not None
+        # final_score must be on the ±100 scale — NOT the calibrated_score
+        assert result["final_score"] != fake_calibrated, (
+            "final_score must not be the calibrated_score value"
+        )
+        assert abs(result["final_score"]) <= 100.0, (
+            f"final_score={result['final_score']} is outside the ±100 range"
+        )
+        # calibrated_score is preserved separately
+        assert result["calibrated_score"] == fake_calibrated
+
+    def test_raw_composite_score_key_absent(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """raw_composite_score must NOT appear in the score dict returned by score_ticker.
+
+        It was a redundant patch column. final_score now carries that value.
+        """
+        from src.scorer.main import score_ticker
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        result = score_ticker(
+            db_conn=db_connection,
+            ticker="AAPL",
+            ticker_config=SAMPLE_TICKER_CONFIG,
+            scoring_date=SCORING_DATE,
+            config=SAMPLE_CONFIG,
+        )
+
+        assert result is not None
+        assert "raw_composite_score" not in result, (
+            "raw_composite_score is a removed column and must not appear in the score dict"
+        )
+
 
 # ---------------------------------------------------------------------------
 # run_scorer

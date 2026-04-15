@@ -682,10 +682,15 @@ def check_signal_score_consistency(
     scoring_date: str,
 ) -> CheckResult:
     """
-    Verify that BULLISH signals have positive final_score and BEARISH have negative.
+    Verify that BULLISH signals have a positive score and BEARISH signals have a negative score.
 
-    A BULLISH signal with final_score <= 0, or a BEARISH signal with
-    final_score >= 0, indicates an inconsistency between signal and score.
+    Uses calibrated_score as the arbiter when it is non-NULL, because signal
+    classification is driven by effective_score = calibrated_score when available.
+    Falls back to final_score (the ±100 merged composite) when calibrated_score is NULL.
+
+    This correctly handles the case where calibration is warm: calibrated_score
+    (≈ ±2–15% predicted excess return) may have the opposite sign to final_score,
+    and the signal follows calibrated_score, not final_score.
 
     Args:
         db_conn: Open SQLite connection.
@@ -695,29 +700,39 @@ def check_signal_score_consistency(
         CheckResult with "warn" if inconsistencies exist, "pass" otherwise.
     """
     rows = db_conn.execute(
-        "SELECT ticker, signal, final_score FROM scores_daily "
-        "WHERE date = ? AND final_score IS NOT NULL AND signal IS NOT NULL",
+        "SELECT ticker, signal, final_score, calibrated_score FROM scores_daily "
+        "WHERE date = ? AND signal IS NOT NULL",
         (scoring_date,),
     ).fetchall()
 
     issues: list[str] = []
     for row in rows:
         signal = row["signal"]
-        score = row["final_score"]
+        # Use calibrated_score when available — that is what drove the signal.
+        # Fall back to final_score when calibration was cold / disabled.
+        if row["calibrated_score"] is not None:
+            score = row["calibrated_score"]
+            score_label = f"calibrated_score={score:.2f}"
+        elif row["final_score"] is not None:
+            score = row["final_score"]
+            score_label = f"final_score={score:.2f}"
+        else:
+            continue  # no score available — skip this row
+
         if signal == "BULLISH" and score <= 0:
             issues.append(
-                f"{row['ticker']}: BULLISH signal but final_score={score:.2f} <= 0"
+                f"{row['ticker']}: BULLISH signal but {score_label} <= 0"
             )
         elif signal == "BEARISH" and score >= 0:
             issues.append(
-                f"{row['ticker']}: BEARISH signal but final_score={score:.2f} >= 0"
+                f"{row['ticker']}: BEARISH signal but {score_label} >= 0"
             )
 
     if issues:
         return CheckResult(
             name="signal_score_consistency",
             status="warn",
-            message=f"{len(issues)} ticker(s) have signal inconsistent with final_score",
+            message=f"{len(issues)} ticker(s) have signal inconsistent with score",
             details=issues,
         )
     return CheckResult(

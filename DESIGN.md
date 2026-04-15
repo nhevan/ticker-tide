@@ -250,17 +250,17 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 
 ### Signal Classification
 Uses `calibrated_score` (rolling ridge predicted excess return in %) when available
-(>= 30 training samples); falls back to static `final_score` during cold start.
+(>= 30 training samples); falls back to `final_score` during cold start.
 - Score >= bullish_threshold (config: +2) → BULLISH
 - Score <= bearish_threshold (config: -2) → BEARISH
 - Otherwise → NEUTRAL
 
 ### Confidence Calculation
 
-**Base score:** `abs(raw_composite_score)` — the pre-calibration ±100 composite score. This keeps
+**Base score:** `abs(final_score)` — the ±100 merged timeframe composite. This keeps
 the confidence base on the scale the modifiers were designed for (30–70 typical). The
-`calibrated_score` (predicted excess return %, range ≈ ±8) is used only for signal classification
-and ranking; it is not used as the confidence base.
+`calibrated_score` (predicted excess return %, range ≈ ±2–15%) is used only for signal
+classification and ranking; it is not used as the confidence base.
 
 **Modifiers** (applied to base):
 | Modifier | Condition | Value |
@@ -317,11 +317,12 @@ Final confidence is clamped to [0, 100].
     (6 category scores + 6 raw indicators + 3 EMA spreads), predict expected excess
     return for current signal → `calibrated_score`. Falls back to None (cold start)
     if fewer than `min_training_samples` are available.
-11. Classify signal using `calibrated_score` if available, otherwise static composite.
-12. Compute confidence: base = `abs(raw_composite_score)` (pre-calibration ±100 scale) + modifiers.
+11. Classify signal using `calibrated_score` if available, otherwise `final_score`. `effective_score`
+    is a local variable only — it is never persisted.
+12. Compute confidence: base = `abs(final_score)` (±100 scale) + modifiers.
     Build data_completeness and key_signals.
-13. Save to `scores_daily` (INSERT OR REPLACE) — includes `calibrated_score`,
-    `raw_composite_score`, `model_r2`.
+13. Save to `scores_daily` (INSERT OR REPLACE) — `final_score` always holds the ±100 composite;
+    `calibrated_score` holds the ridge prediction (or NULL); `model_r2` holds the training R².
 14. Detect and save any signal flip to `signal_flips`.
 
 **Entry point script:** `scripts/run_scorer.py` with `--ticker` (optional), `--historical` (flag), `--db-path` (optional).
@@ -607,12 +608,14 @@ Enable WAL mode on connection.
 - ticker TEXT NOT NULL, date TEXT NOT NULL
 - signal TEXT (BULLISH/BEARISH/NEUTRAL)
 - confidence REAL (0-100)
-- final_score REAL (-100 to +100)
+- final_score REAL — **always** the ±100 merged timeframe composite (daily×weight + weekly×weight). Never stores the calibrated value.
 - regime TEXT (trending/ranging/volatile)
 - daily_score REAL, weekly_score REAL
 - trend_score REAL, momentum_score REAL, volume_score REAL
 - volatility_score REAL, candlestick_score REAL, structural_score REAL
 - sentiment_score REAL, fundamental_score REAL, macro_score REAL
+- calibrated_score REAL — ridge regression predicted excess return (≈ ±2–15%), or NULL during cold start / when calibration is disabled
+- model_r2 REAL
 - data_completeness TEXT (JSON)
 - key_signals TEXT (JSON array)
 - UNIQUE(ticker, date)
@@ -922,7 +925,7 @@ An interactive Telegram bot (`python-telegram-bot`) that responds to subscriber 
 | Command | Description |
 |---|---|
 | `/detail <TICKER> [days]` | Sends a 4-panel technical chart image + AI summary for the ticker |
-| `/scatter N [TICKER] [days_back]` | Sends a predicted vs actual excess return scatter plot; X-axis is a signed confidence score (`calibrated_score` or `final_score/100`), Y-axis is the raw N-day excess return vs SPY; per-signal-type regression lines via `np.polyfit`; IC (Information Coefficient = Spearman rank correlation) annotated in upper-right text box |
+| `/scatter N [TICKER] [days_back]` | Sends a predicted vs actual excess return scatter plot; X-axis is a signed confidence score (`calibrated_score` when available, otherwise `final_score/100`), Y-axis is the raw N-day excess return vs SPY; per-signal-type regression lines via `np.polyfit`; IC (Information Coefficient = Spearman rank correlation) annotated in upper-right text box |
 | `/tickers` | Lists all watched tickers grouped by sector |
 | `/start` | Welcome message |
 | `/help` | Lists available commands |

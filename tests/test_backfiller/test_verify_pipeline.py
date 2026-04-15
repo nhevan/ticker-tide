@@ -174,6 +174,26 @@ def _insert_score(
     conn.commit()
 
 
+def _insert_score_with_calibrated(
+    conn: sqlite3.Connection,
+    ticker: str,
+    date_str: str,
+    signal: str = "NEUTRAL",
+    confidence: float = 50.0,
+    final_score: float = 0.0,
+    calibrated_score: float | None = None,
+) -> None:
+    """Insert a scores_daily row including calibrated_score for consistency-check tests."""
+    conn.execute(
+        "INSERT OR REPLACE INTO scores_daily "
+        "(ticker, date, signal, confidence, final_score, calibrated_score, regime, "
+        "data_completeness, key_signals) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'trending', '{}', '[]')",
+        (ticker, date_str, signal, confidence, final_score, calibrated_score),
+    )
+    conn.commit()
+
+
 def _insert_pattern(
     conn: sqlite3.Connection,
     ticker: str,
@@ -709,6 +729,37 @@ class TestCheckSignalScoreConsistency:
         assert result.status in ("warn", "fail")
         assert result.details is not None
         assert any("AAPL" in d for d in result.details)
+
+    def test_bullish_via_calibrated_score_not_flagged(self, db_connection: sqlite3.Connection) -> None:
+        """BULLISH signal driven by calibrated_score must NOT be flagged even if final_score <= 0.
+
+        When calibration is warm, the signal is classified from calibrated_score
+        (the ridge regression prediction). final_score is the raw ±100 composite
+        which can legitimately disagree in sign. The consistency check must use
+        calibrated_score as the arbiter when it is non-NULL.
+        """
+        _insert_score_with_calibrated(
+            db_connection, "AAPL", "2026-01-02",
+            signal="BULLISH",
+            final_score=-12.0,     # raw composite is slightly negative
+            calibrated_score=4.5,  # calibration says positive excess return → BULLISH
+        )
+        result = check_signal_score_consistency(db_connection, "2026-01-02")
+        assert result.status == "pass", (
+            f"Expected pass when calibrated_score drives the BULLISH signal, got: {result.status}. "
+            f"Details: {result.details}"
+        )
+
+    def test_no_calibrated_score_falls_back_to_final_score(self, db_connection: sqlite3.Connection) -> None:
+        """When calibrated_score is NULL, final_score is used for consistency check."""
+        _insert_score_with_calibrated(
+            db_connection, "AAPL", "2026-01-02",
+            signal="BULLISH",
+            final_score=35.0,
+            calibrated_score=None,  # cold start — no calibration
+        )
+        result = check_signal_score_consistency(db_connection, "2026-01-02")
+        assert result.status == "pass"
 
 
 class TestCheckSignalDistribution:
