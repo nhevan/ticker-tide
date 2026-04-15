@@ -7,11 +7,12 @@ of recent signals and their realized 10-day excess returns (vs SPY),
 then uses the learned weights to predict the current signal's expected
 return.
 
-Features (16 total):
+Features (17 total):
   6 category scores  — trend, momentum, volume, volatility, fundamental, macro
   6 raw indicators   — RSI, ADX, MACD histogram, Stochastic %K, BB %B, CMF
   3 EMA positions    — price-EMA9, EMA9-EMA21, EMA21-EMA50 spreads (%)
   1 weekly score     — prior-week composite score (same scale as category scores)
+  1 monthly score    — prior-month composite score (same scale as category scores)
 
 Config keys (under scorer.json → "calibration"):
   enabled             — master switch (bool)
@@ -42,6 +43,7 @@ FEATURE_NAMES: list[str] = [
     "rsi_14", "adx", "macd_histogram", "stoch_k", "bb_pctb", "cmf_20",
     "price_ema9_spread", "ema9_ema21_spread", "ema21_ema50_spread",
     "weekly_score",
+    "monthly_score",
 ]
 
 
@@ -54,10 +56,12 @@ def build_feature_vector(
     raw_indicators: dict,
     ema_positions: dict,
     weekly_score: Optional[float] = None,
+    monthly_score: Optional[float] = None,
 ) -> list[float]:
     """
-    Assemble a 16-element feature vector from scored categories, raw
-    indicator values, EMA position spreads, and the weekly composite score.
+    Assemble a 17-element feature vector from scored categories, raw
+    indicator values, EMA position spreads, the weekly composite score,
+    and the monthly composite score.
 
     None values are replaced with 0.0 so the model always receives a
     complete numeric vector.
@@ -71,9 +75,11 @@ def build_feature_vector(
                          ema21_ema50_spread — each a float.
         weekly_score:    Prior-week composite score (same scale as category
                          scores, not divided by 100). None → 0.0.
+        monthly_score:   Prior-month composite score (same scale as category
+                         scores, not divided by 100). None → 0.0.
 
     Returns:
-        List of 16 floats in the canonical feature order.
+        List of 17 floats in the canonical feature order.
     """
     def _safe(val: Optional[float]) -> float:
         return float(val) if val is not None else 0.0
@@ -95,6 +101,7 @@ def build_feature_vector(
         _safe(ema_positions.get("ema9_ema21_spread")),
         _safe(ema_positions.get("ema21_ema50_spread")),
         _safe(weekly_score),
+        _safe(monthly_score),
     ]
 
 
@@ -257,7 +264,7 @@ def fetch_training_data(
         SELECT s.ticker, s.date,
                s.trend_score, s.momentum_score, s.volume_score,
                s.volatility_score, s.fundamental_score, s.macro_score,
-               s.weekly_score,
+               s.weekly_score, s.monthly_score,
                i.rsi_14, i.adx, i.macd_histogram, i.stoch_k, i.bb_pctb, i.cmf_20,
                i.ema_9, i.ema_21, i.ema_50,
                o_sig.close AS signal_close
@@ -274,7 +281,7 @@ def fetch_training_data(
     ).fetchall()
 
     if not rows:
-        return np.empty((0, 16)), np.empty(0)
+        return np.empty((0, 17)), np.empty(0)
 
     X_list: list[list[float]] = []
     y_list: list[float] = []
@@ -348,12 +355,13 @@ def fetch_training_data(
         features = build_feature_vector(
             category_scores, raw_indicators, ema_positions,
             weekly_score=row["weekly_score"],
+            monthly_score=row["monthly_score"],
         )
         X_list.append(features)
         y_list.append(excess)
 
     if not X_list:
-        return np.empty((0, 16)), np.empty(0)
+        return np.empty((0, 17)), np.empty(0)
 
     return np.array(X_list), np.array(y_list)
 
@@ -370,6 +378,7 @@ def calibrate_score(
     ema_positions: dict,
     config: dict,
     weekly_score: Optional[float] = None,
+    monthly_score: Optional[float] = None,
 ) -> dict:
     """
     Calibrate the current signal using a rolling ridge regression.
@@ -391,6 +400,8 @@ def calibrate_score(
         ema_positions:    Dict of 3 EMA position spreads.
         config:           Calibration config dict (from scorer.json["calibration"]).
         weekly_score:     Prior-week composite score (same scale as category scores).
+                          None → 0.0 in the feature vector.
+        monthly_score:    Prior-month composite score (same scale as category scores).
                           None → 0.0 in the feature vector.
 
     Returns:
@@ -420,7 +431,9 @@ def calibrate_score(
 
     # Build feature vector for the current signal
     x_new = np.array(build_feature_vector(
-        category_scores, raw_indicators, ema_positions, weekly_score=weekly_score,
+        category_scores, raw_indicators, ema_positions,
+        weekly_score=weekly_score,
+        monthly_score=monthly_score,
     ))
 
     # Train and predict

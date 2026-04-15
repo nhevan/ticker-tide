@@ -325,6 +325,7 @@ def build_data_completeness(
     filings_available: bool,
     short_interest_available: bool,
     earnings_available: bool,
+    monthly_available: bool = False,
 ) -> dict:
     """
     Build a dict describing which data sources were available for this score.
@@ -339,6 +340,7 @@ def build_data_completeness(
         filings_available: Whether 8-K SEC filing data was available.
         short_interest_available: Whether short interest data was available.
         earnings_available: Whether earnings calendar data was available.
+        monthly_available: Whether monthly indicator data was available.
 
     Returns:
         Dict with boolean values for each data source.
@@ -347,6 +349,7 @@ def build_data_completeness(
         "news": news_available,
         "fundamentals": fundamentals_available,
         "weekly": weekly_available,
+        "monthly": monthly_available,
         "filings": filings_available,
         "short_interest": short_interest_available,
         "earnings": earnings_available,

@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from src.scorer.timeframe_merger import compute_weekly_score, merge_timeframes
+from src.scorer.timeframe_merger import compute_monthly_score, compute_weekly_score, merge_timeframes
 
 
 SAMPLE_CONFIG = {
@@ -492,3 +492,266 @@ class TestMergeTimeframes:
         result_default = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG)
         result_ranging = merge_timeframes(daily_score=60.0, weekly_score=50.0, config=SAMPLE_CONFIG, regime="ranging")
         assert result_default == pytest.approx(result_ranging, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# 3-way merge config (daily + weekly + monthly)
+# ---------------------------------------------------------------------------
+
+SAMPLE_CONFIG_3WAY = {
+    "timeframe_weights": {
+        "trending": {"daily": 0.10, "weekly": 0.50, "monthly": 0.40},
+        "ranging":  {"daily": 0.60, "weekly": 0.30, "monthly": 0.10},
+        "volatile": {"daily": 0.25, "weekly": 0.45, "monthly": 0.30},
+    },
+    "weekly_adaptive_weights": {
+        "trending": {"trend": 0.45, "momentum": 0.25, "volume": 0.15, "volatility": 0.15},
+        "ranging":  {"trend": 0.20, "momentum": 0.40, "volume": 0.20, "volatility": 0.20},
+        "volatile": {"trend": 0.30, "momentum": 0.25, "volume": 0.15, "volatility": 0.30},
+    },
+    "monthly_adaptive_weights": {
+        "trending": {"trend": 0.45, "momentum": 0.25, "volume": 0.15, "volatility": 0.15},
+        "ranging":  {"trend": 0.20, "momentum": 0.40, "volume": 0.20, "volatility": 0.20},
+        "volatile": {"trend": 0.30, "momentum": 0.25, "volume": 0.15, "volatility": 0.30},
+    },
+    "scoring": {"score_expansion_factor": 1.5},
+}
+
+
+def _make_monthly_db(tmp_path, rows: list[dict]) -> sqlite3.Connection:
+    """
+    Build a SQLite connection with monthly_candles + indicators_monthly for
+    compute_monthly_score tests.
+    """
+    db_path = tmp_path / "monthly_test.db"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        """CREATE TABLE monthly_candles (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            open REAL, high REAL, low REAL, close REAL, volume REAL,
+            UNIQUE(ticker, month_start)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE indicators_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            ema_9 REAL, ema_21 REAL, ema_50 REAL,
+            macd_line REAL, macd_signal REAL, macd_histogram REAL,
+            adx REAL,
+            rsi_14 REAL,
+            stoch_k REAL, stoch_d REAL,
+            cci_20 REAL, williams_r REAL,
+            obv REAL, cmf_20 REAL, ad_line REAL,
+            bb_upper REAL, bb_lower REAL, bb_pctb REAL,
+            atr_14 REAL,
+            keltner_upper REAL, keltner_lower REAL,
+            UNIQUE(ticker, month_start)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE indicator_profiles (
+            ticker TEXT NOT NULL,
+            indicator TEXT NOT NULL,
+            p5 REAL, p20 REAL, p50 REAL, p80 REAL, p95 REAL,
+            mean REAL, std REAL,
+            window_start TEXT, window_end TEXT, computed_at TEXT,
+            UNIQUE(ticker, indicator)
+        )"""
+    )
+
+    indicator_cols = [
+        "ema_9", "ema_21", "ema_50", "macd_line", "macd_signal", "macd_histogram",
+        "adx", "rsi_14", "stoch_k", "stoch_d", "cci_20", "williams_r",
+        "obv", "cmf_20", "ad_line", "bb_upper", "bb_lower", "bb_pctb",
+        "atr_14", "keltner_upper", "keltner_lower",
+    ]
+
+    for row_dict in rows:
+        month_start = row_dict["month_start"]
+        close = row_dict["close"]
+        conn.execute(
+            "INSERT INTO monthly_candles(ticker, month_start, close) VALUES (?, ?, ?)",
+            ("QQQ", month_start, close),
+        )
+        values = [row_dict.get(col) for col in indicator_cols]
+        placeholders = ", ".join(["?"] * len(indicator_cols))
+        col_names = ", ".join(indicator_cols)
+        conn.execute(
+            f"INSERT INTO indicators_monthly(ticker, month_start, {col_names}) "
+            f"VALUES (?, ?, {placeholders})",
+            ("QQQ", month_start, *values),
+        )
+    conn.commit()
+    return conn
+
+
+_MONTHLY_BULLISH = {
+    "month_start": "2025-12-01",
+    "close": 520.0,
+    "ema_9": 515.0, "ema_21": 505.0, "ema_50": 490.0,
+    "macd_line": 5.0, "macd_histogram": 3.0,
+    "adx": 35.0,
+    "rsi_14": 28.0,
+    "stoch_k": 15.0, "cci_20": -120.0, "williams_r": -88.0,
+    "obv": 1_000_000.0, "cmf_20": 0.25, "ad_line": 500_000.0,
+    "bb_pctb": 0.15, "atr_14": 8.0,
+}
+
+_MONTHLY_BEARISH = {
+    "month_start": "2025-12-01",
+    "close": 480.0,
+    "ema_9": 485.0, "ema_21": 495.0, "ema_50": 510.0,
+    "macd_line": -5.0, "macd_histogram": -3.0,
+    "adx": 35.0,
+    "rsi_14": 78.0,
+    "stoch_k": 85.0, "cci_20": 150.0, "williams_r": -10.0,
+    "obv": 1_000_000.0, "cmf_20": -0.25, "ad_line": 500_000.0,
+    "bb_pctb": 0.9, "atr_14": 8.0,
+}
+
+
+class TestComputeMonthlyScore:
+    """Tests for compute_monthly_score — monthly timeframe indicator scoring."""
+
+    def test_bullish_indicators_produce_positive_score(self, tmp_path) -> None:
+        """Strongly bullish monthly indicators should produce a positive score."""
+        conn = _make_monthly_db(tmp_path, [_MONTHLY_BULLISH])
+        score = compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY, scoring_date="2025-12-15")
+        assert score is not None
+        assert score > 0, f"Bullish monthly indicators should produce positive score, got {score:.2f}"
+
+    def test_bearish_indicators_produce_negative_score(self, tmp_path) -> None:
+        """Strongly bearish monthly indicators should produce a negative score."""
+        conn = _make_monthly_db(tmp_path, [_MONTHLY_BEARISH])
+        score = compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY, scoring_date="2025-12-15")
+        assert score is not None
+        assert score < 0, f"Bearish monthly indicators should produce negative score, got {score:.2f}"
+
+    def test_no_monthly_data_returns_none(self, tmp_path) -> None:
+        """When no monthly data exists, compute_monthly_score returns None."""
+        conn = _make_monthly_db(tmp_path, [])
+        score = compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY, scoring_date="2025-12-15")
+        assert score is None
+
+    def test_scoring_date_before_any_monthly_data_returns_none(self, tmp_path) -> None:
+        """Scoring date before earliest month_start returns None (no look-ahead)."""
+        conn = _make_monthly_db(tmp_path, [_MONTHLY_BULLISH])
+        score = compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY, scoring_date="2025-11-01")
+        assert score is None
+
+    def test_scoring_date_on_month_start_uses_that_candle(self, tmp_path) -> None:
+        """scoring_date == month_start should use that candle."""
+        rows = [
+            {"month_start": "2025-11-01", "close": 480.0,
+             "ema_9": 485.0, "ema_21": 495.0, "ema_50": 510.0},
+            {"month_start": "2025-12-01", "close": 520.0,
+             "ema_9": 515.0, "ema_21": 505.0, "ema_50": 490.0},
+        ]
+        conn = _make_monthly_db(tmp_path, rows)
+        score_nov = compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY, scoring_date="2025-11-15")
+        score_dec = compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY, scoring_date="2025-12-01")
+        assert score_nov is not None
+        assert score_dec is not None
+        # Dec candle is bullish EMA stack, Nov is bearish — should produce different scores
+        assert score_dec != pytest.approx(score_nov, abs=0.1)
+
+    def test_all_none_indicators_returns_none(self, tmp_path) -> None:
+        """Monthly candle with no indicator data returns None."""
+        conn = _make_monthly_db(tmp_path, [{"month_start": "2025-12-01", "close": 500.0}])
+        score = compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY, scoring_date="2025-12-15")
+        assert score is None
+
+    def test_requires_scoring_date(self, tmp_path) -> None:
+        """compute_monthly_score requires scoring_date — omitting it raises TypeError."""
+        conn = _make_monthly_db(tmp_path, [_MONTHLY_BULLISH])
+        with pytest.raises(TypeError):
+            compute_monthly_score(conn, "QQQ", SAMPLE_CONFIG_3WAY)  # type: ignore[call-arg]
+
+
+class TestMergeTimeframes3Way:
+    """Tests for 3-way merge (daily + weekly + monthly)."""
+
+    def test_3way_trending_weights_applied(self) -> None:
+        """trending: daily=0.10, weekly=0.50, monthly=0.40 → 0.10*60+0.50*50+0.40*40=47.0."""
+        result = merge_timeframes(
+            daily_score=60.0, weekly_score=50.0, monthly_score=40.0,
+            config=SAMPLE_CONFIG_3WAY, regime="trending",
+        )
+        assert result == pytest.approx(47.0, abs=0.01)
+
+    def test_3way_ranging_weights_applied(self) -> None:
+        """ranging: daily=0.60, weekly=0.30, monthly=0.10 → 0.60*60+0.30*50+0.10*40=55.0."""
+        result = merge_timeframes(
+            daily_score=60.0, weekly_score=50.0, monthly_score=40.0,
+            config=SAMPLE_CONFIG_3WAY, regime="ranging",
+        )
+        assert result == pytest.approx(55.0, abs=0.01)
+
+    def test_3way_volatile_weights_applied(self) -> None:
+        """volatile: daily=0.25, weekly=0.45, monthly=0.30 → 0.25*60+0.45*50+0.30*40=49.5."""
+        result = merge_timeframes(
+            daily_score=60.0, weekly_score=50.0, monthly_score=40.0,
+            config=SAMPLE_CONFIG_3WAY, regime="volatile",
+        )
+        assert result == pytest.approx(49.5, abs=0.01)
+
+    def test_monthly_none_falls_back_to_2way_normalized(self) -> None:
+        """When monthly_score=None, weights for daily+weekly are renormalized to sum to 1."""
+        # trending: daily=0.10, weekly=0.50 → renormalized: daily=0.167, weekly=0.833
+        # result = 0.10/0.60*60 + 0.50/0.60*50 = 10 + 41.67 = 51.67
+        result = merge_timeframes(
+            daily_score=60.0, weekly_score=50.0, monthly_score=None,
+            config=SAMPLE_CONFIG_3WAY, regime="trending",
+        )
+        daily_w, weekly_w = 0.10 / 0.60, 0.50 / 0.60
+        expected = daily_w * 60.0 + weekly_w * 50.0
+        assert result == pytest.approx(expected, abs=0.01)
+
+    def test_weekly_and_monthly_none_uses_daily_only(self) -> None:
+        """When both weekly and monthly are None, result equals daily_score."""
+        result = merge_timeframes(
+            daily_score=55.0, weekly_score=None, monthly_score=None,
+            config=SAMPLE_CONFIG_3WAY, regime="ranging",
+        )
+        assert result == pytest.approx(55.0, abs=0.01)
+
+    def test_weekly_none_monthly_present_normalizes_daily_monthly(self) -> None:
+        """When weekly=None but monthly is present, use daily+monthly renormalized."""
+        # ranging: daily=0.60, monthly=0.10 → renormalized: daily=0.857, monthly=0.143
+        # result = 0.60/0.70*60 + 0.10/0.70*40 = 51.43 + 5.71 = 57.14
+        result = merge_timeframes(
+            daily_score=60.0, weekly_score=None, monthly_score=40.0,
+            config=SAMPLE_CONFIG_3WAY, regime="ranging",
+        )
+        daily_w, monthly_w = 0.60 / 0.70, 0.10 / 0.70
+        expected = daily_w * 60.0 + monthly_w * 40.0
+        assert result == pytest.approx(expected, abs=0.01)
+
+    def test_3way_result_clamped_to_100(self) -> None:
+        """Result is clamped to [-100, +100] even with extreme inputs."""
+        result = merge_timeframes(
+            daily_score=100.0, weekly_score=100.0, monthly_score=100.0,
+            config=SAMPLE_CONFIG_3WAY, regime="trending",
+        )
+        assert result == pytest.approx(100.0, abs=0.01)
+
+    def test_3way_result_clamped_negative(self) -> None:
+        result = merge_timeframes(
+            daily_score=-100.0, weekly_score=-100.0, monthly_score=-100.0,
+            config=SAMPLE_CONFIG_3WAY, regime="volatile",
+        )
+        assert result == pytest.approx(-100.0, abs=0.01)
+
+    def test_monthly_none_backward_compat_with_2way_config(self) -> None:
+        """Config with only daily+weekly keys still works when monthly_score=None."""
+        result = merge_timeframes(
+            daily_score=60.0, weekly_score=50.0, monthly_score=None,
+            config=SAMPLE_CONFIG, regime="trending",
+        )
+        assert result == pytest.approx(52.0, abs=0.01)  # 0.2*60 + 0.8*50
+

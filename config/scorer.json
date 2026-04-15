@@ -30,9 +30,9 @@
     "max_adjustment": 10
   },
   "timeframe_weights": {
-    "trending": { "daily": 0.2, "weekly": 0.8 },
-    "ranging":  { "daily": 0.8, "weekly": 0.2 },
-    "volatile": { "daily": 0.5, "weekly": 0.5 }
+    "trending": { "daily": 0.10, "weekly": 0.50, "monthly": 0.40 },
+    "ranging":  { "daily": 0.60, "weekly": 0.30, "monthly": 0.10 },
+    "volatile": { "daily": 0.25, "weekly": 0.45, "monthly": 0.30 }
   },
   "calibration": {
     "enabled": true,
@@ -72,5 +72,10 @@
     "trending": { "trend": 0.45, "momentum": 0.25, "volume": 0.15, "volatility": 0.15 },
     "ranging":  { "trend": 0.20, "momentum": 0.40, "volume": 0.20, "volatility": 0.20 },
     "volatile": { "trend": 0.30, "momentum": 0.25, "volume": 0.15, "volatility": 0.30 }
+  },
+  "monthly_adaptive_weights": {
+    "trending": { "trend": 0.50, "momentum": 0.20, "volume": 0.15, "volatility": 0.15 },
+    "ranging":  { "trend": 0.25, "momentum": 0.35, "volume": 0.20, "volatility": 0.20 },
+    "volatile": { "trend": 0.35, "momentum": 0.20, "volume": 0.15, "volatility": 0.30 }
   }
 }

@@ -60,5 +60,6 @@
   },
   "weekly": {
     "week_start_day": "Monday"
-  }
+  },
+  "monthly": {}
 }

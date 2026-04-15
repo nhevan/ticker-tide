@@ -845,12 +845,14 @@ class TestCheckWeightedScoreMath:
     def test_check_weighted_score_math_ranging_regime_passes(
         self, db_connection: sqlite3.Connection
     ) -> None:
-        """Ranging-regime ticker whose math is 0.8×daily + 0.2×weekly must not be flagged."""
+        """Ranging-regime ticker whose math is correct for new 3-way weights must not be flagged."""
         daily_score = 10.0
         weekly_score = 50.0
-        # Correct ranging formula: 0.8*10 + 0.2*50 = 18.0
+        # New ranging weights (no monthly): daily=0.60, weekly=0.30 → renorm to sum=0.90
+        # expected = (0.60/0.90)*10 + (0.30/0.90)*50 = 6.667 + 16.667 = 23.333
+        expected_final = (0.60 / 0.90) * daily_score + (0.30 / 0.90) * weekly_score
         _insert_score(db_connection, "AAPL", "2026-01-02",
-                      final_score=18.0,
+                      final_score=expected_final,
                       daily_score=daily_score,
                       weekly_score=weekly_score,
                       regime="ranging")
@@ -863,14 +865,17 @@ class TestCheckWeightedScoreMath:
         self, db_connection: sqlite3.Connection
     ) -> None:
         """Trending + ranging + volatile tickers all with correct math should all pass."""
+        # trending: daily=0.10, weekly=0.50 → renorm to sum=0.60
+        # ranging:  daily=0.60, weekly=0.30 → renorm to sum=0.90
+        # volatile: daily=0.25, weekly=0.45 → renorm to sum=0.70
         _insert_score(db_connection, "AAPL", "2026-01-02",
-                      final_score=0.2 * 40 + 0.8 * 20,   # trending = 24.0
+                      final_score=(0.10 / 0.60) * 40 + (0.50 / 0.60) * 20,  # trending ≈ 23.33
                       daily_score=40.0, weekly_score=20.0, regime="trending")
         _insert_score(db_connection, "MSFT", "2026-01-02",
-                      final_score=0.8 * 30 + 0.2 * 10,   # ranging = 26.0
+                      final_score=(0.60 / 0.90) * 30 + (0.30 / 0.90) * 10,  # ranging ≈ 23.33
                       daily_score=30.0, weekly_score=10.0, regime="ranging")
         _insert_score(db_connection, "GOOG", "2026-01-02",
-                      final_score=0.5 * 60 + 0.5 * 20,   # volatile = 40.0
+                      final_score=(0.25 / 0.70) * 60 + (0.45 / 0.70) * 20,  # volatile ≈ 34.29
                       daily_score=60.0, weekly_score=20.0, regime="volatile")
         result = check_weighted_score_math(db_connection, "2026-01-02")
         assert result.status == "pass", (

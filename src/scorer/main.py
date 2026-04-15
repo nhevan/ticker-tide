@@ -61,7 +61,7 @@ from src.scorer.pattern_scorer import (
 from src.scorer.calibrator import build_feature_vector, calibrate_score
 from src.scorer.regime import detect_regime, get_atr_sma, get_current_vix, get_regime_weights
 from src.scorer.sector_adjuster import apply_sector_adjustment, compute_sector_etf_score
-from src.scorer.timeframe_merger import compute_weekly_score, merge_timeframes
+from src.scorer.timeframe_merger import compute_monthly_score, compute_weekly_score, merge_timeframes
 
 logger = logging.getLogger(__name__)
 
@@ -420,12 +420,12 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
         """
         INSERT OR REPLACE INTO scores_daily
             (ticker, date, signal, confidence, final_score, regime,
-             daily_score, weekly_score, trend_score, momentum_score,
+             daily_score, weekly_score, monthly_score, trend_score, momentum_score,
              volume_score, volatility_score, candlestick_score, structural_score,
              sentiment_score, fundamental_score, macro_score,
              calibrated_score, model_r2,
              data_completeness, key_signals)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score["ticker"],
@@ -436,6 +436,7 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
             score["regime"],
             score["daily_score"],
             score.get("weekly_score"),
+            score.get("monthly_score"),
             score.get("trend_score"),
             score.get("momentum_score"),
             score.get("volume_score"),
@@ -632,8 +633,12 @@ def score_ticker(
     weekly_score = compute_weekly_score(db_conn, ticker, config, scoring_date=scoring_date, regime=regime)
     weekly_available = weekly_score is not None
 
+    # 13b. Compute monthly score
+    monthly_score = compute_monthly_score(db_conn, ticker, config, scoring_date=scoring_date, regime=regime)
+    monthly_available = monthly_score is not None
+
     # 14. Merge timeframes → final score (regime-adaptive weights)
-    final_score = merge_timeframes(daily_score, weekly_score, config, regime=regime)
+    final_score = merge_timeframes(daily_score, weekly_score, config, regime=regime, monthly_score=monthly_score)
 
     # 15. Calibrate score using rolling ridge regression
     ema_9 = indicators.get("ema_9")
@@ -652,6 +657,7 @@ def score_ticker(
         "bb_pctb": indicators.get("bb_pctb"),
         "cmf_20": indicators.get("cmf_20"),
     }
+    # EXPERIMENT removed: replaced with real monthly_score from compute_monthly_score()
     calibration_config = config.get("calibration", {})
     calibration_result = calibrate_score(
         conn=db_conn,
@@ -661,6 +667,7 @@ def score_ticker(
         ema_positions=ema_positions,
         config=calibration_config,
         weekly_score=weekly_score,
+        monthly_score=monthly_score,
     )
     calibrated_score = calibration_result["calibrated_score"]
     model_r2 = calibration_result["model_r2"]
@@ -714,6 +721,7 @@ def score_ticker(
         news_available=news is not None,
         fundamentals_available=fundamentals_data is not None,
         weekly_available=weekly_available,
+        monthly_available=monthly_available,
         filings_available=filings_row is not None,
         short_interest_available=short_data is not None,
         earnings_available=next_earnings is not None,
@@ -738,6 +746,7 @@ def score_ticker(
         "regime": regime,
         "daily_score": daily_score,
         "weekly_score": weekly_score,
+        "monthly_score": monthly_score,
         "trend_score": category_scores.get("trend"),
         "momentum_score": category_scores.get("momentum"),
         "volume_score": category_scores.get("volume"),

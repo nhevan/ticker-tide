@@ -184,16 +184,16 @@ def _populate_training_data(conn: sqlite3.Connection, n_signals: int = 50) -> No
 # ---------------------------------------------------------------------------
 
 class TestBuildFeatureVector:
-    """Tests for building the 16-element feature vector."""
+    """Tests for building the 17-element feature vector."""
 
-    def test_returns_16_features(
+    def test_returns_17_features(
         self, sample_category_scores, sample_raw_indicators, sample_ema_positions
     ):
-        """Feature vector has exactly 16 elements."""
+        """Feature vector has exactly 17 elements."""
         vec = build_feature_vector(
             sample_category_scores, sample_raw_indicators, sample_ema_positions
         )
-        assert len(vec) == 16
+        assert len(vec) == 17
 
     def test_correct_values(
         self, sample_category_scores, sample_raw_indicators, sample_ema_positions
@@ -202,6 +202,7 @@ class TestBuildFeatureVector:
         vec = build_feature_vector(
             sample_category_scores, sample_raw_indicators, sample_ema_positions,
             weekly_score=42.5,
+            monthly_score=30.0,
         )
         # Categories: trend, momentum, volume, volatility, fundamental, macro
         assert vec[0] == 55.0  # trend
@@ -223,6 +224,8 @@ class TestBuildFeatureVector:
         assert vec[14] == 1.5
         # Weekly score — raw, not divided by 100
         assert vec[15] == 42.5
+        # Monthly score — raw, not divided by 100
+        assert vec[16] == 30.0
 
     def test_weekly_score_none_defaults_to_zero(
         self, sample_category_scores, sample_raw_indicators, sample_ema_positions
@@ -232,7 +235,7 @@ class TestBuildFeatureVector:
             sample_category_scores, sample_raw_indicators, sample_ema_positions,
             weekly_score=None,
         )
-        assert len(vec) == 16
+        assert len(vec) == 17
         assert vec[15] == 0.0
 
     def test_weekly_score_omitted_defaults_to_zero(
@@ -242,8 +245,39 @@ class TestBuildFeatureVector:
         vec = build_feature_vector(
             sample_category_scores, sample_raw_indicators, sample_ema_positions
         )
-        assert len(vec) == 16
+        assert len(vec) == 17
         assert vec[15] == 0.0
+
+    def test_monthly_score_none_defaults_to_zero(
+        self, sample_category_scores, sample_raw_indicators, sample_ema_positions
+    ):
+        """monthly_score=None is replaced with 0.0 at position 16."""
+        vec = build_feature_vector(
+            sample_category_scores, sample_raw_indicators, sample_ema_positions,
+            monthly_score=None,
+        )
+        assert len(vec) == 17
+        assert vec[16] == 0.0
+
+    def test_monthly_score_omitted_defaults_to_zero(
+        self, sample_category_scores, sample_raw_indicators, sample_ema_positions
+    ):
+        """Calling without monthly_score kwarg defaults to 0.0 at position 16."""
+        vec = build_feature_vector(
+            sample_category_scores, sample_raw_indicators, sample_ema_positions
+        )
+        assert len(vec) == 17
+        assert vec[16] == 0.0
+
+    def test_monthly_score_not_scaled(
+        self, sample_category_scores, sample_raw_indicators, sample_ema_positions
+    ):
+        """monthly_score is stored as-is (no /100 scaling)."""
+        vec = build_feature_vector(
+            sample_category_scores, sample_raw_indicators, sample_ema_positions,
+            monthly_score=-45.0,
+        )
+        assert vec[16] == -45.0
 
     def test_weekly_score_not_scaled(
         self, sample_category_scores, sample_raw_indicators, sample_ema_positions
@@ -393,7 +427,7 @@ class TestFetchTrainingData:
         assert isinstance(X, np.ndarray)
         assert isinstance(y, np.ndarray)
         assert X.ndim == 2
-        assert X.shape[1] == 16  # 16 features
+        assert X.shape[1] == 17  # 17 features
         assert len(y) == len(X)
         assert len(y) > 0
 

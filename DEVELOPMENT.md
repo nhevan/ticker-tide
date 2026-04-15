@@ -81,6 +81,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/calculator/main.py` | `run_calculator(mode, target_date)` — orchestrates all sub-modules per ticker; `target_date` is the trading date the fetcher processed (yesterday UTC in daily pipeline) and drives the `fetcher_done` pre-flight check |
 | `src/calculator/indicators.py` | 15 technical indicators via `ta` library → `indicators_daily` |
 | `src/calculator/weekly.py` | Weekly OHLCV candles + weekly indicators → `weekly_candles`, `indicators_weekly` |
+| `src/calculator/monthly.py` | Monthly OHLCV candles (YYYY-MM-01 key) + monthly indicators → `monthly_candles`, `indicators_monthly` |
 | `src/calculator/profiles.py` | Percentile profiles (p5–p95); sector profile blending → `indicator_profiles` |
 | `src/calculator/crossovers.py` | EMA and MACD crossover detection → `crossovers_daily` |
 | `src/calculator/gaps.py` | Gap classification (Breakaway/Continuation/Exhaustion/Common) → `gaps_daily` |
@@ -97,8 +98,8 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/scorer/pattern_scorer.py` | Scores patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Aggregates component scores into 9 categories; applies adaptive weights |
 | `src/scorer/sector_adjuster.py` | Sector ETF trend score → ±5 to ±10 adjustment on final score |
-| `src/scorer/timeframe_merger.py` | Merges daily + weekly into composite score using regime-adaptive weights (trending: 0.2d/0.8w, ranging: 0.8d/0.2w, volatile: 0.5/0.5); `compute_weekly_score()` scores all 14 indicators from `indicators_weekly`; requires `scoring_date` and `regime` |
-| `src/scorer/calibrator.py` | Rolling ridge regression calibrator: trains on recent signals + realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 15 features (6 category scores + 6 raw indicators + 3 EMA spreads); cold-start fallback when < 30 samples; `calibrate_score()` is the main entry point |
+| `src/scorer/timeframe_merger.py` | 3-way merge of daily + weekly + monthly into composite score using regime-adaptive weights (trending: 0.10d/0.50w/0.40m, ranging: 0.60d/0.30w/0.10m, volatile: 0.25d/0.45w/0.30m); weights renormalized when a timeframe is absent; `compute_weekly_score()` and `compute_monthly_score()` score their respective indicator tables; requires `scoring_date` and `regime` |
+| `src/scorer/calibrator.py` | Rolling ridge regression calibrator: trains on recent signals + realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 17 features (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score + monthly_score); cold-start fallback when < 30 samples; `calibrate_score()` is the main entry point |
 | `src/scorer/confidence.py` | Signal classification; confidence modifiers; `data_completeness`; `key_signals` |
 | `src/scorer/flip_detector.py` | Detects signal direction changes → `signal_flips` |
 | `src/notifier/main.py` | `run_notifier()` — queries scores, calls AI reasoner, formats, sends Telegram |

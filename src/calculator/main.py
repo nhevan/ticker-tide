@@ -42,6 +42,7 @@ from src.calculator.patterns import detect_all_patterns_for_ticker
 from src.calculator.profiles import compute_all_profiles, compute_profile_for_ticker
 from src.calculator.support_resistance import detect_support_resistance_for_ticker
 from src.calculator.swing_points import detect_swing_points_for_ticker
+from src.calculator.monthly import compute_monthly_for_ticker
 from src.calculator.weekly import compute_weekly_for_ticker
 from src.common.config import (
     get_active_tickers,
@@ -178,8 +179,8 @@ def run_calculator_for_ticker(
         A dict with keys: ticker, status ('success'/'partial'/'failed'),
         indicators_rows, crossovers_found, gaps_found, swing_points_found,
         sr_levels_found, patterns (dict with candlestick/structural counts),
-        divergences_found, profiles_computed, weekly_candles, news_summaries,
-        errors (list of error message strings).
+        divergences_found, profiles_computed, weekly_candles, monthly_candles,
+        news_summaries, errors (list of error message strings).
     """
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
     errors: list[str] = []
@@ -195,6 +196,7 @@ def run_calculator_for_ticker(
         "divergences_found": 0,
         "profiles_computed": 0,
         "weekly_candles": 0,
+        "monthly_candles": 0,
         "news_summaries": 0,
         "errors": errors,
     }
@@ -338,6 +340,19 @@ def run_calculator_for_ticker(
         log_alert(db_conn, ticker, today, _PHASE, "error", msg)
         errors.append(msg)
 
+    # ── Step 9b: Monthly candles + indicators (independent) ──────────────────
+    try:
+        result["monthly_candles"] = compute_monthly_for_ticker(
+            db_conn, ticker, config, mode=mode
+        )
+    except Exception as exc:
+        msg = f"monthly failed: {exc}"
+        logger.error(
+            f"ticker={ticker} phase=calculator module=monthly error={exc}", exc_info=True
+        )
+        log_alert(db_conn, ticker, today, _PHASE, "error", msg)
+        errors.append(msg)
+
     # ── Step 10: News aggregation (independent) ──────────────────────────────
     try:
         result["news_summaries"] = aggregate_news_for_ticker(db_conn, ticker)
@@ -375,7 +390,7 @@ def run_calculator_for_etfs_and_benchmarks(
 
     Returns:
         A summary dict with keys: tickers_processed, tickers_failed,
-        indicators_rows, weekly_candles.
+        indicators_rows, weekly_candles, monthly_candles.
     """
     sector_etfs = get_sector_etfs()
     benchmarks = get_market_benchmarks()
@@ -388,6 +403,7 @@ def run_calculator_for_etfs_and_benchmarks(
     tickers_failed = 0
     total_indicators = 0
     total_weekly = 0
+    total_monthly = 0
 
     for etf_ticker in sorted(etf_set):
         indicators_ok = False
@@ -428,6 +444,23 @@ def run_calculator_for_etfs_and_benchmarks(
             )
             log_alert(db_conn, etf_ticker, today, _PHASE, "error", str(exc))
 
+        try:
+            monthly_rows = compute_monthly_for_ticker(
+                db_conn, etf_ticker, config, mode=mode
+            )
+            total_monthly += monthly_rows
+            logger.info(
+                f"ticker={etf_ticker} phase=calculator module=monthly "
+                f"etf=True rows={monthly_rows}"
+            )
+        except Exception as exc:
+            logger.error(
+                f"ticker={etf_ticker} phase=calculator module=monthly "
+                f"etf=True error={exc}",
+                exc_info=True,
+            )
+            log_alert(db_conn, etf_ticker, today, _PHASE, "error", str(exc))
+
         if indicators_ok:
             tickers_processed += 1
 
@@ -436,6 +469,7 @@ def run_calculator_for_etfs_and_benchmarks(
         "tickers_failed": tickers_failed,
         "indicators_rows": total_indicators,
         "weekly_candles": total_weekly,
+        "monthly_candles": total_monthly,
     }
 
 
@@ -509,6 +543,7 @@ def run_calculator(
         "divergences_found": 0,
         "weekly_candles": 0,
         "profiles_computed": 0,
+        "monthly_candles": 0,
         "news_summaries": 0,
     }
 
@@ -591,6 +626,7 @@ def run_calculator(
     total_patterns = 0
     total_divergences = 0
     total_weekly = etf_summary["weekly_candles"]
+    total_monthly = etf_summary.get("monthly_candles", 0)
     total_profiles = 0
     total_news = 0
     tickers_processed = 0
@@ -629,6 +665,7 @@ def run_calculator(
         )
         total_divergences += ticker_result["divergences_found"]
         total_weekly += ticker_result["weekly_candles"]
+        total_monthly += ticker_result.get("monthly_candles", 0)
         total_profiles += ticker_result["profiles_computed"]
         total_news += ticker_result["news_summaries"]
 
@@ -696,6 +733,7 @@ def run_calculator(
         "patterns_found": total_patterns,
         "divergences_found": total_divergences,
         "weekly_candles": total_weekly,
+        "monthly_candles": total_monthly,
         "profiles_computed": total_profiles,
         "news_summaries": total_news,
     }
@@ -705,7 +743,7 @@ def run_calculator(
         f"Tickers: {tickers_processed}/{len(stock_tickers)} ({tickers_failed} failed)\n"
         f"Indicators: {total_indicators} rows | Divergences: {total_divergences}\n"
         f"Patterns: {total_patterns} | Profiles: {total_profiles}\n"
-        f"Weekly Candles: {total_weekly} | News Summaries: {total_news}\n"
+        f"Weekly Candles: {total_weekly} | Monthly Candles: {total_monthly} | News Summaries: {total_news}\n"
         f"Duration: {_format_duration(duration_seconds)}"
     )
 

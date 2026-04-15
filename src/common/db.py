@@ -299,6 +299,44 @@ def _build_schema_statements() -> list[str]:
             UNIQUE(ticker, week_start)
         )""",
 
+        """CREATE TABLE IF NOT EXISTS monthly_candles (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume REAL,
+            UNIQUE(ticker, month_start)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS indicators_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            ema_9 REAL,
+            ema_21 REAL,
+            ema_50 REAL,
+            macd_line REAL,
+            macd_signal REAL,
+            macd_histogram REAL,
+            adx REAL,
+            rsi_14 REAL,
+            stoch_k REAL,
+            stoch_d REAL,
+            cci_20 REAL,
+            williams_r REAL,
+            obv REAL,
+            cmf_20 REAL,
+            ad_line REAL,
+            bb_upper REAL,
+            bb_lower REAL,
+            bb_pctb REAL,
+            atr_14 REAL,
+            keltner_upper REAL,
+            keltner_lower REAL,
+            UNIQUE(ticker, month_start)
+        )""",
+
         # ── Pattern & Signal Tables ────────────────────────────────────────────────
         """CREATE TABLE IF NOT EXISTS swing_points (
             ticker TEXT NOT NULL,
@@ -381,6 +419,7 @@ def _build_schema_statements() -> list[str]:
             regime TEXT,
             daily_score REAL,
             weekly_score REAL,
+            monthly_score REAL,
             trend_score REAL,
             momentum_score REAL,
             volume_score REAL,
@@ -467,6 +506,8 @@ def _build_schema_statements() -> list[str]:
         "CREATE INDEX IF NOT EXISTS idx_swing_points_ticker_date ON swing_points(ticker, date)",
         "CREATE INDEX IF NOT EXISTS idx_weekly_candles_ticker ON weekly_candles(ticker, week_start)",
         "CREATE INDEX IF NOT EXISTS idx_indicators_weekly_ticker ON indicators_weekly(ticker, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_monthly_candles_ticker ON monthly_candles(ticker, month_start)",
+        "CREATE INDEX IF NOT EXISTS idx_indicators_monthly_ticker ON indicators_monthly(ticker, month_start)",
         "CREATE INDEX IF NOT EXISTS idx_news_summary_ticker_date ON news_daily_summary(ticker, date)",
         "CREATE INDEX IF NOT EXISTS idx_short_interest_ticker ON short_interest(ticker, settlement_date)",
         "CREATE INDEX IF NOT EXISTS idx_pipeline_events ON pipeline_events(event, date)",

@@ -194,6 +194,7 @@ Controls all indicator periods, pattern detection, and profile computation.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `weekly.week_start_day` | string | `"Monday"` | Day each weekly candle opens |
+| `monthly` | object | `{}` | Monthly aggregation config (no tunable params currently) |
 
 ---
 
@@ -240,10 +241,20 @@ Categories: `trend`, `momentum`, `volume`, `volatility`, `candlestick`, `structu
 
 ### Timeframe weights
 
+Regime-specific blending of daily, weekly, and monthly composite scores. Weights are automatically
+renormalized when monthly data is absent (e.g., during pipeline cold-start).
+
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `timeframe_weights.daily` | float | `0.2` | Weight of daily score in final merged score |
-| `timeframe_weights.weekly` | float | `0.8` | Weight of weekly score in final merged score |
+| `timeframe_weights.trending.daily` | float | `0.10` | Daily weight in trending regime |
+| `timeframe_weights.trending.weekly` | float | `0.50` | Weekly weight in trending regime |
+| `timeframe_weights.trending.monthly` | float | `0.40` | Monthly weight in trending regime |
+| `timeframe_weights.ranging.daily` | float | `0.60` | Daily weight in ranging regime |
+| `timeframe_weights.ranging.weekly` | float | `0.30` | Weekly weight in ranging regime |
+| `timeframe_weights.ranging.monthly` | float | `0.10` | Monthly weight in ranging regime |
+| `timeframe_weights.volatile.daily` | float | `0.25` | Daily weight in volatile regime |
+| `timeframe_weights.volatile.weekly` | float | `0.45` | Weekly weight in volatile regime |
+| `timeframe_weights.volatile.monthly` | float | `0.30` | Monthly weight in volatile regime |
 
 ### Signal thresholds
 
@@ -306,6 +317,27 @@ If this section is missing, daily `adaptive_weights` are re-normalized to these 
 | `weekly_adaptive_weights.volatile.momentum` | float | `0.25` | Momentum category weight in volatile regime |
 | `weekly_adaptive_weights.volatile.volume` | float | `0.15` | Volume category weight in volatile regime |
 | `weekly_adaptive_weights.volatile.volatility` | float | `0.30` | Volatility category weight in volatile regime |
+
+### Monthly adaptive weights
+
+Regime-specific weights for the 4 indicator-based categories used in monthly scoring.
+Same 4 categories as weekly (trend, momentum, volume, volatility). Monthly scoring gives
+more weight to trend since longer timeframes carry more directional persistence.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `monthly_adaptive_weights.trending.trend` | float | `0.50` | Trend category weight in trending regime |
+| `monthly_adaptive_weights.trending.momentum` | float | `0.20` | Momentum category weight in trending regime |
+| `monthly_adaptive_weights.trending.volume` | float | `0.15` | Volume category weight in trending regime |
+| `monthly_adaptive_weights.trending.volatility` | float | `0.15` | Volatility category weight in trending regime |
+| `monthly_adaptive_weights.ranging.trend` | float | `0.25` | Trend category weight in ranging regime |
+| `monthly_adaptive_weights.ranging.momentum` | float | `0.35` | Momentum category weight in ranging regime |
+| `monthly_adaptive_weights.ranging.volume` | float | `0.20` | Volume category weight in ranging regime |
+| `monthly_adaptive_weights.ranging.volatility` | float | `0.20` | Volatility category weight in ranging regime |
+| `monthly_adaptive_weights.volatile.trend` | float | `0.35` | Trend category weight in volatile regime |
+| `monthly_adaptive_weights.volatile.momentum` | float | `0.20` | Momentum category weight in volatile regime |
+| `monthly_adaptive_weights.volatile.volume` | float | `0.15` | Volume category weight in volatile regime |
+| `monthly_adaptive_weights.volatile.volatility` | float | `0.30` | Volatility category weight in volatile regime |
 
 ### Calibration (rolling ridge regression)
 

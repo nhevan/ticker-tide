@@ -93,6 +93,7 @@ Never start `run_bot.py` manually in a tmux session on EC2 — the systemd servi
 | `setup_db.py` | Create/migrate schema (idempotent) | `(none)` |
 | `migrate_news_articles_pk.py` | One-time migration: change `news_articles` PK from `id` to `(id, ticker)` | `(none)` |
 | `migrate_add_calibration_columns.py` | One-time: add calibration columns to `scores_daily` | `--db-path PATH` |
+| `migrate_add_monthly.py` | One-time: add `monthly_candles`, `indicators_monthly` tables and `monthly_score` column to `scores_daily` | `--db-path PATH` |
 | `test_api_access.py` | Test all 5 API keys | `(none)` |
 | `verify_backfill.py` | Post-backfill data quality checks | `--ticker AAPL`, `--quiet`, `--no-telegram`, `--db-path PATH` |
 | `verify_pipeline.py` | Post-calculation computed data checks | `--date YYYY-MM-DD`, `--quiet`, `--no-telegram`, `--db-path PATH` |
@@ -164,6 +165,22 @@ python scripts/migrate_add_calibration_columns.py
 python scripts/run_scorer.py --force
 
 # 3. Verify
+python scripts/verify_pipeline.py
+```
+
+**`migrate_add_monthly.py`** — Adds `monthly_candles` and `indicators_monthly` tables, and `monthly_score REAL` column to `scores_daily`. Uses `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ADD COLUMN`. Safe to run multiple times — skips structures that already exist.
+
+```bash
+# 1. Run the migration (safe to re-run)
+python scripts/migrate_add_monthly.py
+
+# 2. Re-run calculator to populate monthly tables
+python scripts/run_calculator.py --mode full
+
+# 3. Re-run scorer to populate monthly_score
+python scripts/run_scorer.py --historical --force
+
+# 4. Verify
 python scripts/verify_pipeline.py
 ```
 

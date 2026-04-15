@@ -152,6 +152,7 @@ The calculator runs after the fetcher completes (`fetcher_done` event) and write
 |---|---|---|
 | `src/calculator/indicators.py` | 15 technical indicators (EMA, MACD, ADX, RSI, Stochastic, CCI, Williams %R, OBV, CMF, A/D, Bollinger, ATR, Keltner) | `indicators_daily` |
 | `src/calculator/weekly.py` | Weekly OHLCV candles (open=Mon, high/low=week extremes, close=Fri, volume=sum); same 15 indicators on weekly candles | `weekly_candles`, `indicators_weekly` |
+| `src/calculator/monthly.py` | Monthly OHLCV candles (YYYY-MM-01 key, open=first trading day, high/low=month extremes, close=last trading day, volume=sum); same 15 indicators on monthly candles | `monthly_candles`, `indicators_monthly` |
 | `src/calculator/profiles.py` | Per-stock percentile profiles (p5/p20/p50/p80/p95 + mean/std) over 504-day rolling window; blended with sector profile using α=min(0.85, days/756) | `indicator_profiles` |
 | `src/calculator/crossovers.py` | EMA 9/21, EMA 21/50, MACD signal line crossovers | `crossovers_daily` |
 | `src/calculator/gaps.py` | Gap up/down with Breakaway/Continuation/Exhaustion/Common classification | `gaps_daily` |
@@ -207,6 +208,7 @@ Step 6: patterns            depends on indicators + swing_points + support_resis
 Step 7: divergences         depends on indicators + swing_points
 Step 8: profiles            depends on indicators (weekly recompute, skipped if recent)
 Step 9: weekly              independent
+Step 9b: monthly            independent
 Step 10: news               independent
 ```
 
@@ -225,7 +227,7 @@ Step 10: news               independent
 - Writes `pipeline_runs` entry with phase, duration, tickers processed/failed, status.
 - Sends Telegram summary with per-module counts and duration.
 
-**Return value:** dict with keys: `tickers_processed`, `tickers_failed`, `duration_seconds`, `indicators_rows`, `patterns_found`, `divergences_found`, `weekly_candles`, `profiles_computed`, `news_summaries`.
+**Return value:** dict with keys: `tickers_processed`, `tickers_failed`, `duration_seconds`, `indicators_rows`, `patterns_found`, `divergences_found`, `weekly_candles`, `monthly_candles`, `profiles_computed`, `news_summaries`.
 
 **Entry point script:** `scripts/run_calculator.py` with `--mode` (full/incremental), `--ticker` (optional), `--db-path` (optional).
 
@@ -242,8 +244,8 @@ The scorer runs after the calculator completes (`calculator_done` event) and pro
 | `src/scorer/pattern_scorer.py` | Scores candlestick/structural patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Rolls up component scores into 9 categories; applies regime-based adaptive weights |
 | `src/scorer/sector_adjuster.py` | Computes sector ETF trend score and applies adjustment (±5 to ±10) |
-| `src/scorer/timeframe_merger.py` | Merges daily + weekly composite scores with regime-adaptive weights (trending: 0.2d/0.8w, ranging: 0.8d/0.2w, volatile: 0.5/0.5); computes weekly score from all indicators in indicators_weekly; uses `scoring_date` to prevent look-ahead bias and regime-aware oscillator direction |
-| `src/scorer/calibrator.py` | Rolling ridge regression: trains on recent signals + their realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 16 features (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score); cold-start fallback when < 30 samples |
+| `src/scorer/timeframe_merger.py` | 3-way merge of daily + weekly + monthly composite scores with regime-adaptive weights (trending: 0.10d/0.50w/0.40m, ranging: 0.60d/0.30w/0.10m, volatile: 0.25d/0.45w/0.30m); computes weekly and monthly scores from their respective indicator tables; renormalizes weights when a timeframe is absent; uses `scoring_date` to prevent look-ahead bias |
+| `src/scorer/calibrator.py` | Rolling ridge regression: trains on recent signals + their realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 17 features (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score + monthly_score); cold-start fallback when < 30 samples |
 | `src/scorer/confidence.py` | Signal classification (BULLISH/BEARISH/NEUTRAL), confidence modifiers, data_completeness dict, key_signals list |
 | `src/scorer/flip_detector.py` | Detects signal direction changes; saves to signal_flips table |
 | `src/scorer/main.py` | Orchestrator: per-ticker score_ticker() + run_scorer() for daily pipeline + run_historical_scoring() for Option E |
@@ -319,10 +321,10 @@ Final confidence is clamped to [0, 100].
 6. Score fundamentals; compute macro (SPY trend + VIX + sector ETF + treasury + RS).
 7. Compute 9 category scores → apply adaptive weights → daily_score.
 8. Apply sector adjustment.
-9. Compute weekly score; merge timeframes with regime-adaptive weights → static composite.
+9. Compute weekly score; compute monthly score; merge 3-way timeframes with regime-adaptive weights → static composite (renormalizes when monthly is absent).
 10. **Calibrate score** via rolling ridge regression: fetch recent signals with realized
-    forward excess returns (vs SPY) as training data, train ridge on 16 features
-    (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score), predict expected excess
+    forward excess returns (vs SPY) as training data, train ridge on 17 features
+    (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score + monthly_score), predict expected excess
     return for current signal → `calibrated_score`. Falls back to None (cold start)
     if fewer than `min_training_samples` are available.
 11. Classify signal using `calibrated_score` if available, otherwise `final_score`. `effective_score`
@@ -553,6 +555,22 @@ Enable WAL mode on connection.
 - atr_14 REAL, keltner_upper REAL, keltner_lower REAL
 - UNIQUE(ticker, week_start)
 
+**monthly_candles**
+- ticker TEXT NOT NULL, month_start TEXT NOT NULL (YYYY-MM-01)
+- open REAL, high REAL, low REAL, close REAL
+- volume REAL
+- UNIQUE(ticker, month_start)
+
+**indicators_monthly** — same indicator columns as indicators_daily
+- ticker TEXT NOT NULL, month_start TEXT NOT NULL
+- ema_9 REAL, ema_21 REAL, ema_50 REAL
+- macd_line REAL, macd_signal REAL, macd_histogram REAL
+- adx REAL, rsi_14 REAL, stoch_k REAL, stoch_d REAL
+- cci_20 REAL, williams_r REAL, obv REAL, cmf_20 REAL, ad_line REAL
+- bb_upper REAL, bb_lower REAL, bb_pctb REAL
+- atr_14 REAL, keltner_upper REAL, keltner_lower REAL
+- UNIQUE(ticker, month_start)
+
 ### Pattern & Signal Tables
 
 **swing_points**
@@ -617,9 +635,9 @@ Enable WAL mode on connection.
 - ticker TEXT NOT NULL, date TEXT NOT NULL
 - signal TEXT (BULLISH/BEARISH/NEUTRAL)
 - confidence REAL (0-100)
-- final_score REAL — **always** the ±100 merged timeframe composite (daily×weight + weekly×weight). Never stores the calibrated value.
+- final_score REAL — **always** the ±100 merged 3-way timeframe composite (daily×w + weekly×w + monthly×w, renormalized when monthly is absent). Never stores the calibrated value.
 - regime TEXT (trending/ranging/volatile)
-- daily_score REAL, weekly_score REAL
+- daily_score REAL, weekly_score REAL, monthly_score REAL
 - trend_score REAL, momentum_score REAL, volume_score REAL
 - volatility_score REAL, candlestick_score REAL, structural_score REAL
 - sentiment_score REAL, fundamental_score REAL, macro_score REAL

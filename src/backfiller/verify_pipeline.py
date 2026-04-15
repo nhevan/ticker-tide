@@ -840,15 +840,16 @@ def check_weighted_score_math(
     tolerance: float = 2.0,
     daily_weight: Optional[float] = None,
     weekly_weight: Optional[float] = None,
+    monthly_weight: Optional[float] = None,
 ) -> CheckResult:
     """
-    Verify that final_score ≈ regime_daily_weight × daily_score + regime_weekly_weight × weekly_score.
+    Verify that final_score ≈ weighted blend of daily_score, weekly_score, monthly_score.
 
     Timeframe weights are regime-adaptive (trending/ranging/volatile each have different
-    daily/weekly splits). When daily_weight/weekly_weight overrides are not supplied,
+    splits). When daily_weight/weekly_weight/monthly_weight overrides are not supplied,
     the per-ticker regime is read from the DB and the correct weights are looked up from
-    scorer.json timeframe_weights[regime]. This avoids false positives for tickers whose
-    regime is not "trending".
+    scorer.json timeframe_weights[regime]. When monthly_score is NULL the daily+weekly
+    weights are renormalized to sum to 1.0.
 
     Args:
         db_conn: Open SQLite connection.
@@ -856,14 +857,15 @@ def check_weighted_score_math(
         tolerance: Maximum allowed deviation from the weighted formula. Default 2.0.
         daily_weight: Override daily weight applied to ALL tickers (useful for tests).
         weekly_weight: Override weekly weight applied to ALL tickers (useful for tests).
+        monthly_weight: Override monthly weight applied to ALL tickers (useful for tests).
 
     Returns:
         CheckResult with "warn" if any ticker exceeds the tolerance.
     """
     use_override = daily_weight is not None and weekly_weight is not None
 
-    # Build a regime → (daily_w, weekly_w) map from config when not using overrides.
-    regime_weights: dict[str, tuple[float, float]] = {}
+    # Build a regime → (daily_w, weekly_w, monthly_w) map from config when not using overrides.
+    regime_weights: dict[str, tuple[float, float, float]] = {}
     if not use_override:
         scorer_cfg = load_config("scorer")
         tw = scorer_cfg.get("timeframe_weights", {})
@@ -872,16 +874,17 @@ def check_weighted_score_math(
                 regime_weights[regime_name] = (
                     weights.get("daily", 0.2),
                     weights.get("weekly", 0.8),
+                    weights.get("monthly", 0.0),
                 )
         if not regime_weights:
             # Legacy flat format fallback: {"daily": 0.2, "weekly": 0.8}
             flat_d = tw.get("daily", 0.2)
             flat_w = tw.get("weekly", 0.8)
             for r in ("trending", "ranging", "volatile"):
-                regime_weights[r] = (flat_d, flat_w)
+                regime_weights[r] = (flat_d, flat_w, 0.0)
 
     rows = db_conn.execute(
-        "SELECT ticker, final_score, daily_score, weekly_score, regime "
+        "SELECT ticker, final_score, daily_score, weekly_score, monthly_score, regime "
         "FROM scores_daily "
         "WHERE date = ? "
         "AND final_score IS NOT NULL "
@@ -893,12 +896,27 @@ def check_weighted_score_math(
     issues: list[str] = []
     for row in rows:
         if use_override:
-            dw, ww = daily_weight, weekly_weight  # type: ignore[assignment]
+            dw = daily_weight  # type: ignore[assignment]
+            ww = weekly_weight  # type: ignore[assignment]
+            mw = monthly_weight if monthly_weight is not None else 0.0
         else:
             regime_name = row["regime"] or "trending"
-            dw, ww = regime_weights.get(regime_name, (0.2, 0.8))
+            dw, ww, mw = regime_weights.get(regime_name, (0.2, 0.8, 0.0))
 
-        expected = dw * row["daily_score"] + ww * row["weekly_score"]
+        monthly = row["monthly_score"]
+        if monthly is not None:
+            total_w = dw + ww + mw
+            if total_w > 0:
+                expected = (dw * row["daily_score"] + ww * row["weekly_score"] + mw * monthly) / total_w
+            else:
+                expected = row["daily_score"]
+        else:
+            total_w = dw + ww
+            if total_w > 0:
+                expected = (dw * row["daily_score"] + ww * row["weekly_score"]) / total_w
+            else:
+                expected = row["daily_score"]
+
         deviation = abs(row["final_score"] - expected)
         if deviation > tolerance:
             regime_label = row["regime"] or "unknown"
@@ -1796,6 +1814,107 @@ def check_weekly_indicator_coverage(
 
 
 # ---------------------------------------------------------------------------
+# Monthly checks
+# ---------------------------------------------------------------------------
+
+def check_monthly_candle_counts(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+    min_months: int = 12,
+) -> CheckResult:
+    """
+    Verify that each ticker has at least min_months monthly candles.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: List of active ticker symbols.
+        min_months: Minimum expected monthly candle rows. Default 12.
+
+    Returns:
+        CheckResult with "warn" if any ticker has fewer than min_months rows.
+    """
+    placeholders = ",".join("?" * len(active_tickers))
+
+    rows = db_conn.execute(
+        f"SELECT ticker, COUNT(*) AS cnt "
+        f"FROM monthly_candles "
+        f"WHERE ticker IN ({placeholders}) "
+        f"GROUP BY ticker",
+        active_tickers,
+    ).fetchall()
+
+    counts = {row["ticker"]: row["cnt"] for row in rows}
+    issues = [
+        f"{t}: {counts.get(t, 0)} monthly candles (min {min_months})"
+        for t in active_tickers
+        if counts.get(t, 0) < min_months
+    ]
+
+    if issues:
+        return CheckResult(
+            name="monthly_candle_counts",
+            status="warn",
+            message=f"{len(issues)} ticker(s) have fewer than {min_months} monthly candles",
+            details=issues,
+        )
+    return CheckResult(
+        name="monthly_candle_counts",
+        status="pass",
+        message=f"All tickers have ≥{min_months} monthly candles",
+    )
+
+
+def check_monthly_score_coverage(
+    db_conn: sqlite3.Connection,
+    scoring_date: str,
+    min_coverage_pct: float = 0.5,
+) -> CheckResult:
+    """
+    Verify that monthly_score is populated for a reasonable fraction of tickers.
+
+    Because monthly data requires ≥1 completed month and ~14 bars before EMAs
+    stabilise, a non-null rate of 50% is expected after the first few months.
+
+    Args:
+        db_conn: Open SQLite connection.
+        scoring_date: Date to check (YYYY-MM-DD).
+        min_coverage_pct: Minimum fraction of rows with non-null monthly_score. Default 0.5.
+
+    Returns:
+        CheckResult with "warn" if coverage is below threshold.
+    """
+    row = db_conn.execute(
+        "SELECT COUNT(*) AS total, "
+        "       SUM(CASE WHEN monthly_score IS NOT NULL THEN 1 ELSE 0 END) AS has_monthly "
+        "FROM scores_daily WHERE date = ?",
+        (scoring_date,),
+    ).fetchone()
+
+    if row is None or row["total"] == 0:
+        return CheckResult(
+            name="monthly_score_coverage",
+            status="pass",
+            message="No scores found for date — skipping monthly score coverage check",
+        )
+
+    coverage = row["has_monthly"] / row["total"]
+    if coverage < min_coverage_pct:
+        return CheckResult(
+            name="monthly_score_coverage",
+            status="warn",
+            message=(
+                f"monthly_score non-null rate={coverage:.1%} on {scoring_date} "
+                f"(threshold {min_coverage_pct:.0%})"
+            ),
+        )
+    return CheckResult(
+        name="monthly_score_coverage",
+        status="pass",
+        message=f"monthly_score non-null rate={coverage:.1%} on {scoring_date}",
+    )
+
+
+# ---------------------------------------------------------------------------
 # News summary checks
 # ---------------------------------------------------------------------------
 
@@ -2200,6 +2319,10 @@ def run_full_pipeline_verification(
         # ── Weekly checks ─────────────────────────────────────────────────
         all_checks.append(check_weekly_candle_validity(db_conn, active_tickers))
         all_checks.append(check_weekly_indicator_coverage(db_conn, active_tickers))
+
+        # ── Monthly checks ────────────────────────────────────────────────
+        all_checks.append(check_monthly_candle_counts(db_conn, active_tickers))
+        all_checks.append(check_monthly_score_coverage(db_conn, scoring_date))
 
         # ── News checks ───────────────────────────────────────────────────
         all_checks.append(check_news_summary_consistency(db_conn, active_tickers))
