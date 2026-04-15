@@ -660,6 +660,7 @@ def score_ticker(
         raw_indicators=raw_indicators_for_calibrator,
         ema_positions=ema_positions,
         config=calibration_config,
+        weekly_score=weekly_score,
     )
     calibrated_score = calibration_result["calibrated_score"]
     model_r2 = calibration_result["model_r2"]

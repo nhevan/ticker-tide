@@ -7,10 +7,11 @@ of recent signals and their realized 10-day excess returns (vs SPY),
 then uses the learned weights to predict the current signal's expected
 return.
 
-Features (15 total):
+Features (16 total):
   6 category scores  — trend, momentum, volume, volatility, fundamental, macro
   6 raw indicators   — RSI, ADX, MACD histogram, Stochastic %K, BB %B, CMF
   3 EMA positions    — price-EMA9, EMA9-EMA21, EMA21-EMA50 spreads (%)
+  1 weekly score     — prior-week composite score (same scale as category scores)
 
 Config keys (under scorer.json → "calibration"):
   enabled             — master switch (bool)
@@ -40,6 +41,7 @@ FEATURE_NAMES: list[str] = [
     "volatility_score", "fundamental_score", "macro_score",
     "rsi_14", "adx", "macd_histogram", "stoch_k", "bb_pctb", "cmf_20",
     "price_ema9_spread", "ema9_ema21_spread", "ema21_ema50_spread",
+    "weekly_score",
 ]
 
 
@@ -51,10 +53,11 @@ def build_feature_vector(
     category_scores: dict,
     raw_indicators: dict,
     ema_positions: dict,
+    weekly_score: Optional[float] = None,
 ) -> list[float]:
     """
-    Assemble a 15-element feature vector from scored categories, raw
-    indicator values, and EMA position spreads.
+    Assemble a 16-element feature vector from scored categories, raw
+    indicator values, EMA position spreads, and the weekly composite score.
 
     None values are replaced with 0.0 so the model always receives a
     complete numeric vector.
@@ -66,9 +69,11 @@ def build_feature_vector(
                          bb_pctb, cmf_20 — each a float or None.
         ema_positions:   Dict with keys price_ema9_spread, ema9_ema21_spread,
                          ema21_ema50_spread — each a float.
+        weekly_score:    Prior-week composite score (same scale as category
+                         scores, not divided by 100). None → 0.0.
 
     Returns:
-        List of 15 floats in the canonical feature order.
+        List of 16 floats in the canonical feature order.
     """
     def _safe(val: Optional[float]) -> float:
         return float(val) if val is not None else 0.0
@@ -89,6 +94,7 @@ def build_feature_vector(
         _safe(ema_positions.get("price_ema9_spread")),
         _safe(ema_positions.get("ema9_ema21_spread")),
         _safe(ema_positions.get("ema21_ema50_spread")),
+        _safe(weekly_score),
     ]
 
 
@@ -218,7 +224,7 @@ def fetch_training_data(
     config: dict,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Fetch historical signals with their 15-feature vectors and realized
+    Fetch historical signals with their 16-feature vectors and realized
     excess returns to serve as training data for the ridge regression.
 
     Queries scored signals within the past `window_size` calendar days (across all
@@ -233,7 +239,7 @@ def fetch_training_data(
         config:       Calibration config dict.
 
     Returns:
-        (X, y) tuple where X is (n_samples, 15) feature matrix and
+        (X, y) tuple where X is (n_samples, 16) feature matrix and
         y is (n_samples,) vector of excess returns. Both may be empty
         if no training data is available.
     """
@@ -251,6 +257,7 @@ def fetch_training_data(
         SELECT s.ticker, s.date,
                s.trend_score, s.momentum_score, s.volume_score,
                s.volatility_score, s.fundamental_score, s.macro_score,
+               s.weekly_score,
                i.rsi_14, i.adx, i.macd_histogram, i.stoch_k, i.bb_pctb, i.cmf_20,
                i.ema_9, i.ema_21, i.ema_50,
                o_sig.close AS signal_close
@@ -267,7 +274,7 @@ def fetch_training_data(
     ).fetchall()
 
     if not rows:
-        return np.empty((0, 15)), np.empty(0)
+        return np.empty((0, 16)), np.empty(0)
 
     X_list: list[list[float]] = []
     y_list: list[float] = []
@@ -338,12 +345,15 @@ def fetch_training_data(
             "ema21_ema50_spread": ema21_ema50_spread,
         }
 
-        features = build_feature_vector(category_scores, raw_indicators, ema_positions)
+        features = build_feature_vector(
+            category_scores, raw_indicators, ema_positions,
+            weekly_score=row["weekly_score"],
+        )
         X_list.append(features)
         y_list.append(excess)
 
     if not X_list:
-        return np.empty((0, 15)), np.empty(0)
+        return np.empty((0, 16)), np.empty(0)
 
     return np.array(X_list), np.array(y_list)
 
@@ -359,6 +369,7 @@ def calibrate_score(
     raw_indicators: dict,
     ema_positions: dict,
     config: dict,
+    weekly_score: Optional[float] = None,
 ) -> dict:
     """
     Calibrate the current signal using a rolling ridge regression.
@@ -379,6 +390,8 @@ def calibrate_score(
         raw_indicators:   Dict of 6 raw indicator values (rsi_14, adx, ...).
         ema_positions:    Dict of 3 EMA position spreads.
         config:           Calibration config dict (from scorer.json["calibration"]).
+        weekly_score:     Prior-week composite score (same scale as category scores).
+                          None → 0.0 in the feature vector.
 
     Returns:
         Dict with keys:
@@ -406,7 +419,9 @@ def calibrate_score(
         return {"calibrated_score": None, "model_r2": 0.0, "weights": None}
 
     # Build feature vector for the current signal
-    x_new = np.array(build_feature_vector(category_scores, raw_indicators, ema_positions))
+    x_new = np.array(build_feature_vector(
+        category_scores, raw_indicators, ema_positions, weekly_score=weekly_score,
+    ))
 
     # Train and predict
     result = train_ridge_and_predict(X_train, y_train, x_new, ridge_lambda)
@@ -417,6 +432,11 @@ def calibrate_score(
     logger.info(
         "phase=%s date=%s n_train=%d model_r2=%.4f calibrated_score=%.2f%%",
         _PHASE, scoring_date, len(X_train), model_r2, calibrated_score,
+    )
+    logger.info(
+        "phase=%s feature_weights=%s",
+        _PHASE,
+        {name: round(w, 4) for name, w in zip(FEATURE_NAMES, result["weights"])},
     )
 
     return {

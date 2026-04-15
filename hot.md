@@ -10,11 +10,10 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
+| 2026-04-15 | Add `weekly_score` as 16th calibrator feature: `build_feature_vector`, `fetch_training_data`, `calibrate_score`, `main.py` call site. Added weight-vector INFO log. 21 calibrator tests pass, 1317 total pass. | ✅ Done |
 | 2026-04-15 | Fix confidence base: use `min(abs(cal),8.0)*10` (warm) / `abs(fs)*0.3` (cold) instead of `abs(final_score)`. Data-driven: accuracy peaks at \|cal\|≈7 (63%), drops above 8. Cap prevents overfit extremes from inflating confidence. 6 new tests, 263 pass. | ✅ Fixed |
 | 2026-04-15 | Fix `check_weighted_score_math` false positives: was using hardcoded trending weights (0.2d/0.8w) for all tickers; now looks up regime-specific weights per ticker from config | ✅ Fixed, 3 new tests |
 | 2026-04-15 | Fix `final_score` mixed-scales bug: column now always holds ±100 composite; `raw_composite_score` column removed; `check_signal_score_consistency` updated; migration script written | ✅ Fixed, all tests pass |
-| 2026-04-14 | Fix confidence scale collapse: pass raw_composite_score (±100) instead of calibrated_score (±8) as confidence base in main.py | ✅ Fixed & re-scored |
-| 2026-04-14 | Rolling ridge regression calibrator — replaces static composite with data-driven predicted excess return | ✅ Implemented & integrated |
 
 ## Key Decisions
 <!-- Recent trade-offs and choices that affect future work -->
@@ -23,7 +22,7 @@ _No active task._
 - Run `scripts/migrate_scores_final_score.py` against the production DB before the next pipeline run to repair existing rows and drop the old column.
 - Signal thresholds scaled to ±2 (bullish:2, bearish:-2) to match calibrated_score range in config/scorer.json
 - `check_signal_score_consistency` uses `calibrated_score` as arbiter when non-NULL, falls back to `final_score`.
-- Rolling ridge calibrator: window=90, lambda=0.1, 15 features (6 category + 6 raw + 3 EMA spreads), validated R=0.47 across all 62 tickers
+- Rolling ridge calibrator: window=90, lambda=0.1, 16 features (6 category + 6 raw + 3 EMA spreads + weekly_score), validated R=0.47 across all 62 tickers
 - Anti-predictive categories (candlestick, structural, sentiment) zeroed in adaptive weights; calibrator independently ignores them
 - Timeframe weights now regime-adaptive: trending 0.2d/0.8w, ranging 0.8d/0.2w, volatile 0.5/0.5
 
