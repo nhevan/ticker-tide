@@ -371,6 +371,296 @@ class TestScoreTicker:
 
 
 # ---------------------------------------------------------------------------
+# confidence_base_score computation
+# ---------------------------------------------------------------------------
+
+class TestConfidenceBaseScore:
+    """Verify the confidence base score is derived from calibrated_score, not final_score.
+
+    Rules (src/scorer/main.py confidence block):
+    - When calibrated_score is available: base = min(abs(cal), 8.0) * 10.0
+      (capped at 8.0 because accuracy drops for |cal| > 8 due to calibrator overfitting)
+    - Cold start (calibrated_score is None): base = abs(final_score) * 0.3
+    """
+
+    def _score_with_calibrated(
+        self,
+        db_connection: sqlite3.Connection,
+        calibrated_score: float,
+    ) -> dict:
+        """Run score_ticker with a patched calibrated_score and return the result."""
+        from unittest.mock import patch
+        from src.scorer.main import score_ticker
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        with patch(
+            "src.scorer.main.calibrate_score",
+            return_value={"calibrated_score": calibrated_score, "model_r2": 0.40, "weights": None},
+        ):
+            result = score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+        assert result is not None
+        return result
+
+    def test_confidence_base_moderate_calibrated_score(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """calibrated_score=5.0 → confidence base ≈ 50 before modifiers.
+
+        With no modifiers the final confidence is clamped(base + sum(modifiers)).
+        We can't assert exactly 50 because modifiers shift it, but the base
+        passed to compute_full_confidence must be 50.0.
+        """
+        from unittest.mock import patch, call
+        from src.scorer.main import score_ticker
+        from src.scorer import confidence as conf_module
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        captured_base: list[float] = []
+
+        real_compute_full = conf_module.compute_full_confidence
+
+        def spy_full_confidence(final_score: float, **kwargs):  # type: ignore[override]
+            captured_base.append(final_score)
+            return real_compute_full(final_score=final_score, **kwargs)
+
+        with (
+            patch(
+                "src.scorer.main.calibrate_score",
+                return_value={"calibrated_score": 5.0, "model_r2": 0.40, "weights": None},
+            ),
+            patch("src.scorer.main.compute_full_confidence", side_effect=spy_full_confidence),
+        ):
+            score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert len(captured_base) == 1
+        assert captured_base[0] == pytest.approx(50.0), (
+            f"Expected confidence base ≈ 50.0 for calibrated_score=5.0, got {captured_base[0]}"
+        )
+
+    def test_confidence_base_high_calibrated_score_is_capped(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """calibrated_score=10.0 → confidence base must be 80, NOT 100.
+
+        |cal| > 8 is the overfitting zone: accuracy drops to 57.6% (vs 63.2% peak
+        at |cal|=6-8).  The cap ensures extreme predictions don't get inflated confidence.
+        """
+        from unittest.mock import patch
+        from src.scorer import confidence as conf_module
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        captured_base: list[float] = []
+        real_compute_full = conf_module.compute_full_confidence
+
+        def spy_full_confidence(final_score: float, **kwargs):  # type: ignore[override]
+            captured_base.append(final_score)
+            return real_compute_full(final_score=final_score, **kwargs)
+
+        with (
+            patch(
+                "src.scorer.main.calibrate_score",
+                return_value={"calibrated_score": 10.0, "model_r2": 0.40, "weights": None},
+            ),
+            patch("src.scorer.main.compute_full_confidence", side_effect=spy_full_confidence),
+        ):
+            from src.scorer.main import score_ticker
+            score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert len(captured_base) == 1
+        assert captured_base[0] == pytest.approx(80.0), (
+            f"Expected confidence base = 80.0 (capped) for calibrated_score=10.0, got {captured_base[0]}"
+        )
+
+    def test_confidence_base_extreme_calibrated_score_is_capped(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """calibrated_score=12.0 → confidence base = 80 (same cap as 10.0).
+
+        Accuracy for |cal| > 12 is 47.7% — below-baseline.  These must not get
+        a higher base than |cal| = 8.
+        """
+        from unittest.mock import patch
+        from src.scorer import confidence as conf_module
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        captured_base: list[float] = []
+        real_compute_full = conf_module.compute_full_confidence
+
+        def spy_full_confidence(final_score: float, **kwargs):  # type: ignore[override]
+            captured_base.append(final_score)
+            return real_compute_full(final_score=final_score, **kwargs)
+
+        with (
+            patch(
+                "src.scorer.main.calibrate_score",
+                return_value={"calibrated_score": 12.0, "model_r2": 0.40, "weights": None},
+            ),
+            patch("src.scorer.main.compute_full_confidence", side_effect=spy_full_confidence),
+        ):
+            from src.scorer.main import score_ticker
+            score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert len(captured_base) == 1
+        assert captured_base[0] == pytest.approx(80.0), (
+            f"Expected confidence base = 80.0 (capped) for calibrated_score=12.0, got {captured_base[0]}"
+        )
+
+    def test_confidence_base_low_calibrated_score(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """calibrated_score=1.0 → confidence base ≈ 10 (low prediction = low confidence)."""
+        from unittest.mock import patch
+        from src.scorer import confidence as conf_module
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        captured_base: list[float] = []
+        real_compute_full = conf_module.compute_full_confidence
+
+        def spy_full_confidence(final_score: float, **kwargs):  # type: ignore[override]
+            captured_base.append(final_score)
+            return real_compute_full(final_score=final_score, **kwargs)
+
+        with (
+            patch(
+                "src.scorer.main.calibrate_score",
+                return_value={"calibrated_score": 1.0, "model_r2": 0.40, "weights": None},
+            ),
+            patch("src.scorer.main.compute_full_confidence", side_effect=spy_full_confidence),
+        ):
+            from src.scorer.main import score_ticker
+            score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert len(captured_base) == 1
+        assert captured_base[0] == pytest.approx(10.0), (
+            f"Expected confidence base ≈ 10.0 for calibrated_score=1.0, got {captured_base[0]}"
+        )
+
+    def test_confidence_base_cold_start_uses_discounted_final_score(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """calibrated_score=None → confidence base = abs(final_score) * 0.3.
+
+        During cold start, final_score has near-zero return correlation (R ≈ -0.006).
+        The 0.3 discount ensures confidence relies mainly on quality modifiers.
+        """
+        from unittest.mock import patch
+        from src.scorer import confidence as conf_module
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        captured_base: list[float] = []
+        captured_final_score: list[float] = []
+        real_compute_full = conf_module.compute_full_confidence
+
+        def spy_full_confidence(final_score: float, **kwargs):  # type: ignore[override]
+            captured_base.append(final_score)
+            return real_compute_full(final_score=final_score, **kwargs)
+
+        with (
+            patch(
+                "src.scorer.main.calibrate_score",
+                return_value={"calibrated_score": None, "model_r2": None, "weights": None},
+            ),
+            patch("src.scorer.main.compute_full_confidence", side_effect=spy_full_confidence),
+        ):
+            from src.scorer.main import score_ticker
+            result = score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert result is not None
+        assert len(captured_base) == 1
+        expected_base = abs(result["final_score"]) * 0.3
+        assert captured_base[0] == pytest.approx(expected_base, abs=0.01), (
+            f"Expected cold-start base = abs(final_score)*0.3 = {expected_base:.2f}, "
+            f"got {captured_base[0]:.2f}"
+        )
+
+    def test_confidence_base_negative_calibrated_score_uses_abs(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """calibrated_score=-5.0 → confidence base ≈ 50 (abs is applied)."""
+        from unittest.mock import patch
+        from src.scorer import confidence as conf_module
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        captured_base: list[float] = []
+        real_compute_full = conf_module.compute_full_confidence
+
+        def spy_full_confidence(final_score: float, **kwargs):  # type: ignore[override]
+            captured_base.append(final_score)
+            return real_compute_full(final_score=final_score, **kwargs)
+
+        with (
+            patch(
+                "src.scorer.main.calibrate_score",
+                return_value={"calibrated_score": -5.0, "model_r2": 0.40, "weights": None},
+            ),
+            patch("src.scorer.main.compute_full_confidence", side_effect=spy_full_confidence),
+        ):
+            from src.scorer.main import score_ticker
+            score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert len(captured_base) == 1
+        assert captured_base[0] == pytest.approx(50.0), (
+            f"Expected confidence base = 50.0 for calibrated_score=-5.0, got {captured_base[0]}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # run_scorer
 # ---------------------------------------------------------------------------
 

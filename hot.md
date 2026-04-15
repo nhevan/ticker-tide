@@ -10,14 +10,15 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
+| 2026-04-15 | Fix confidence base: use `min(abs(cal),8.0)*10` (warm) / `abs(fs)*0.3` (cold) instead of `abs(final_score)`. Data-driven: accuracy peaks at \|cal\|≈7 (63%), drops above 8. Cap prevents overfit extremes from inflating confidence. 6 new tests, 263 pass. | ✅ Fixed |
 | 2026-04-15 | Fix `check_weighted_score_math` false positives: was using hardcoded trending weights (0.2d/0.8w) for all tickers; now looks up regime-specific weights per ticker from config | ✅ Fixed, 3 new tests |
 | 2026-04-15 | Fix `final_score` mixed-scales bug: column now always holds ±100 composite; `raw_composite_score` column removed; `check_signal_score_consistency` updated; migration script written | ✅ Fixed, all tests pass |
 | 2026-04-14 | Fix confidence scale collapse: pass raw_composite_score (±100) instead of calibrated_score (±8) as confidence base in main.py | ✅ Fixed & re-scored |
-| 2026-04-14 | Fix migrate_add_calibration_columns.py wrong default DB path (ticker_tide.db → config/database.json) | ✅ Fixed & migration run |
 | 2026-04-14 | Rolling ridge regression calibrator — replaces static composite with data-driven predicted excess return | ✅ Implemented & integrated |
 
 ## Key Decisions
 <!-- Recent trade-offs and choices that affect future work -->
+- **Confidence base uses calibrated_score** (warm): `min(abs(cal), 8.0) * 10`. Cap at 8.0 — accuracy drops above |cal|=8 (57.6%) and |cal|=12 (47.7%) due to calibrator overfitting. Cold start: `abs(final_score) * 0.3`.
 - **`final_score` column is always ±100** (merged timeframe composite). `calibrated_score` (≈ ±2–15%) is separate. `raw_composite_score` column was removed — it was a redundant patch.
 - Run `scripts/migrate_scores_final_score.py` against the production DB before the next pipeline run to repair existing rows and drop the old column.
 - Signal thresholds scaled to ±2 (bullish:2, bearish:-2) to match calibrated_score range in config/scorer.json

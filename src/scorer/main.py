@@ -677,11 +677,23 @@ def score_ticker(
         "SELECT 1 FROM filings_8k WHERE ticker = ? LIMIT 1", (ticker,)
     ).fetchone()
 
-    # Use final_score (±100 scale) as confidence base so that modifiers
-    # (designed for a 30-70 base) operate on the correct scale. effective_score
-    # (calibrated_score ≈ ±2-15%) is used only for signal classification above.
+    # Derive confidence base from calibrated_score when available.
+    # abs(calibrated_score) correlates with prediction accuracy up to ~8; above
+    # that the calibrator overfits and accuracy drops (|cal| 8-12 → 57.6%,
+    # |cal| > 12 → 47.7% — worse than the baseline).  Cap at 8.0 to prevent
+    # extreme, low-reliability predictions from inflating confidence to 80-100%.
+    # Scale: abs(cal) of 2 → base 20, abs(cal) of 5 → base 50, abs(cal) of 8+→ base 80.
+    #
+    # Cold start (calibrated_score is None): final_score has near-zero correlation
+    # with returns (R ≈ -0.006).  Discount by 0.3 so confidence derives mainly
+    # from the quality modifiers (data completeness, VIX, volatility, etc.).
+    if calibrated_score is not None:
+        confidence_base_score = min(abs(calibrated_score), 8.0) * 10.0
+    else:
+        confidence_base_score = abs(final_score) * 0.3
+
     confidence_result = compute_full_confidence(
-        final_score=final_score,
+        final_score=confidence_base_score,
         daily_score=daily_score,
         weekly_score=weekly_score,
         category_scores=category_scores,

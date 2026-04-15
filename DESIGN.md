@@ -257,10 +257,18 @@ Uses `calibrated_score` (rolling ridge predicted excess return in %) when availa
 
 ### Confidence Calculation
 
-**Base score:** `abs(final_score)` — the ±100 merged timeframe composite. This keeps
-the confidence base on the scale the modifiers were designed for (30–70 typical). The
-`calibrated_score` (predicted excess return %, range ≈ ±2–15%) is used only for signal
-classification and ranking; it is not used as the confidence base.
+**Base score:** Derived from `calibrated_score` when available (warm start), or
+discounted `final_score` during cold start.
+
+- **Warm start** (`calibrated_score` is not None): `min(abs(calibrated_score), 8.0) * 10.0`  
+  Maps the ridge-predicted excess return to a 0–80 confidence base. The cap at 8.0
+  prevents extreme predictions from inflating confidence: empirically, accuracy peaks
+  at `|cal| ≈ 6–8` (63%) and *drops* for `|cal| > 8` (57.6%) and `|cal| > 12` (47.7%)
+  due to calibrator overfitting. So `|cal| = 5 → base 50`, `|cal| = 8+ → base 80`.
+
+- **Cold start** (`calibrated_score` is None): `abs(final_score) * 0.3`  
+  The raw composite has near-zero return correlation (R ≈ −0.006), so it is discounted
+  heavily. Confidence in this state is driven primarily by the quality modifiers below.
 
 **Modifiers** (applied to base):
 | Modifier | Condition | Value |
@@ -319,7 +327,8 @@ Final confidence is clamped to [0, 100].
     if fewer than `min_training_samples` are available.
 11. Classify signal using `calibrated_score` if available, otherwise `final_score`. `effective_score`
     is a local variable only — it is never persisted.
-12. Compute confidence: base = `abs(final_score)` (±100 scale) + modifiers.
+12. Compute confidence: base = `min(abs(calibrated_score), 8.0) * 10.0` when warm
+    (range 0–80), or `abs(final_score) * 0.3` during cold start; then add modifiers.
     Build data_completeness and key_signals.
 13. Save to `scores_daily` (INSERT OR REPLACE) — `final_score` always holds the ±100 composite;
     `calibrated_score` holds the ridge prediction (or NULL); `model_r2` holds the training R².
