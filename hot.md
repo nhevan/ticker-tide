@@ -10,7 +10,8 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
-| 2026-04-15 | Fix `final_score` mixed-scales bug: column now always holds ±100 composite; `raw_composite_score` column removed; `check_signal_score_consistency` updated; migration script written | ✅ Fixed, all 360 tests pass |
+| 2026-04-15 | Fix `check_weighted_score_math` false positives: was using hardcoded trending weights (0.2d/0.8w) for all tickers; now looks up regime-specific weights per ticker from config | ✅ Fixed, 3 new tests |
+| 2026-04-15 | Fix `final_score` mixed-scales bug: column now always holds ±100 composite; `raw_composite_score` column removed; `check_signal_score_consistency` updated; migration script written | ✅ Fixed, all tests pass |
 | 2026-04-14 | Fix confidence scale collapse: pass raw_composite_score (±100) instead of calibrated_score (±8) as confidence base in main.py | ✅ Fixed & re-scored |
 | 2026-04-14 | Fix migrate_add_calibration_columns.py wrong default DB path (ticker_tide.db → config/database.json) | ✅ Fixed & migration run |
 | 2026-04-14 | Rolling ridge regression calibrator — replaces static composite with data-driven predicted excess return | ✅ Implemented & integrated |

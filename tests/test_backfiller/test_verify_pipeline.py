@@ -842,6 +842,53 @@ class TestCheckWeightedScoreMath:
         assert result.status in ("warn", "fail")
         assert result.details is not None
 
+    def test_check_weighted_score_math_ranging_regime_passes(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Ranging-regime ticker whose math is 0.8×daily + 0.2×weekly must not be flagged."""
+        daily_score = 10.0
+        weekly_score = 50.0
+        # Correct ranging formula: 0.8*10 + 0.2*50 = 18.0
+        _insert_score(db_connection, "AAPL", "2026-01-02",
+                      final_score=18.0,
+                      daily_score=daily_score,
+                      weekly_score=weekly_score,
+                      regime="ranging")
+        result = check_weighted_score_math(db_connection, "2026-01-02")
+        assert result.status == "pass", (
+            f"Ranging ticker with correct math should pass, got: {result.details}"
+        )
+
+    def test_check_weighted_score_math_mixed_regimes_all_correct_passes(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Trending + ranging + volatile tickers all with correct math should all pass."""
+        _insert_score(db_connection, "AAPL", "2026-01-02",
+                      final_score=0.2 * 40 + 0.8 * 20,   # trending = 24.0
+                      daily_score=40.0, weekly_score=20.0, regime="trending")
+        _insert_score(db_connection, "MSFT", "2026-01-02",
+                      final_score=0.8 * 30 + 0.2 * 10,   # ranging = 26.0
+                      daily_score=30.0, weekly_score=10.0, regime="ranging")
+        _insert_score(db_connection, "GOOG", "2026-01-02",
+                      final_score=0.5 * 60 + 0.5 * 20,   # volatile = 40.0
+                      daily_score=60.0, weekly_score=20.0, regime="volatile")
+        result = check_weighted_score_math(db_connection, "2026-01-02")
+        assert result.status == "pass", (
+            f"All regimes with correct math should pass, got: {result.details}"
+        )
+
+    def test_check_weighted_score_math_ranging_wrong_math_flagged(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Ranging-regime ticker with incorrect math must still be flagged."""
+        _insert_score(db_connection, "AAPL", "2026-01-02",
+                      final_score=99.0,         # wrong — correct would be 0.8*10+0.2*50=18.0
+                      daily_score=10.0, weekly_score=50.0, regime="ranging")
+        result = check_weighted_score_math(db_connection, "2026-01-02", tolerance=2.0)
+        assert result.status in ("warn", "fail")
+        assert result.details is not None
+        assert any("AAPL" in d for d in result.details)
+
 
 class TestCheckRegimeValues:
     """Tests for check_regime_values()."""
