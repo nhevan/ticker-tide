@@ -36,7 +36,7 @@
   },
   "calibration": {
     "enabled": true,
-    "window_size": 90,
+    "window_size": 365,
     "ridge_lambda": 0.1,
     "min_training_samples": 30,
     "benchmark_ticker": "SPY",

@@ -10,6 +10,7 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
+| 2026-04-16 | Increase calibrator `window_size` from 90→365 in `config/scorer.json`. Uses ~14,400 training rows instead of ~3,600. CONFIG.md updated. Re-run scorer with `--force` to apply. | ✅ Done |
 | 2026-04-16 | Exclude ETFs from calibrator training window: `get_training_excluded_tickers()` in `config.py` (sector ETFs + market benchmarks + sector="Index" tickers), `excluded_tickers` param on `fetch_training_data` + `calibrate_score`, propagated through `score_ticker` and `run_historical_scoring`. 26 calibrator tests pass. | ✅ Done |
 | 2026-04-17 | Implement monthly timeframe: `monthly_candles` + `indicators_monthly` tables, `monthly_score` in `scores_daily`, `src/calculator/monthly.py`, 3-way `merge_timeframes()` with renorm, `compute_monthly_score()`, calibrator 16→17 features, confidence `monthly_available`, migration script, verify_pipeline monthly checks, all 6 docs updated. 1312 tests pass. | ✅ Done |
 | 2026-04-15 | Add `weekly_score` as 16th calibrator feature: `build_feature_vector`, `fetch_training_data`, `calibrate_score`, `main.py` call site. Added weight-vector INFO log. 21 calibrator tests pass, 1317 total pass. | ✅ Done |
@@ -23,7 +24,7 @@ _No active task._
 - **~60 monthly bars** from 5 years of data; EMA-50 on monthly will be NULL for first ~50 months — acceptable, scorer handles None indicators as 0.0.
 - **Confidence base uses calibrated_score** (warm): `min(abs(cal), 8.0) * 10`. Cap at 8.0 — accuracy drops above |cal|=8 (57.6%) and |cal|=12 (47.7%) due to calibrator overfitting. Cold start: `abs(final_score) * 0.3`.
 - **`final_score` column is always ±100** (merged timeframe composite). `calibrated_score` (≈ ±2–15%) is separate.
-- Rolling ridge calibrator: window=90, lambda=0.1, 17 features. Validated R²=0.1025 (was 0.0972 with 16 features) across 15 diverse tickers.
+- Rolling ridge calibrator: window=365, lambda=0.1, 17 features. Validated R²=0.1025 (was 0.0972 with 16 features) across 15 diverse tickers. Window increased from 90→365 to use ~14,400 training rows (was ~3,600); older data risk mitigated by staying within 1 year.
 - Anti-predictive categories (candlestick, structural, sentiment) zeroed in adaptive weights.
 
 ## Next Up
