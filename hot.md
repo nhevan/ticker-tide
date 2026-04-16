@@ -10,8 +10,8 @@ _No active task._
 
 | When | What | Status |
 |---|---|---|
+| 2026-04-16 | Exclude ETFs from calibrator training window: `get_training_excluded_tickers()` in `config.py` (sector ETFs + market benchmarks + sector="Index" tickers), `excluded_tickers` param on `fetch_training_data` + `calibrate_score`, propagated through `score_ticker` and `run_historical_scoring`. 26 calibrator tests pass. | ✅ Done |
 | 2026-04-17 | Implement monthly timeframe: `monthly_candles` + `indicators_monthly` tables, `monthly_score` in `scores_daily`, `src/calculator/monthly.py`, 3-way `merge_timeframes()` with renorm, `compute_monthly_score()`, calibrator 16→17 features, confidence `monthly_available`, migration script, verify_pipeline monthly checks, all 6 docs updated. 1312 tests pass. | ✅ Done |
-| 2026-04-17 | Verify `return_20d` experiment: added as feature #17, ran `--historical --force` on 15 tickers, R² improved 0.0972→0.1025 (+5.5%). Confirmed monthly adds signal. | ✅ Done (replaced by real monthly_score) |
 | 2026-04-15 | Add `weekly_score` as 16th calibrator feature: `build_feature_vector`, `fetch_training_data`, `calibrate_score`, `main.py` call site. Added weight-vector INFO log. 21 calibrator tests pass, 1317 total pass. | ✅ Done |
 | 2026-04-15 | Fix confidence base: use `min(abs(cal),8.0)*10` (warm) / `abs(fs)*0.3` (cold) instead of `abs(final_score)`. Data-driven: accuracy peaks at \|cal\|≈7 (63%), drops above 8. Cap prevents overfit extremes from inflating confidence. 6 new tests, 263 pass. | ✅ Fixed |
 | 2026-04-15 | Fix `final_score` mixed-scales bug: column now always holds ±100 composite; `raw_composite_score` column removed; `check_signal_score_consistency` updated; migration script written | ✅ Fixed, all tests pass |

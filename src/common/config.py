@@ -122,6 +122,35 @@ def get_market_benchmarks() -> dict:
     return config["market_benchmarks"]
 
 
+def get_training_excluded_tickers() -> set[str]:
+    """
+    Return the set of ticker symbols that must not be used as training examples
+    for the calibrator's ridge regression.
+
+    Excludes three categories:
+      - Sector ETFs (e.g. XLK, XLF, XLV) — basket products whose
+        feature-return relationships differ from individual stocks.
+      - Market benchmarks (e.g. SPY, QQQ, ^VIX) — SPY in particular
+        always has ~0 excess return against itself, poisoning the label.
+      - Tickers categorised as sector="Index" in tickers.json (e.g. VOO,
+        DIA) — broad-market index ETFs added as active tickers.
+
+    All three categories can receive scores; they are only excluded from
+    the training window used to fit the calibrator.
+
+    Returns:
+        set[str]: Symbols to skip in fetch_training_data.
+    """
+    config = load_config("tickers")
+    excluded: set[str] = set()
+    excluded.update(config.get("sector_etfs", []))
+    excluded.update(config.get("market_benchmarks", {}).values())
+    for ticker in config.get("tickers", []):
+        if ticker.get("sector") == "Index":
+            excluded.add(ticker["symbol"])
+    return excluded
+
+
 def load_env(env_path: str = None) -> None:
     """
     Load environment variables from a .env file.

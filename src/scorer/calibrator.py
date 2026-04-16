@@ -229,9 +229,10 @@ def fetch_training_data(
     conn: sqlite3.Connection,
     scoring_date: str,
     config: dict,
+    excluded_tickers: Optional[set[str]] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Fetch historical signals with their 16-feature vectors and realized
+    Fetch historical signals with their 17-feature vectors and realized
     excess returns to serve as training data for the ridge regression.
 
     Queries scored signals within the past `window_size` calendar days (across all
@@ -239,14 +240,21 @@ def fetch_training_data(
       - A known forward close price N trading days after the signal
       - A known SPY close price for the same forward period
 
+    Tickers in `excluded_tickers` are skipped entirely. Pass the result of
+    ``get_training_excluded_tickers()`` here to omit sector ETFs, market
+    benchmarks, and index ETFs — basket products whose feature-return
+    relationships differ from individual stocks and distort the model.
+
     Parameters:
-        conn:         Open SQLite connection with row_factory=sqlite3.Row.
-        scoring_date: The current scoring date (YYYY-MM-DD). Only signals
-                      before this date are eligible for training.
-        config:       Calibration config dict.
+        conn:              Open SQLite connection with row_factory=sqlite3.Row.
+        scoring_date:      The current scoring date (YYYY-MM-DD). Only signals
+                           before this date are eligible for training.
+        config:            Calibration config dict.
+        excluded_tickers:  Optional set of ticker symbols to exclude from the
+                           training window. None or empty set excludes nothing.
 
     Returns:
-        (X, y) tuple where X is (n_samples, 16) feature matrix and
+        (X, y) tuple where X is (n_samples, 17) feature matrix and
         y is (n_samples,) vector of excess returns. Both may be empty
         if no training data is available.
     """
@@ -258,9 +266,8 @@ def fetch_training_data(
     scoring_dt = date.fromisoformat(scoring_date)
     cutoff_date = (scoring_dt - timedelta(days=window_size)).isoformat()
 
-    # Fetch scored signals within the calendar window, across all tickers
-    rows = conn.execute(
-        """
+    # Build the query; add NOT IN clause only when there are tickers to exclude
+    base_sql = """
         SELECT s.ticker, s.date,
                s.trend_score, s.momentum_score, s.volume_score,
                s.volatility_score, s.fundamental_score, s.macro_score,
@@ -274,11 +281,18 @@ def fetch_training_data(
         WHERE s.date < ?
           AND s.date >= ?
           AND s.signal IS NOT NULL
-          AND o_sig.close > 0
-        ORDER BY s.date DESC
-        """,
-        (scoring_date, cutoff_date),
-    ).fetchall()
+          AND o_sig.close > 0"""
+
+    params: list = [scoring_date, cutoff_date]
+    if excluded_tickers:
+        placeholders = ",".join("?" * len(excluded_tickers))
+        base_sql += f"\n          AND s.ticker NOT IN ({placeholders})"
+        params.extend(sorted(excluded_tickers))
+
+    base_sql += "\n        ORDER BY s.date DESC"
+
+    # Fetch scored signals within the calendar window, across all tickers
+    rows = conn.execute(base_sql, params).fetchall()
 
     if not rows:
         return np.empty((0, 17)), np.empty(0)
@@ -379,6 +393,7 @@ def calibrate_score(
     config: dict,
     weekly_score: Optional[float] = None,
     monthly_score: Optional[float] = None,
+    excluded_tickers: Optional[set[str]] = None,
 ) -> dict:
     """
     Calibrate the current signal using a rolling ridge regression.
@@ -393,16 +408,19 @@ def calibrate_score(
       3. The ridge solve fails (numerical issues).
 
     Parameters:
-        conn:             Open SQLite connection (row_factory=sqlite3.Row).
-        scoring_date:     Current scoring date (YYYY-MM-DD).
-        category_scores:  Dict of 6 category scores (trend, momentum, ...).
-        raw_indicators:   Dict of 6 raw indicator values (rsi_14, adx, ...).
-        ema_positions:    Dict of 3 EMA position spreads.
-        config:           Calibration config dict (from scorer.json["calibration"]).
-        weekly_score:     Prior-week composite score (same scale as category scores).
-                          None → 0.0 in the feature vector.
-        monthly_score:    Prior-month composite score (same scale as category scores).
-                          None → 0.0 in the feature vector.
+        conn:              Open SQLite connection (row_factory=sqlite3.Row).
+        scoring_date:      Current scoring date (YYYY-MM-DD).
+        category_scores:   Dict of 6 category scores (trend, momentum, ...).
+        raw_indicators:    Dict of 6 raw indicator values (rsi_14, adx, ...).
+        ema_positions:     Dict of 3 EMA position spreads.
+        config:            Calibration config dict (from scorer.json["calibration"]).
+        weekly_score:      Prior-week composite score (same scale as category scores).
+                           None → 0.0 in the feature vector.
+        monthly_score:     Prior-month composite score (same scale as category scores).
+                           None → 0.0 in the feature vector.
+        excluded_tickers:  Tickers to omit from the training window. Pass the result of
+                           ``get_training_excluded_tickers()`` to exclude sector ETFs,
+                           market benchmarks, and index ETFs.
 
     Returns:
         Dict with keys:
@@ -419,8 +437,10 @@ def calibrate_score(
     min_samples = config.get("min_training_samples", 30)
     ridge_lambda = config.get("ridge_lambda", 0.1)
 
-    # Fetch training data
-    X_train, y_train = fetch_training_data(conn, scoring_date, config)
+    # Fetch training data, skipping ETFs and benchmarks
+    X_train, y_train = fetch_training_data(
+        conn, scoring_date, config, excluded_tickers=excluded_tickers
+    )
 
     if len(X_train) < min_samples:
         logger.info(

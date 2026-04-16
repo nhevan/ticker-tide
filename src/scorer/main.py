@@ -20,7 +20,7 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from src.common.config import get_active_tickers, load_config, load_env
+from src.common.config import get_active_tickers, get_training_excluded_tickers, load_config, load_env
 from src.common.db import create_all_tables, get_connection
 from src.common.events import (
     get_pipeline_event_status,
@@ -465,6 +465,7 @@ def score_ticker(
     ticker_config: dict,
     scoring_date: str,
     config: dict,
+    excluded_tickers: Optional[set[str]] = None,
 ) -> Optional[dict]:
     """
     Compute a complete score for a single ticker on a single date.
@@ -488,6 +489,8 @@ def score_ticker(
         ticker_config: Ticker dict with at least symbol, sector_etf.
         scoring_date: Date to score in YYYY-MM-DD format.
         config: Full scorer config dict.
+        excluded_tickers: Tickers to omit from the calibrator's training window.
+            Compute once with get_training_excluded_tickers() and pass here.
 
     Returns:
         Complete score dict, or None if no indicator data is available for the date.
@@ -668,6 +671,7 @@ def score_ticker(
         config=calibration_config,
         weekly_score=weekly_score,
         monthly_score=monthly_score,
+        excluded_tickers=excluded_tickers,
     )
     calibrated_score = calibration_result["calibrated_score"]
     model_r2 = calibration_result["model_r2"]
@@ -858,6 +862,14 @@ def run_scorer(
     ticker_symbols = [t["symbol"] for t in all_tickers]
     ticker_map = {t["symbol"]: t for t in all_tickers}
 
+    # Compute once — sector ETFs, market benchmarks, and index ETFs must not
+    # be used as training examples for the calibrator.
+    training_excluded = get_training_excluded_tickers()
+    logger.info(
+        "phase=%s calibrator_excluded_tickers=%s",
+        _PHASE, sorted(training_excluded),
+    )
+
     tracker = ProgressTracker(phase="Scorer", tickers=ticker_symbols)
     msg_id = send_telegram_message(
         telegram_token, telegram_chat_id, tracker.format_progress_message()
@@ -880,6 +892,7 @@ def run_scorer(
                 ticker_config=ticker_config,
                 scoring_date=scoring_date,
                 config=config,
+                excluded_tickers=training_excluded,
             )
             if result is None:
                 tracker.mark_skipped(ticker, reason="no indicator data")
@@ -996,6 +1009,8 @@ def run_historical_scoring(
     if ticker_filter:
         all_tickers = [t for t in all_tickers if t["symbol"] == ticker_filter]
 
+    training_excluded = get_training_excluded_tickers()
+
     started_at = _utc_now_iso()
     start_ts = datetime.now(tz=timezone.utc)
     total_scores = 0
@@ -1021,6 +1036,7 @@ def run_historical_scoring(
                         ticker_config=tc,
                         scoring_date=dt,
                         config=config,
+                        excluded_tickers=training_excluded,
                     )
                     if result is not None:
                         total_scores += 1
@@ -1047,6 +1063,7 @@ def run_historical_scoring(
                         ticker_config=tc,
                         scoring_date=week_start,
                         config=config,
+                        excluded_tickers=training_excluded,
                     )
                     if result is not None:
                         total_scores += 1

@@ -78,6 +78,71 @@ def sample_ema_positions() -> dict:
     }
 
 
+def _add_ticker_data(
+    conn: sqlite3.Connection,
+    ticker: str,
+    all_dates: list[str],
+    n_signals: int,
+    base_price: float,
+    ticker_idx: int = 0,
+) -> None:
+    """Insert synthetic OHLCV, indicators, and scores for one ticker into existing dates."""
+    for i in range(n_signals):
+        dt = all_dates[i]
+        cycle = np.sin(2 * np.pi * i / 20)
+        trend = 50.0 * cycle + (ticker_idx - 1) * 10
+        momentum = 40.0 * cycle + 5
+        volume = 10.0 * cycle
+        volatility = -5.0
+        fundamental = 15.0 + ticker_idx * 5
+        macro = 20.0 * cycle
+
+        close = base_price + i * 0.5 + cycle * 5
+        conn.execute(
+            "INSERT OR REPLACE INTO ohlcv_daily (ticker, date, open, high, low, close, volume) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (ticker, dt, close - 1, close + 2, close - 2, close, 50_000_000),
+        )
+
+        rsi = 50 + 15 * cycle
+        adx = 25 + 5 * abs(cycle)
+        macd_hist = 0.5 * cycle
+        stoch_k = 50 + 20 * cycle
+        bb_pctb = 0.5 + 0.3 * cycle
+        cmf = 0.05 * cycle
+        ema_9 = close * 0.99
+        ema_21 = close * 0.98
+        ema_50 = close * 0.96
+        conn.execute(
+            "INSERT OR REPLACE INTO indicators_daily "
+            "(ticker, date, ema_9, ema_21, ema_50, macd_line, macd_signal, "
+            "macd_histogram, adx, rsi_14, stoch_k, stoch_d, cci_20, williams_r, "
+            "obv, cmf_20, ad_line, bb_upper, bb_lower, bb_pctb, atr_14, "
+            "keltner_upper, keltner_lower) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ticker, dt, ema_9, ema_21, ema_50, 0.5, 0.3, macd_hist,
+             adx, rsi, stoch_k, 55, 30, -30, 1_000_000, cmf, 500_000,
+             close + 5, close - 5, bb_pctb, 1.5, close + 6, close - 6),
+        )
+
+        daily_score = trend * 0.3 + momentum * 0.3 + volume * 0.1 + macro * 0.3
+        weekly_score = daily_score * 0.9
+        final_score = daily_score * 0.2 + weekly_score * 0.8
+        signal = "BULLISH" if final_score > 20 else ("BEARISH" if final_score < -20 else "NEUTRAL")
+        conn.execute(
+            "INSERT OR REPLACE INTO scores_daily "
+            "(ticker, date, signal, confidence, final_score, regime, daily_score, weekly_score, "
+            "trend_score, momentum_score, volume_score, volatility_score, "
+            "candlestick_score, structural_score, sentiment_score, "
+            "fundamental_score, macro_score, data_completeness, key_signals) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ticker, dt, signal, abs(final_score), final_score, "trending",
+             daily_score, weekly_score,
+             trend, momentum, volume, volatility, 0, 0, 0, fundamental, macro,
+             "{}", "[]"),
+        )
+
+
 def _populate_training_data(conn: sqlite3.Connection, n_signals: int = 50) -> None:
     """Insert synthetic scores + OHLCV data to serve as training data for the calibrator.
 
@@ -109,72 +174,7 @@ def _populate_training_data(conn: sqlite3.Connection, n_signals: int = 50) -> No
     # Insert ticker OHLCV and scores
     for ticker_idx, ticker in enumerate(tickers):
         base_price = 100.0 + ticker_idx * 50  # AAPL=100, MSFT=150, JPM=200
-        for i in range(n_signals):
-            dt = all_dates[i]
-            # Create deterministic scores: higher i → more bullish
-            cycle = np.sin(2 * np.pi * i / 20)  # oscillating signal
-            trend = 50.0 * cycle + (ticker_idx - 1) * 10
-            momentum = 40.0 * cycle + 5
-            volume = 10.0 * cycle
-            volatility = -5.0
-            fundamental = 15.0 + ticker_idx * 5
-            macro = 20.0 * cycle
-
-            # Close price: drift + signal-correlated component
-            close = base_price + i * 0.5 + cycle * 5
-            # Future close (10 days ahead): correlated with current signal
-            future_idx = i + 10
-            if future_idx < len(all_dates):
-                future_cycle = np.sin(2 * np.pi * (i + 10) / 20)
-                future_close = base_price + future_idx * 0.5 + future_cycle * 5
-
-            conn.execute(
-                "INSERT OR REPLACE INTO ohlcv_daily (ticker, date, open, high, low, close, volume) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (ticker, dt, close - 1, close + 2, close - 2, close, 50_000_000),
-            )
-
-            # Insert indicators_daily
-            rsi = 50 + 15 * cycle
-            adx = 25 + 5 * abs(cycle)
-            macd_hist = 0.5 * cycle
-            stoch_k = 50 + 20 * cycle
-            bb_pctb = 0.5 + 0.3 * cycle
-            cmf = 0.05 * cycle
-            ema_9 = close * 0.99
-            ema_21 = close * 0.98
-            ema_50 = close * 0.96
-
-            conn.execute(
-                "INSERT OR REPLACE INTO indicators_daily "
-                "(ticker, date, ema_9, ema_21, ema_50, macd_line, macd_signal, "
-                "macd_histogram, adx, rsi_14, stoch_k, stoch_d, cci_20, williams_r, "
-                "obv, cmf_20, ad_line, bb_upper, bb_lower, bb_pctb, atr_14, "
-                "keltner_upper, keltner_lower) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (ticker, dt, ema_9, ema_21, ema_50, 0.5, 0.3, macd_hist,
-                 adx, rsi, stoch_k, 55, 30, -30, 1_000_000, cmf, 500_000,
-                 close + 5, close - 5, bb_pctb, 1.5, close + 6, close - 6),
-            )
-
-            # Insert scores_daily
-            daily_score = trend * 0.3 + momentum * 0.3 + volume * 0.1 + macro * 0.3
-            weekly_score = daily_score * 0.9
-            final_score = daily_score * 0.2 + weekly_score * 0.8
-            signal = "BULLISH" if final_score > 20 else ("BEARISH" if final_score < -20 else "NEUTRAL")
-
-            conn.execute(
-                "INSERT OR REPLACE INTO scores_daily "
-                "(ticker, date, signal, confidence, final_score, regime, daily_score, weekly_score, "
-                "trend_score, momentum_score, volume_score, volatility_score, "
-                "candlestick_score, structural_score, sentiment_score, "
-                "fundamental_score, macro_score, data_completeness, key_signals) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (ticker, dt, signal, abs(final_score), final_score, "trending",
-                 daily_score, weekly_score,
-                 trend, momentum, volume, volatility, 0, 0, 0, fundamental, macro,
-                 "{}", "[]"),
-            )
+        _add_ticker_data(conn, ticker, all_dates, n_signals, base_price, ticker_idx)
 
     conn.commit()
 
@@ -462,6 +462,59 @@ class TestFetchTrainingData:
 
         assert len(X) == 0
         assert len(y) == 0
+
+    def test_etf_tickers_excluded_from_training(self, db_connection, calibration_config):
+        """Tickers in excluded_tickers are not returned as training examples."""
+        base = date(2025, 1, 2)
+        all_dates = []
+        d = base
+        while len(all_dates) < 70:
+            if d.weekday() < 5:
+                all_dates.append(d.isoformat())
+            d += timedelta(days=1)
+
+        # SPY benchmark rows (needed for excess return computation)
+        for i, dt in enumerate(all_dates):
+            spy_close = 500.0 + i * 0.1
+            db_connection.execute(
+                "INSERT OR REPLACE INTO ohlcv_daily (ticker, date, open, high, low, close, volume) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("SPY", dt, spy_close - 0.5, spy_close + 1, spy_close - 1, spy_close, 80_000_000),
+            )
+
+        # Insert one regular stock (AAPL) and one sector ETF (XLK)
+        _add_ticker_data(db_connection, "AAPL", all_dates, n_signals=50, base_price=100.0)
+        _add_ticker_data(db_connection, "XLK", all_dates, n_signals=50, base_price=175.0)
+        db_connection.commit()
+
+        # Without exclusion, both AAPL and XLK rows are eligible
+        X_all, _ = fetch_training_data(
+            db_connection, scoring_date="2025-02-20", config=calibration_config,
+        )
+
+        # With XLK excluded, only AAPL rows remain
+        X_excluded, _ = fetch_training_data(
+            db_connection, scoring_date="2025-02-20", config=calibration_config,
+            excluded_tickers={"XLK"},
+        )
+
+        assert len(X_excluded) < len(X_all)
+        # Roughly half the rows since we only have two tickers with equal signal counts
+        assert len(X_excluded) <= len(X_all) // 2 + 5
+
+    def test_empty_excluded_set_does_not_filter(self, db_connection, calibration_config):
+        """An empty excluded_tickers set returns the same data as no exclusion."""
+        _populate_training_data(db_connection, n_signals=50)
+
+        X_default, _ = fetch_training_data(
+            db_connection, scoring_date="2025-02-20", config=calibration_config,
+        )
+        X_empty_set, _ = fetch_training_data(
+            db_connection, scoring_date="2025-02-20", config=calibration_config,
+            excluded_tickers=set(),
+        )
+
+        assert len(X_default) == len(X_empty_set)
 
 
 # ---------------------------------------------------------------------------

@@ -323,7 +323,10 @@ Final confidence is clamped to [0, 100].
 8. Apply sector adjustment.
 9. Compute weekly score; compute monthly score; merge 3-way timeframes with regime-adaptive weights → static composite (renormalizes when monthly is absent).
 10. **Calibrate score** via rolling ridge regression: fetch recent signals with realized
-    forward excess returns (vs SPY) as training data, train ridge on 17 features
+    forward excess returns (vs SPY) as training data (sector ETFs, market benchmarks, and
+    index ETFs are excluded from the training window — they are scored normally but must
+    not be training examples because their feature-return relationships differ from
+    individual stocks), train ridge on 17 features
     (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score + monthly_score), predict expected excess
     return for current signal → `calibrated_score`. Falls back to None (cold start)
     if fewer than `min_training_samples` are available.
