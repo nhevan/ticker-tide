@@ -143,6 +143,51 @@ class TestWeeklyClosedPeriodGate:
         )
         assert wrote is False
 
+    def test_in_progress_week_falls_back_to_prior_closed_week(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Regression: scoring mid-week with both current (open) and prior
+        (closed) weekly indicator rows must persist the prior closed week,
+        not skip silently. Without the fallback, live daily runs and
+        historical weekly mode (where scoring_date == week_start) would
+        never produce any scores_weekly rows."""
+        _insert_indicators_weekly_row(db_connection, "AAPL", "2026-04-13")  # closed
+        _insert_indicators_weekly_row(db_connection, "AAPL", "2026-04-20")  # in-progress
+        wrote = persist_weekly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=42.0), regime="ranging",
+            data_completeness={"news": True}, key_signals=["x"],
+            scoring_date="2026-04-22",  # Wednesday of the 2026-04-20 week
+        )
+        assert wrote is True
+        row = db_connection.execute(
+            "SELECT week_start, composite_score FROM scores_weekly WHERE ticker=?",
+            ("AAPL",),
+        ).fetchone()
+        assert row["week_start"] == "2026-04-13"
+        assert row["composite_score"] == 42.0
+
+    def test_historical_mode_scoring_date_equals_week_start(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Regression: historical weekly scoring iterates week_starts and
+        calls score_ticker(scoring_date=week_start). The persist function
+        must fall back to the prior closed week so the row gets written."""
+        _insert_indicators_weekly_row(db_connection, "AAPL", "2026-04-13")
+        _insert_indicators_weekly_row(db_connection, "AAPL", "2026-04-20")
+        wrote = persist_weekly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=15.0), regime="ranging",
+            data_completeness={}, key_signals=[],
+            scoring_date="2026-04-20",  # equals week_start of in-progress week
+        )
+        assert wrote is True
+        row = db_connection.execute(
+            "SELECT week_start FROM scores_weekly WHERE ticker=?",
+            ("AAPL",),
+        ).fetchone()
+        assert row["week_start"] == "2026-04-13"
+
 
 # ---------------------------------------------------------------------------
 # Closed-period gate (monthly)
@@ -181,6 +226,49 @@ class TestMonthlyClosedPeriodGate:
         assert row is not None
         assert row["month_start"] == "2026-03-01"
         assert row["composite_score"] == 72.0
+
+    def test_in_progress_month_falls_back_to_prior_closed_month(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Regression: scoring mid-month with both current (open) and prior
+        (closed) monthly indicator rows must persist the prior closed
+        month, not skip silently."""
+        _insert_indicators_monthly_row(db_connection, "AAPL", "2026-03-01")  # closed
+        _insert_indicators_monthly_row(db_connection, "AAPL", "2026-04-01")  # in-progress
+        wrote = persist_monthly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=33.3), regime="ranging",
+            data_completeness={}, key_signals=[],
+            scoring_date="2026-04-22",
+        )
+        assert wrote is True
+        row = db_connection.execute(
+            "SELECT month_start, composite_score FROM scores_monthly WHERE ticker=?",
+            ("AAPL",),
+        ).fetchone()
+        assert row["month_start"] == "2026-03-01"
+        assert row["composite_score"] == 33.3
+
+    def test_historical_mode_scoring_date_equals_month_start(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Regression: historical monthly mode iterates month_starts and
+        calls score_ticker(scoring_date=month_start). Fallback persists
+        the prior closed month."""
+        _insert_indicators_monthly_row(db_connection, "AAPL", "2026-03-01")
+        _insert_indicators_monthly_row(db_connection, "AAPL", "2026-04-01")
+        wrote = persist_monthly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=10.0), regime="ranging",
+            data_completeness={}, key_signals=[],
+            scoring_date="2026-04-01",  # equals month_start of in-progress month
+        )
+        assert wrote is True
+        row = db_connection.execute(
+            "SELECT month_start FROM scores_monthly WHERE ticker=?",
+            ("AAPL",),
+        ).fetchone()
+        assert row["month_start"] == "2026-03-01"
 
 
 # ---------------------------------------------------------------------------

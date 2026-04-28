@@ -212,11 +212,24 @@ def persist_weekly_score_row(
         )
         return False
 
+    # If the most recent week is in-progress, fall back to the most recent
+    # closed week. Without this fallback live + historical scoring would
+    # never persist any scores_weekly row because the resolved week is
+    # always either the current in-progress week (live) or exactly the
+    # scoring_date itself (historical, where scoring_date == week_start).
     if not is_week_closed(week_start, scoring_date):
-        logger.debug(
-            f"{ticker}: week {week_start} still in progress on {scoring_date} — skip persist"
-        )
-        return False
+        cutoff = (date.fromisoformat(scoring_date) - timedelta(days=7)).isoformat()
+        week_start = _resolve_latest_week_start(db_conn, ticker, cutoff)
+        if week_start is None:
+            logger.debug(
+                f"{ticker}: no closed-week indicators_weekly row <= {cutoff} — skipping persist"
+            )
+            return False
+        if not is_week_closed(week_start, scoring_date):
+            logger.debug(
+                f"{ticker}: fallback week {week_start} still not closed on {scoring_date} — skipping persist"
+            )
+            return False
 
     period_end = (date.fromisoformat(week_start) + timedelta(days=4)).isoformat()
     fundamental_score, macro_score = _inherit_fundamental_macro(
@@ -297,10 +310,21 @@ def persist_monthly_score_row(
         return False
 
     if not is_month_closed(month_start, scoring_date):
-        logger.debug(
-            f"{ticker}: month {month_start} still in progress on {scoring_date} — skip persist"
-        )
-        return False
+        # Fall back to the most recent closed month — see the analogous block
+        # in persist_weekly_score_row for rationale.
+        sd = date.fromisoformat(scoring_date)
+        cutoff = (date(sd.year, sd.month, 1) - timedelta(days=1)).isoformat()
+        month_start = _resolve_latest_month_start(db_conn, ticker, cutoff)
+        if month_start is None:
+            logger.debug(
+                f"{ticker}: no closed-month indicators_monthly row <= {cutoff} — skipping persist"
+            )
+            return False
+        if not is_month_closed(month_start, scoring_date):
+            logger.debug(
+                f"{ticker}: fallback month {month_start} still not closed on {scoring_date} — skipping persist"
+            )
+            return False
 
     period_end = _last_day_of_month(month_start)
     fundamental_score, macro_score = _inherit_fundamental_macro(
