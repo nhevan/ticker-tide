@@ -81,6 +81,12 @@
   },
   "weekly_score_method": "v1_4cat",
   "monthly_score_method": "v1_4cat",
+  "calibrator_acceptance": {
+    "max_mean_delta": 5.0,
+    "max_std_delta": 8.0,
+    "max_ticker_delta": 15.0,
+    "min_sample_size": 30
+  },
   "weekly_adaptive_weights_v2": {
     "trending": { "trend": 0.45, "momentum": 0.25, "volume": 0.15, "volatility": 0.15, "candlestick": 0.0, "structural": 0.0 },
     "ranging":  { "trend": 0.20, "momentum": 0.40, "volume": 0.20, "volatility": 0.20, "candlestick": 0.0, "structural": 0.0 },

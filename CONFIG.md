@@ -401,6 +401,31 @@ composite as the primary signal classification input.
 | `calibration.benchmark_ticker` | string | `"SPY"` | Ticker whose return is subtracted from each signal's return to compute excess return |
 | `calibration.forward_days` | int | `10` | Trading-day horizon for measuring forward returns in training data |
 
+### Calibrator acceptance gate
+
+Distribution-level guardrail used when flipping `weekly_score_method` /
+`monthly_score_method` between v1 and v2. After re-running
+`scripts/run_scorer.py --historical --force`, the operator runs
+`scripts/check_calibrator_acceptance.py check` to confirm that the new
+calibrated_score distribution did not catastrophically drift from the pre-flip
+baseline. See OPERATIONS.md "Flipping weekly_score_method" for the full
+procedure.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `calibrator_acceptance.max_mean_delta` | float | `5.0` | Maximum allowed shift in the cross-ticker mean of `calibrated_score`. Derivation: ≈ 2× the 95% CI width on a 50-ticker sample with std ≈ 9; values within this range are likely noise, not systematic shift. |
+| `calibrator_acceptance.max_std_delta` | float | `8.0` | Maximum allowed shift in the cross-ticker std. Derivation: tolerates ~1 std-deviation shift before flagging — std movement larger than this implies the calibrator is reweighting the population, not just translating it. |
+| `calibrator_acceptance.max_ticker_delta` | float | `15.0` | Per-ticker delta threshold. **Informational** only — counts how many individual tickers shifted by more than this between snapshots; does not by itself trigger FAIL. Surfaces bipolar shifts that mean/std deltas miss (half the tickers swing +X while half swing -X). |
+| `calibrator_acceptance.min_sample_size` | int | `30` | Minimum count of non-NULL `calibrated_score` rows required in both the baseline and current snapshot. Smaller samples produce noisy mean/std; gate refuses to compare below this. |
+
+WARNING tier (non-blocking) fires when `|Δ mean| / max_mean_delta` or
+`|Δ std| / max_std_delta` falls in `[0.70, 1.00)`. FAIL fires above 1.00.
+
+**Re-run requirement**: changing any threshold here does not require
+re-running the calibrator — only the acceptance check. Adding/removing keys
+in this block does, however, require a redeploy because
+`scripts/check_calibrator_acceptance.py` reads the block on every invocation.
+
 ### Timeframe weights (regime-adaptive)
 
 Regime-specific daily/weekly blending weights. In trending markets, weekly dominates;

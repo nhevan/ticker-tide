@@ -1054,6 +1054,19 @@ in-progress bar — by design.
 - Last 12 months: daily scores
 - Months 13-60: weekly scores
 
+## 12b. Calibrator Acceptance Gate
+
+When `weekly_score_method` flips between `v1_4cat` and `v2_8cat` the meaning of `scores_daily.weekly_score` (and `monthly_score`) changes, which shifts the calibrator's input distribution. The acceptance gate validates that the shift is bounded by comparing `calibrated_score` distribution at a fixed scoring date pre/post the flip.
+
+- Module: `src/scorer/acceptance_gate.py` (pure helpers: `compute_calibrated_score_distribution`, `find_latest_scoring_date_with_calibration`, `validate_snapshot_compatibility`, `compare_distributions`).
+- CLI: `scripts/check_calibrator_acceptance.py` with `snapshot` and `check` subcommands.
+- Thresholds (config: `scorer.json:calibrator_acceptance`): `max_mean_delta`, `max_std_delta`, `max_ticker_delta` (informational), `min_sample_size`.
+- Three-tier output: PASS, PASS-with-WARNING (any delta in [70%, 100%) of threshold), FAIL.
+- Snapshots store per-ticker calibrated_score values in addition to summary stats so bipolar shifts (mean ≈ 0 but per-ticker huge) surface in the report.
+- An integrated alternative — running the gate inside `scripts/run_scorer.py --historical` — was considered and rejected to keep the gate independently re-runnable for ad-hoc inspection.
+
+The gate does not block the deploy directly — it is a runtime check the operator runs as part of the flip procedure (see OPERATIONS.md "Flipping weekly_score_method: required sequence").
+
 ## 13. Notifier
 
 ### 13.1 AI Reasoner (`src/notifier/ai_reasoner.py`)

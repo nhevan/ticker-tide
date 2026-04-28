@@ -241,6 +241,37 @@ sqlite3 data/signals.db "PRAGMA table_info(scores_monthly);"  | grep data_comple
 
 ---
 
+### Flipping weekly_score_method: required sequence
+
+Flipping `weekly_score_method` from `v1_4cat` to `v2_8cat` (or any future scoring-method change) shifts the meaning of `weekly_score` / `monthly_score` and therefore the calibrator's input distribution. The acceptance gate validates the shift is bounded.
+
+```bash
+# 1. Snapshot baseline (use today's most recent calibrated scoring date)
+python scripts/check_calibrator_acceptance.py snapshot \
+    --scoring-date YYYY-MM-DD --output baselines/pre-v2.json
+
+# 2. Edit config/scorer.json: flip weekly_score_method (and monthly_score_method) to "v2_8cat"
+
+# 3. Regenerate scores with v2 semantics across the calibrator's 365-day window
+python scripts/run_scorer.py --historical --force
+
+# 4. Wait for the historical run to fully complete before snapping post.
+
+# 5. Snapshot post (same scoring date as step 1)
+python scripts/check_calibrator_acceptance.py snapshot \
+    --scoring-date YYYY-MM-DD --output baselines/post-v2.json
+
+# 6. Run the gate
+python scripts/check_calibrator_acceptance.py check --baseline baselines/pre-v2.json
+```
+
+Exit codes:
+- `0` PASS (or PASS-with-WARNING — investigate but did not block)
+- `1` FAIL — revert `weekly_score_method` to `v1_4cat`, re-run `scripts/run_scorer.py --historical --force`, document the Telegram message.
+- `2` INSUFFICIENT_DATA — baseline date has no rows in current DB, or sample size below `min_sample_size`.
+
+Mixed-semantics caveat: even on PASS, the calibrator's 365-day training window contains rows scored before the historical re-run completed. The first PASS is partially optimistic. Re-run the gate ~365 days post-flip with a fresh baseline to confirm stability (tracked in `hot.md` Next Up).
+
 ## Monitoring
 
 All queries below run against `data/signals.db` from the project root.

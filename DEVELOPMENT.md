@@ -386,6 +386,17 @@ Note: `config['profiles']['rolling_window_days']` is daily-tuned (default 504 tr
 
 Prior to commit 3 of the weekly/monthly parity work, `detect_all_divergences()` stored divergences for the RSI indicator under `indicator='rsi'` while the scorer's `_load_divergences` filter looked for `indicator='rsi_14'`. The scorer therefore silently contributed zero to the daily RSI-divergence score for every ticker. The fix standardises the persisted indicator name to `'rsi_14'` (matching the indicators-table column name) so the scorer filter actually matches. Regression tests live in `tests/test_calculator/test_divergences.py::test_rsi_divergence_stored_indicator_is_rsi_14` and `tests/test_calculator/test_divergences.py::test_scorer_filter_picks_up_rsi_14_divergence`. After deploying this commit, recompute divergences (`python scripts/run_calculator.py --mode full`) so that historical rows are rewritten under the new value before re-running the scorer.
 
+#### Calibrator acceptance gate (commit 7)
+
+| File | Responsibility |
+|---|---|
+| `src/scorer/acceptance_gate.py` | Pure helpers: `compute_calibrated_score_distribution`, `find_latest_scoring_date_with_calibration`, `validate_snapshot_compatibility`, `compare_distributions`. No DB writes, no Telegram. |
+| `scripts/check_calibrator_acceptance.py` | CLI wrapping the helpers. Subcommands `snapshot` and `check`. Loads `.env`, sends Telegram (wrapped in try/except so a Telegram outage doesn't change the gate's exit code). |
+| `tests/test_scorer/test_acceptance_gate.py` | Module-level unit tests (distribution math, validation, comparison, three-tier classification). |
+| `tests/test_scripts/test_check_calibrator_acceptance.py` | CLI-level tests via `monkeypatch.setattr(sys, 'argv', ...)` + `SystemExit` capture (no subprocess). Telegram patched. |
+
+Procedure for flipping `weekly_score_method`: see OPERATIONS.md.
+
 ---
 
 ## Code Conventions
