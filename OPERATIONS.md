@@ -262,9 +262,16 @@ sqlite3 data/signals.db "PRAGMA table_info(scores_monthly);"  | grep data_comple
 Flipping `weekly_score_method` from `v1_4cat` to `v2_8cat` (or any future scoring-method change) shifts the meaning of `weekly_score` / `monthly_score` and therefore the calibrator's input distribution. The acceptance gate validates the shift is bounded.
 
 ```bash
-# 1. Snapshot baseline (use today's most recent calibrated scoring date)
+# 1. Snapshot baseline calibrator distribution (use today's most recent calibrated scoring date)
 python scripts/check_calibrator_acceptance.py snapshot \
     --scoring-date YYYY-MM-DD --output baselines/pre-v2.json
+
+# 1b. Snapshot 5 sample LLM blurbs BEFORE the scorer re-run wipes the v1 weekly_score values.
+#     ai_reasoner.py:803 includes weekly_score in the LLM prompt, so v2 semantics will subtly
+#     shift blurb tone/framing. Capture pre-flip outputs now — once step 3 runs there is no
+#     way to reproduce the v1-prompt-input blurbs.
+python scripts/run_notifier.py --dry-run --tickers AAPL,MSFT,NVDA,GOOG,META \
+    > baselines/pre-v2-blurbs.txt
 
 # 2. Edit config/scorer.json: flip weekly_score_method (and monthly_score_method) to "v2_8cat"
 
@@ -273,9 +280,15 @@ python scripts/run_scorer.py --historical --force
 
 # 4. Wait for the historical run to fully complete before snapping post.
 
-# 5. Snapshot post (same scoring date as step 1)
+# 5. Snapshot post calibrator distribution (same scoring date as step 1)
 python scripts/check_calibrator_acceptance.py snapshot \
     --scoring-date YYYY-MM-DD --output baselines/post-v2.json
+
+# 5b. Snapshot 5 sample LLM blurbs post-flip and manually diff against baselines/pre-v2-blurbs.txt.
+#     Look for tone shifts, contradictions, or framing changes driven by the new weekly_score values.
+python scripts/run_notifier.py --dry-run --tickers AAPL,MSFT,NVDA,GOOG,META \
+    > baselines/post-v2-blurbs.txt
+diff baselines/pre-v2-blurbs.txt baselines/post-v2-blurbs.txt
 
 # 6. Run the gate
 python scripts/check_calibrator_acceptance.py check --baseline baselines/pre-v2.json

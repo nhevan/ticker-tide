@@ -135,12 +135,21 @@ scripts/
 ├── run_scorer.py
 ├── run_notifier.py
 ├── run_bot.py                 # start the interactive Telegram bot listener
-├── enrich_finnhub_sentiment.py  # backfill NULL-sentiment Finnhub articles
-├── setup_db.py                # initialise schema (idempotent)
-├── test_api_access.py         # verify all 5 API keys
-├── verify_backfill.py         # post-backfill raw data quality report
-└── verify_pipeline.py         # post-calculation computed data quality report
+├── enrich_finnhub_sentiment.py        # backfill NULL-sentiment Finnhub articles
+├── setup_db.py                        # initialise schema (idempotent)
+├── test_api_access.py                 # verify all 5 API keys
+├── verify_backfill.py                 # post-backfill raw data quality report
+├── verify_pipeline.py                 # post-calculation computed data quality report (~45 checks incl. weekly/monthly parity)
+├── check_calibrator_acceptance.py     # acceptance gate for weekly_score_method v1↔v2 flips (snapshot + check subcommands)
+├── analyze_timeframe_predictive_power.py  # ad-hoc analysis: forward-return regression by timeframe
+├── migrate_news_articles_pk.py        # one-time: change news_articles PK to (id, ticker)
+├── migrate_add_calibration_columns.py # one-time: add calibrator columns to scores_daily
+├── migrate_add_monthly.py             # one-time: add monthly_candles + indicators_monthly + scores_daily.monthly_score
+├── migrate_add_timeframe_parity.py    # one-time: add the 14 weekly/monthly parity tables (commit 1)
+└── migrate_fix_scores_completeness_type.py  # one-time: fix scores_weekly/monthly.data_completeness REAL→TEXT
 ```
+
+The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, and indicator profiles at all three timeframes (daily, weekly, monthly). `scores_weekly` and `scores_monthly` carry per-closed-period score breakdowns. See DESIGN.md §12b for the calibrator acceptance gate and OPERATIONS.md "Flipping weekly_score_method" for the v1↔v2 procedure.
 
 ## Tech Stack
 

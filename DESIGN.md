@@ -1078,6 +1078,8 @@ contradictions, and providing actionable insight — rather than just reformatti
 All config comes from `config/notifier.json → ai_reasoner` (model, max_tokens, temperature) and
 `config/notifier.json → telegram` (confidence_threshold, max_tickers_per_section).
 
+**Latent coupling — `weekly_score` semantics in the LLM prompt.** `build_ticker_context` injects `weekly_score` (and `daily_score`) into the prompt at line 803 of `ai_reasoner.py`. When `weekly_score_method` flips between v1 and v2, the value of `weekly_score` shifts because v2 routes weekly crossovers/divergences into trend/momentum/volume. The prompt input therefore changes semantics and the LLM blurb tone/framing may shift. The flip procedure in OPERATIONS.md captures pre/post sample blurbs to surface this. `monthly_score` is NOT in the prompt, so monthly v2 changes do not affect blurbs directly.
+
 **Public functions:**
 
 | Function | Purpose |
