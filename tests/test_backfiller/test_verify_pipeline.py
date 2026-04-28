@@ -233,7 +233,7 @@ def _insert_divergence(
     ticker: str,
     date_str: str,
     divergence_type: str = "regular_bullish",
-    indicator: str = "rsi",
+    indicator: str = "rsi_14",
     price_swing_1: float = 100.0,
     price_swing_2: float = 95.0,
     ind_swing_1: float = 30.0,
@@ -1315,12 +1315,12 @@ class TestCheckDivergenceConsistency:
         """All four valid divergence_type values with correct swing values should pass."""
         # regular_bullish: price lower low, indicator higher low
         _insert_divergence(db_connection, "AAPL", "2026-01-02",
-                           divergence_type="regular_bullish", indicator="rsi",
+                           divergence_type="regular_bullish", indicator="rsi_14",
                            price_swing_1=100.0, price_swing_2=95.0,
                            ind_swing_1=30.0, ind_swing_2=35.0)
         # regular_bearish: price higher high, indicator lower high
         _insert_divergence(db_connection, "AAPL", "2026-01-05",
-                           divergence_type="regular_bearish", indicator="rsi",
+                           divergence_type="regular_bearish", indicator="rsi_14",
                            price_swing_1=100.0, price_swing_2=108.0,
                            ind_swing_1=70.0, ind_swing_2=65.0)
         # hidden_bullish: price higher low, indicator lower low

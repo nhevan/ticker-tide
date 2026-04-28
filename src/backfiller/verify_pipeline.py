@@ -95,7 +95,7 @@ INDICATOR_RANGES: dict[str, dict] = {
 _VALID_DIVERGENCE_TYPES = frozenset({
     "regular_bullish", "regular_bearish", "hidden_bullish", "hidden_bearish"
 })
-_VALID_DIVERGENCE_INDICATORS = frozenset({"rsi", "macd_histogram", "obv", "stochastic"})
+_VALID_DIVERGENCE_INDICATORS = frozenset({"rsi_14", "macd_histogram", "obv", "stochastic"})
 _VALID_CROSSOVER_TYPES = frozenset({"ema_9_21", "ema_21_50", "macd_signal"})
 _VALID_CROSSOVER_DIRECTIONS = frozenset({"bullish", "bearish"})
 _VALID_PATTERN_DIRECTIONS = frozenset({"bullish", "bearish", "neutral"})
