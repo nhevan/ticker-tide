@@ -688,8 +688,8 @@ def run_calculator(
         )
     ):
         try:
-            compute_all_profiles(db_conn, ticker_symbols, calc_config)
-            logger.info(f"phase={_PHASE} sector_profiles computed for {len(ticker_symbols)} tickers")
+            compute_all_profiles(db_conn, stock_tickers, calc_config)
+            logger.info(f"phase={_PHASE} sector_profiles computed for {len(stock_tickers)} tickers")
         except Exception as exc:
             logger.error(
                 f"phase={_PHASE} compute_all_profiles failed: {exc}", exc_info=True
