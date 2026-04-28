@@ -42,6 +42,13 @@ Checks performed:
 27. Cross-table: indicators have OHLCV
 28. S/R levels within historical price range
 29. Signal flip validity
+30. Weekly pattern / divergence / crossover counts (parity)
+31. Monthly pattern / divergence / crossover counts (parity)
+32. scores_weekly + scores_monthly table coverage (vs indicators_*)
+33. scores_weekly + scores_monthly composite/category range
+34. scores_weekly + scores_monthly category math (v1/v2 dual-mode)
+35. Monthly indicator coverage (vs monthly_candles)
+36. No open-period scores persisted (closed-period gate)
 """
 
 from __future__ import annotations
@@ -1864,13 +1871,20 @@ def check_monthly_candle_counts(
     )
 
 
-def check_monthly_score_coverage(
+def check_monthly_score_column_coverage(
     db_conn: sqlite3.Connection,
     scoring_date: str,
     min_coverage_pct: float = 0.5,
 ) -> CheckResult:
     """
-    Verify that monthly_score is populated for a reasonable fraction of tickers.
+    Verify that the ``scores_daily.monthly_score`` column is populated for a
+    reasonable fraction of tickers on the given date.
+
+    NOTE: this check inspects the per-row ``monthly_score`` *column* of the
+    daily scores table (i.e. the monthly contribution that flows into the
+    timeframe merge for each daily row). It does NOT examine the standalone
+    ``scores_monthly`` table — that is covered by
+    :func:`check_scores_monthly_table_coverage`.
 
     Because monthly data requires ≥1 completed month and ~14 bars before EMAs
     stabilise, a non-null rate of 50% is expected after the first few months.
@@ -1892,25 +1906,25 @@ def check_monthly_score_coverage(
 
     if row is None or row["total"] == 0:
         return CheckResult(
-            name="monthly_score_coverage",
+            name="monthly_score_column_coverage",
             status="pass",
-            message="No scores found for date — skipping monthly score coverage check",
+            message="No scores found for date — skipping monthly score column coverage check",
         )
 
     coverage = row["has_monthly"] / row["total"]
     if coverage < min_coverage_pct:
         return CheckResult(
-            name="monthly_score_coverage",
+            name="monthly_score_column_coverage",
             status="warn",
             message=(
-                f"monthly_score non-null rate={coverage:.1%} on {scoring_date} "
+                f"scores_daily.monthly_score non-null rate={coverage:.1%} on {scoring_date} "
                 f"(threshold {min_coverage_pct:.0%})"
             ),
         )
     return CheckResult(
-        name="monthly_score_coverage",
+        name="monthly_score_column_coverage",
         status="pass",
-        message=f"monthly_score non-null rate={coverage:.1%} on {scoring_date}",
+        message=f"scores_daily.monthly_score non-null rate={coverage:.1%} on {scoring_date}",
     )
 
 
@@ -2238,6 +2252,882 @@ def check_signal_flip_validity(db_conn: sqlite3.Connection) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# Weekly / Monthly parity checks (commit 8)
+# ---------------------------------------------------------------------------
+
+def _load_verify_threshold(key: str, default: float) -> float:
+    """
+    Read a numeric threshold from ``config/verify_pipeline.json``, falling back
+    to the supplied default when the key is missing.
+
+    Args:
+        key: Top-level threshold key in the config file.
+        default: Fallback value if the key is absent.
+
+    Returns:
+        Float value of the threshold (numeric coercion via float()).
+    """
+    cfg = load_config("verify_pipeline")
+    return float(cfg.get(key, default))
+
+
+def _count_event_rows_in_window(
+    db_conn: sqlite3.Connection,
+    table: str,
+    date_column: str,
+    window_start: str,
+) -> int:
+    """
+    Count rows in a (patterns|divergences|crossovers)_(weekly|monthly) table
+    where ``date_column >= window_start``.
+
+    Args:
+        db_conn: Open SQLite connection.
+        table: Whitelisted table name (validated by caller).
+        date_column: Whitelisted date column name (validated by caller).
+        window_start: ISO date string lower bound (inclusive).
+
+    Returns:
+        Integer row count.
+    """
+    row = db_conn.execute(
+        f"SELECT COUNT(*) AS cnt FROM {table} WHERE {date_column} >= ?",
+        (window_start,),
+    ).fetchone()
+    return int(row["cnt"]) if row and row["cnt"] is not None else 0
+
+
+def check_weekly_pattern_count(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Validate ``patterns_weekly`` activity and structural-pattern volume.
+
+    Two sub-checks:
+
+    * Lower-bound: warn if zero ``patterns_weekly`` rows exist across all
+      active tickers within the last
+      ``weekly_pattern_warn_zero_window_weeks`` weeks (zero-detection signal).
+    * Upper-bound: warn if any ticker has more structural patterns than
+      ``weekly_pattern_structural_warn_high`` (NOT the daily 2000 constant —
+      weeks compress signal so a separate threshold applies).
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: List of active ticker symbols.
+
+    Returns:
+        CheckResult — pass / warn (lower or upper bound triggered).
+    """
+    weeks = int(_load_verify_threshold("weekly_pattern_warn_zero_window_weeks", 30))
+    high = int(_load_verify_threshold("weekly_pattern_structural_warn_high", 400))
+    window_start = (date.today() - timedelta(weeks=weeks)).isoformat()
+
+    issues: list[str] = []
+
+    recent_count = _count_event_rows_in_window(
+        db_conn, "patterns_weekly", "week_start", window_start,
+    )
+    if recent_count == 0:
+        issues.append(
+            f"0 patterns_weekly rows in last {weeks} weeks (since {window_start})"
+        )
+
+    if active_tickers:
+        placeholders = ",".join("?" * len(active_tickers))
+        rows = db_conn.execute(
+            f"SELECT ticker, COUNT(*) AS cnt FROM patterns_weekly "
+            f"WHERE ticker IN ({placeholders}) AND pattern_category = 'structural' "
+            f"GROUP BY ticker",
+            active_tickers,
+        ).fetchall()
+        for row in rows:
+            if row["cnt"] > high:
+                issues.append(
+                    f"{row['ticker']}: {row['cnt']} structural patterns_weekly "
+                    f"(threshold: {high})"
+                )
+
+    if issues:
+        return CheckResult(
+            name="weekly_pattern_count",
+            status="warn",
+            message=f"{len(issues)} weekly pattern issue(s)",
+            details=issues,
+        )
+    return CheckResult(
+        name="weekly_pattern_count",
+        status="pass",
+        message="weekly pattern counts are within expected bounds",
+    )
+
+
+def check_monthly_pattern_count(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Lower-bound check on ``patterns_monthly``.
+
+    Warns if zero rows exist across all active tickers within the last
+    ``monthly_pattern_warn_zero_window_months`` months. Monthly bars have far
+    lower frequency than weekly bars, so an upper-bound structural threshold
+    is omitted.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: List of active ticker symbols (unused but kept for
+            signature parity with sibling checks; the count is global).
+
+    Returns:
+        CheckResult.
+    """
+    months = int(_load_verify_threshold("monthly_pattern_warn_zero_window_months", 24))
+    window_start = (date.today() - timedelta(days=months * 31)).isoformat()
+
+    count = _count_event_rows_in_window(
+        db_conn, "patterns_monthly", "month_start", window_start,
+    )
+    if count == 0:
+        return CheckResult(
+            name="monthly_pattern_count",
+            status="warn",
+            message=(
+                f"0 patterns_monthly rows in last {months} months "
+                f"(since {window_start})"
+            ),
+        )
+    return CheckResult(
+        name="monthly_pattern_count",
+        status="pass",
+        message=f"{count} patterns_monthly rows in last {months} months",
+    )
+
+
+def check_weekly_divergence_count(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Lower-bound check on ``divergences_weekly``.
+
+    Warns if zero rows exist across all active tickers within the last
+    ``weekly_divergence_warn_zero_window_days`` days. **No upper bound** —
+    divergence detection naturally produces variable counts per ticker and
+    upper bounds were dropped per adversarial review.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: Unused (kept for signature parity).
+
+    Returns:
+        CheckResult.
+    """
+    days = int(_load_verify_threshold("weekly_divergence_warn_zero_window_days", 90))
+    window_start = (date.today() - timedelta(days=days)).isoformat()
+
+    count = _count_event_rows_in_window(
+        db_conn, "divergences_weekly", "week_start", window_start,
+    )
+    if count == 0:
+        return CheckResult(
+            name="weekly_divergence_count",
+            status="warn",
+            message=f"0 divergences_weekly rows in last {days} days (since {window_start})",
+        )
+    return CheckResult(
+        name="weekly_divergence_count",
+        status="pass",
+        message=f"{count} divergences_weekly rows in last {days} days",
+    )
+
+
+def check_monthly_divergence_count(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Lower-bound check on ``divergences_monthly``.
+
+    Warns if zero rows exist across all active tickers within the last
+    ``monthly_divergence_warn_zero_window_months`` months. No upper bound.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: Unused (kept for signature parity).
+
+    Returns:
+        CheckResult.
+    """
+    months = int(_load_verify_threshold("monthly_divergence_warn_zero_window_months", 12))
+    window_start = (date.today() - timedelta(days=months * 31)).isoformat()
+
+    count = _count_event_rows_in_window(
+        db_conn, "divergences_monthly", "month_start", window_start,
+    )
+    if count == 0:
+        return CheckResult(
+            name="monthly_divergence_count",
+            status="warn",
+            message=(
+                f"0 divergences_monthly rows in last {months} months "
+                f"(since {window_start})"
+            ),
+        )
+    return CheckResult(
+        name="monthly_divergence_count",
+        status="pass",
+        message=f"{count} divergences_monthly rows in last {months} months",
+    )
+
+
+def check_weekly_crossover_count(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Lower-bound check on ``crossovers_weekly``.
+
+    Warns if zero rows exist across all active tickers within the last
+    ``weekly_crossover_warn_zero_window_days`` days.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: Unused (kept for signature parity).
+
+    Returns:
+        CheckResult.
+    """
+    days = int(_load_verify_threshold("weekly_crossover_warn_zero_window_days", 90))
+    window_start = (date.today() - timedelta(days=days)).isoformat()
+
+    count = _count_event_rows_in_window(
+        db_conn, "crossovers_weekly", "week_start", window_start,
+    )
+    if count == 0:
+        return CheckResult(
+            name="weekly_crossover_count",
+            status="warn",
+            message=f"0 crossovers_weekly rows in last {days} days (since {window_start})",
+        )
+    return CheckResult(
+        name="weekly_crossover_count",
+        status="pass",
+        message=f"{count} crossovers_weekly rows in last {days} days",
+    )
+
+
+def check_monthly_crossover_count(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Lower-bound check on ``crossovers_monthly``.
+
+    Warns if zero rows exist across all active tickers within the last
+    ``monthly_crossover_warn_zero_window_months`` months.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: Unused (kept for signature parity).
+
+    Returns:
+        CheckResult.
+    """
+    months = int(_load_verify_threshold("monthly_crossover_warn_zero_window_months", 24))
+    window_start = (date.today() - timedelta(days=months * 31)).isoformat()
+
+    count = _count_event_rows_in_window(
+        db_conn, "crossovers_monthly", "month_start", window_start,
+    )
+    if count == 0:
+        return CheckResult(
+            name="monthly_crossover_count",
+            status="warn",
+            message=(
+                f"0 crossovers_monthly rows in last {months} months "
+                f"(since {window_start})"
+            ),
+        )
+    return CheckResult(
+        name="monthly_crossover_count",
+        status="pass",
+        message=f"{count} crossovers_monthly rows in last {months} months",
+    )
+
+
+def _check_scores_table_coverage(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+    *,
+    scores_table: str,
+    indicators_table: str,
+    date_column: str,
+    window_start: str,
+    check_name: str,
+) -> CheckResult:
+    """
+    Generic per-timeframe coverage check.
+
+    A ticker counts as "covered" when it has at least one ``scores_table`` row
+    inside the window. The reference set is tickers that have at least one
+    ``indicators_table`` row in the same window — warm-up gaps (candles but no
+    indicators) are NOT treated as coverage gaps. (Adversarial fix B1.)
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: List of active ticker symbols.
+        scores_table: ``scores_weekly`` or ``scores_monthly`` (whitelisted by caller).
+        indicators_table: ``indicators_weekly`` or ``indicators_monthly``.
+        date_column: ``week_start`` or ``month_start``.
+        window_start: ISO date lower bound.
+        check_name: Name to use in the resulting CheckResult.
+
+    Returns:
+        CheckResult.
+    """
+    if not active_tickers:
+        return CheckResult(
+            name=check_name,
+            status="pass",
+            message="No active tickers — skipping coverage check",
+        )
+
+    placeholders = ",".join("?" * len(active_tickers))
+    indicator_tickers = {
+        row["ticker"]
+        for row in db_conn.execute(
+            f"SELECT DISTINCT ticker FROM {indicators_table} "
+            f"WHERE ticker IN ({placeholders}) AND {date_column} >= ?",
+            (*active_tickers, window_start),
+        ).fetchall()
+    }
+    score_tickers = {
+        row["ticker"]
+        for row in db_conn.execute(
+            f"SELECT DISTINCT ticker FROM {scores_table} "
+            f"WHERE ticker IN ({placeholders}) AND {date_column} >= ?",
+            (*active_tickers, window_start),
+        ).fetchall()
+    }
+
+    missing = sorted(indicator_tickers - score_tickers)
+    if missing:
+        return CheckResult(
+            name=check_name,
+            status="warn",
+            message=(
+                f"{len(missing)} ticker(s) have indicators but no {scores_table} "
+                f"row since {window_start}"
+            ),
+            details=[
+                f"{t}: has indicators but no {scores_table} row" for t in missing
+            ],
+        )
+    return CheckResult(
+        name=check_name,
+        status="pass",
+        message=(
+            f"All tickers with indicators in window have {scores_table} rows "
+            f"(since {window_start})"
+        ),
+    )
+
+
+def check_scores_weekly_table_coverage(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Verify every ticker with recent ``indicators_weekly`` data has at least one
+    ``scores_weekly`` row in the same window.
+
+    Window length comes from ``weekly_score_coverage_window_weeks`` (default
+    12). Warm-up tickers (candles but no indicators) are excluded.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: List of active ticker symbols.
+
+    Returns:
+        CheckResult.
+    """
+    weeks = int(_load_verify_threshold("weekly_score_coverage_window_weeks", 12))
+    window_start = (date.today() - timedelta(weeks=weeks)).isoformat()
+    return _check_scores_table_coverage(
+        db_conn,
+        active_tickers,
+        scores_table="scores_weekly",
+        indicators_table="indicators_weekly",
+        date_column="week_start",
+        window_start=window_start,
+        check_name="scores_weekly_table_coverage",
+    )
+
+
+def check_scores_monthly_table_coverage(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Verify every ticker with recent ``indicators_monthly`` data has at least one
+    ``scores_monthly`` row in the same window.
+
+    Window length comes from ``monthly_score_coverage_window_months`` (default 6).
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: List of active ticker symbols.
+
+    Returns:
+        CheckResult.
+    """
+    months = int(_load_verify_threshold("monthly_score_coverage_window_months", 6))
+    window_start = (date.today() - timedelta(days=months * 31)).isoformat()
+    return _check_scores_table_coverage(
+        db_conn,
+        active_tickers,
+        scores_table="scores_monthly",
+        indicators_table="indicators_monthly",
+        date_column="month_start",
+        window_start=window_start,
+        check_name="scores_monthly_table_coverage",
+    )
+
+
+_PARITY_CATEGORY_COLUMNS = (
+    "trend_score",
+    "momentum_score",
+    "volume_score",
+    "volatility_score",
+    "candlestick_score",
+    "structural_score",
+    "fundamental_score",
+    "macro_score",
+)
+
+
+def _check_score_range_for_table(
+    db_conn: sqlite3.Connection,
+    *,
+    table: str,
+    check_name: str,
+) -> CheckResult:
+    """
+    Validate composite + per-category score columns are inside [-100, +100] for
+    every row in ``table`` (NULL values are skipped via ``IS NOT NULL``).
+
+    Args:
+        db_conn: Open SQLite connection.
+        table: ``scores_weekly`` or ``scores_monthly``.
+        check_name: CheckResult name.
+
+    Returns:
+        CheckResult — fail if any column is out of range.
+    """
+    issues: list[str] = []
+    columns = ("composite_score",) + _PARITY_CATEGORY_COLUMNS
+
+    for col in columns:
+        rows = db_conn.execute(
+            f"SELECT ticker, {col} AS value FROM {table} "
+            f"WHERE {col} IS NOT NULL AND ({col} < -100 OR {col} > 100)",
+        ).fetchall()
+        for row in rows:
+            issues.append(
+                f"{row['ticker']}: {table}.{col}={row['value']:.2f} out of [-100, +100]"
+            )
+
+    if issues:
+        return CheckResult(
+            name=check_name,
+            status="fail",
+            message=f"{len(issues)} {table} score(s) outside [-100, +100]",
+            details=issues,
+        )
+    return CheckResult(
+        name=check_name,
+        status="pass",
+        message=f"All {table} composite/category scores are within [-100, +100]",
+    )
+
+
+def check_scores_weekly_score_range(
+    db_conn: sqlite3.Connection,
+) -> CheckResult:
+    """
+    Verify ``scores_weekly`` composite and category columns are in [-100, +100].
+
+    Args:
+        db_conn: Open SQLite connection.
+
+    Returns:
+        CheckResult.
+    """
+    return _check_score_range_for_table(
+        db_conn, table="scores_weekly", check_name="scores_weekly_score_range",
+    )
+
+
+def check_scores_monthly_score_range(
+    db_conn: sqlite3.Connection,
+) -> CheckResult:
+    """
+    Verify ``scores_monthly`` composite and category columns are in [-100, +100].
+
+    Args:
+        db_conn: Open SQLite connection.
+
+    Returns:
+        CheckResult.
+    """
+    return _check_score_range_for_table(
+        db_conn, table="scores_monthly", check_name="scores_monthly_score_range",
+    )
+
+
+def _expected_composite(
+    category_scores: dict,
+    weights: dict,
+    expansion_factor: float,
+) -> float:
+    """
+    Compute the expected composite score from category scores + weights.
+
+    Mirrors :func:`src.scorer.category_scorer.apply_adaptive_weights`:
+
+        clamped( sum(category_scores[k] * weights.get(k, 0.0)) * expansion_factor )
+
+    NULL category scores are skipped (treated as 0.0 contribution).
+
+    Args:
+        category_scores: Mapping category → score (or None).
+        weights: Mapping category → weight.
+        expansion_factor: Multiplier applied before clamping.
+
+    Returns:
+        Float in [-100, +100].
+    """
+    weighted = 0.0
+    for category, score in category_scores.items():
+        if score is None:
+            continue
+        weighted += score * weights.get(category, 0.0)
+    return max(-100.0, min(100.0, weighted * expansion_factor))
+
+
+def _load_parity_weight_sets(
+    timeframe: str,
+) -> list[dict]:
+    """
+    Return the list of regime-weight dicts that should match a stored
+    composite for the given timeframe.
+
+    For v1/v2 dual-mode tolerance (B2): a stored row may have been written
+    under either method, so we check both. Each returned dict maps
+    ``regime → {category: weight}``.
+
+    Args:
+        timeframe: ``"weekly"`` or ``"monthly"``.
+
+    Returns:
+        List of regime-weight dicts (typically 2 entries: v1 + v2).
+    """
+    cfg = load_config("scorer")
+    keys = (
+        f"{timeframe}_adaptive_weights",
+        f"{timeframe}_adaptive_weights_v2",
+    )
+    weight_sets: list[dict] = []
+    for key in keys:
+        weights = cfg.get(key)
+        if isinstance(weights, dict):
+            weight_sets.append(weights)
+    return weight_sets
+
+
+def _row_matches_any_weight_set(
+    actual_composite: float,
+    category_scores: dict,
+    regime: str,
+    weight_sets: list,
+    expansion_factor: float,
+    tolerance: float,
+) -> tuple[bool, float]:
+    """
+    Try each weight set; return ``(matched, best_deviation)``.
+
+    Iterates over ``weight_sets`` (v1 then v2 in this codebase). For each it
+    looks up the regime-specific weight dict (falling back to ``"trending"``
+    when the regime is missing) and computes the expected composite. Returns
+    early on the first match within ``tolerance``.
+
+    Args:
+        actual_composite: Stored composite_score on the row.
+        category_scores: Dict category → score.
+        regime: Row regime (defaults to ``"trending"`` for the lookup).
+        weight_sets: List of regime → category-weights dicts.
+        expansion_factor: Multiplier applied before clamping.
+        tolerance: Absolute deviation tolerance.
+
+    Returns:
+        (matched, best_deviation_seen).
+    """
+    best_dev = float("inf")
+    for weights_by_regime in weight_sets:
+        regime_weights = weights_by_regime.get(regime) or weights_by_regime.get("trending")
+        if not isinstance(regime_weights, dict):
+            continue
+        expected = _expected_composite(category_scores, regime_weights, expansion_factor)
+        deviation = abs(actual_composite - expected)
+        best_dev = min(best_dev, deviation)
+        if deviation <= tolerance:
+            return True, deviation
+    return False, best_dev
+
+
+def _check_category_math_for_table(
+    db_conn: sqlite3.Connection,
+    *,
+    table: str,
+    date_column: str,
+    timeframe: str,
+    check_name: str,
+) -> CheckResult:
+    """
+    Validate composite ≈ clamp(sum(category × weight) × expansion_factor) for
+    every row in the last ``category_math_window_days`` days.
+
+    Implements adversarial fix B2: tries v1 weights first, then v2 — passes if
+    either matches within ``category_math_tolerance``. This dual-check allows
+    a config flip from v1 to v2 to land mid-history without retroactively
+    failing every old row.
+
+    Args:
+        db_conn: Open SQLite connection.
+        table: ``scores_weekly`` or ``scores_monthly``.
+        date_column: ``week_start`` or ``month_start``.
+        timeframe: ``"weekly"`` or ``"monthly"`` (for weight-key lookup).
+        check_name: CheckResult name.
+
+    Returns:
+        CheckResult.
+    """
+    window_days = int(_load_verify_threshold("category_math_window_days", 365))
+    tolerance = _load_verify_threshold("category_math_tolerance", 0.01)
+    window_start = (date.today() - timedelta(days=window_days)).isoformat()
+
+    scorer_cfg = load_config("scorer")
+    expansion_factor = scorer_cfg.get("scoring", {}).get("score_expansion_factor", 1.0)
+    weight_sets = _load_parity_weight_sets(timeframe)
+    if not weight_sets:
+        return CheckResult(
+            name=check_name,
+            status="pass",
+            message=f"No {timeframe} weight config found — skipping category math",
+        )
+
+    columns = ("ticker", date_column, "regime", "composite_score") + _PARITY_CATEGORY_COLUMNS
+    rows = db_conn.execute(
+        f"SELECT {', '.join(columns)} FROM {table} "
+        f"WHERE {date_column} >= ? AND composite_score IS NOT NULL",
+        (window_start,),
+    ).fetchall()
+
+    issues: list[str] = []
+    for row in rows:
+        regime = row["regime"] or "trending"
+        category_scores = {
+            cat.replace("_score", ""): row[cat]
+            for cat in _PARITY_CATEGORY_COLUMNS
+        }
+        actual = row["composite_score"]
+        matched, best_dev = _row_matches_any_weight_set(
+            actual, category_scores, regime, weight_sets, expansion_factor, tolerance,
+        )
+        if not matched:
+            issues.append(
+                f"{row['ticker']} {row[date_column]} [{regime}]: "
+                f"composite={actual:.4f}, best deviation={best_dev:.4f} "
+                f"> {tolerance} (checked {len(weight_sets)} weight set(s))"
+            )
+
+    if issues:
+        return CheckResult(
+            name=check_name,
+            status="warn",
+            message=(
+                f"{len(issues)} {table} row(s) failed category math "
+                f"(within {window_days}d window, ±{tolerance} tol, v1+v2 dual-mode)"
+            ),
+            details=issues,
+        )
+    return CheckResult(
+        name=check_name,
+        status="pass",
+        message=(
+            f"All {table} rows in {window_days}d window match category math "
+            f"within ±{tolerance} (v1 or v2)"
+        ),
+    )
+
+
+def check_scores_weekly_category_math(
+    db_conn: sqlite3.Connection,
+) -> CheckResult:
+    """
+    Validate ``scores_weekly`` composite math against category × weight × expansion.
+
+    Args:
+        db_conn: Open SQLite connection.
+
+    Returns:
+        CheckResult.
+    """
+    return _check_category_math_for_table(
+        db_conn,
+        table="scores_weekly",
+        date_column="week_start",
+        timeframe="weekly",
+        check_name="scores_weekly_category_math",
+    )
+
+
+def check_scores_monthly_category_math(
+    db_conn: sqlite3.Connection,
+) -> CheckResult:
+    """
+    Validate ``scores_monthly`` composite math against category × weight × expansion.
+
+    Args:
+        db_conn: Open SQLite connection.
+
+    Returns:
+        CheckResult.
+    """
+    return _check_category_math_for_table(
+        db_conn,
+        table="scores_monthly",
+        date_column="month_start",
+        timeframe="monthly",
+        check_name="scores_monthly_category_math",
+    )
+
+
+def check_monthly_indicator_coverage(
+    db_conn: sqlite3.Connection,
+    active_tickers: list[str],
+) -> CheckResult:
+    """
+    Verify that every ticker with ``monthly_candles`` rows also has
+    ``indicators_monthly`` rows. Closes the parity gap left by
+    :func:`check_weekly_indicator_coverage`.
+
+    Args:
+        db_conn: Open SQLite connection.
+        active_tickers: List of active ticker symbols.
+
+    Returns:
+        CheckResult.
+    """
+    if not active_tickers:
+        return CheckResult(
+            name="monthly_indicator_coverage",
+            status="pass",
+            message="No active tickers — skipping monthly indicator coverage",
+        )
+
+    placeholders = ",".join("?" * len(active_tickers))
+    candle_tickers = {
+        row["ticker"]
+        for row in db_conn.execute(
+            f"SELECT DISTINCT ticker FROM monthly_candles WHERE ticker IN ({placeholders})",
+            active_tickers,
+        ).fetchall()
+    }
+    indicator_tickers = {
+        row["ticker"]
+        for row in db_conn.execute(
+            f"SELECT DISTINCT ticker FROM indicators_monthly WHERE ticker IN ({placeholders})",
+            active_tickers,
+        ).fetchall()
+    }
+
+    missing = sorted(candle_tickers - indicator_tickers)
+    if missing:
+        return CheckResult(
+            name="monthly_indicator_coverage",
+            status="warn",
+            message=f"{len(missing)} ticker(s) have monthly candles but no monthly indicators",
+            details=[f"{t}: no rows in indicators_monthly" for t in missing],
+        )
+    return CheckResult(
+        name="monthly_indicator_coverage",
+        status="pass",
+        message="Monthly indicator coverage matches monthly candle coverage",
+    )
+
+
+def check_no_open_period_persisted(
+    db_conn: sqlite3.Connection,
+) -> CheckResult:
+    """
+    Verify the closed-period gate: no ``scores_weekly`` row keyed on a
+    not-yet-closed week, and no ``scores_monthly`` row keyed on a not-yet-closed
+    month.
+
+    Uses :func:`src.scorer.period_gate.is_week_closed` and
+    :func:`src.scorer.period_gate.is_month_closed`. The reference "scoring date"
+    is ``date.today()``: any persisted period whose key fails the closed test
+    against today is a violation.
+
+    Args:
+        db_conn: Open SQLite connection.
+
+    Returns:
+        CheckResult — fail if any row violates the gate.
+    """
+    from src.scorer.period_gate import is_month_closed, is_week_closed
+
+    today = date.today().isoformat()
+    issues: list[str] = []
+
+    weekly_rows = db_conn.execute(
+        "SELECT ticker, week_start FROM scores_weekly"
+    ).fetchall()
+    for row in weekly_rows:
+        if not is_week_closed(row["week_start"], today):
+            issues.append(
+                f"{row['ticker']} scores_weekly week_start={row['week_start']} "
+                f"is not closed as of {today}"
+            )
+
+    monthly_rows = db_conn.execute(
+        "SELECT ticker, month_start FROM scores_monthly"
+    ).fetchall()
+    for row in monthly_rows:
+        if not is_month_closed(row["month_start"], today):
+            issues.append(
+                f"{row['ticker']} scores_monthly month_start={row['month_start']} "
+                f"is not closed as of {today}"
+            )
+
+    if issues:
+        return CheckResult(
+            name="no_open_period_persisted",
+            status="fail",
+            message=f"{len(issues)} score row(s) persisted for not-yet-closed periods",
+            details=issues,
+        )
+    return CheckResult(
+        name="no_open_period_persisted",
+        status="pass",
+        message="All persisted weekly/monthly score rows are for closed periods",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -2319,10 +3209,26 @@ def run_full_pipeline_verification(
         # ── Weekly checks ─────────────────────────────────────────────────
         all_checks.append(check_weekly_candle_validity(db_conn, active_tickers))
         all_checks.append(check_weekly_indicator_coverage(db_conn, active_tickers))
+        all_checks.append(check_weekly_pattern_count(db_conn, active_tickers))
+        all_checks.append(check_weekly_divergence_count(db_conn, active_tickers))
+        all_checks.append(check_weekly_crossover_count(db_conn, active_tickers))
+        all_checks.append(check_scores_weekly_table_coverage(db_conn, active_tickers))
+        all_checks.append(check_scores_weekly_score_range(db_conn))
+        all_checks.append(check_scores_weekly_category_math(db_conn))
 
         # ── Monthly checks ────────────────────────────────────────────────
         all_checks.append(check_monthly_candle_counts(db_conn, active_tickers))
-        all_checks.append(check_monthly_score_coverage(db_conn, scoring_date))
+        all_checks.append(check_monthly_score_column_coverage(db_conn, scoring_date))
+        all_checks.append(check_monthly_indicator_coverage(db_conn, active_tickers))
+        all_checks.append(check_monthly_pattern_count(db_conn, active_tickers))
+        all_checks.append(check_monthly_divergence_count(db_conn, active_tickers))
+        all_checks.append(check_monthly_crossover_count(db_conn, active_tickers))
+        all_checks.append(check_scores_monthly_table_coverage(db_conn, active_tickers))
+        all_checks.append(check_scores_monthly_score_range(db_conn))
+        all_checks.append(check_scores_monthly_category_math(db_conn))
+
+        # ── Period integrity checks ───────────────────────────────────────
+        all_checks.append(check_no_open_period_persisted(db_conn))
 
         # ── News checks ───────────────────────────────────────────────────
         all_checks.append(check_news_summary_consistency(db_conn, active_tickers))

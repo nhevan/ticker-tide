@@ -74,7 +74,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/backfiller/news.py` | Polygon + Finnhub news; AI sentiment extraction |
 | `src/backfiller/filings.py` | Polygon 8-K filings |
 | `src/backfiller/verify.py` | 10 raw data quality checks; `run_full_verification()` → `VerificationReport` |
-| `src/backfiller/verify_pipeline.py` | 29 computed data checks (indicators, scores, patterns, profiles); `run_full_pipeline_verification()` → `VerificationReport` |
+| `src/backfiller/verify_pipeline.py` | ~45 computed data checks (indicators, scores, patterns, profiles, weekly/monthly parity, period integrity); `run_full_pipeline_verification()` → `VerificationReport`. Commit 8 added 13 new parity checks: `weekly_pattern_count`, `monthly_pattern_count`, `weekly_divergence_count`, `monthly_divergence_count`, `weekly_crossover_count`, `monthly_crossover_count`, `scores_weekly_table_coverage`, `scores_monthly_table_coverage`, `scores_weekly_score_range`, `scores_monthly_score_range`, `scores_weekly_category_math`, `scores_monthly_category_math`, `monthly_indicator_coverage`, plus the new period-integrity check `no_open_period_persisted`. The renamed `monthly_score_column_coverage` (formerly `monthly_score_coverage`) inspects the `scores_daily.monthly_score` column — disambiguated from the new `scores_monthly`-table check `scores_monthly_table_coverage`. |
 | `src/fetcher/main.py` | Daily fetch orchestrator; gated on market calendar; writes `fetcher_done` event |
 | `src/fetcher/earnings.py` | Periodic earnings calendar refresh |
 | `src/fetcher/market_calendar.py` | `is_market_open_today()` via Polygon market holidays endpoint |
@@ -284,6 +284,7 @@ Each parity table has a matching `idx_<table>_ticker_<datecol>` index. Adding a 
 2. Append the table to `tests/test_common/test_db.py` (`ALL_TABLES`, `EXPECTED_INDEXES`, and a column-shape test).
 3. Add the table + index DDL to `scripts/migrate_add_timeframe_parity.py` so already-deployed databases pick it up.
 4. Run `python scripts/setup_db.py` (or the migration) and re-run the test suite.
+5. **Add a `verify_pipeline` check** for the new mirror table — see commit 8's parity checks (`weekly_pattern_count`, `scores_weekly_category_math`, `no_open_period_persisted`, etc.) for the pattern. Each parity check should: (a) accept `db_conn` plus relevant args, (b) return a `CheckResult` with a unique `name`, (c) read its thresholds from `config/verify_pipeline.json` via `_load_verify_threshold`, (d) be wired into `run_full_pipeline_verification` under the right section heading, and (e) ship with pass + fail/warn + edge-case tests using the `_insert_*` helpers in `tests/test_backfiller/test_verify_pipeline.py`. Score-table coverage checks must INNER JOIN against the corresponding indicators table so warm-up tickers (candles but no indicators) are not falsely flagged. Composite-math checks should accept either v1 or v2 weight sets within `category_math_tolerance` to allow a `weekly_score_method` flip mid-history.
 
 #### Timeframe-parametrized calculator modules
 

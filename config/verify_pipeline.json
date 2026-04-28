@@ -9,10 +9,32 @@
   "ema_stuck_days_threshold": 10,
   "weekly_volume_min_ratio": 0.30,
   "warmup_rows": 50,
+  "weekly_pattern_warn_zero_window_weeks": 30,
+  "weekly_pattern_structural_warn_high": 400,
+  "monthly_pattern_warn_zero_window_months": 24,
+  "weekly_divergence_warn_zero_window_days": 90,
+  "monthly_divergence_warn_zero_window_months": 12,
+  "weekly_crossover_warn_zero_window_days": 90,
+  "monthly_crossover_warn_zero_window_months": 24,
+  "weekly_score_coverage_window_weeks": 12,
+  "monthly_score_coverage_window_months": 6,
+  "category_math_window_days": 365,
+  "category_math_tolerance": 0.01,
   "_comments": {
     "bb_pctb": "Widened from [-0.5, 1.5]: values in [-1.0,-0.5] and [1.5,2.0] are legitimate breakout behavior",
     "ema_stuck_days_threshold": "Flag an EMA as stuck (computation error) if it has the same value for this many consecutive trading days",
     "weekly_volume_min_ratio": "Flag a week only if its volume is below this fraction of (trading_days × local_avg_daily_volume); the reference average uses a rolling ±42-day window (~60 trading days) so early low-volume tickers aren't compared against inflated all-time averages",
-    "warmup_rows": "Rows per ticker to skip at the start of range checks (ta library warm-up period)"
+    "warmup_rows": "Rows per ticker to skip at the start of range checks (ta library warm-up period)",
+    "weekly_pattern_warn_zero_window_weeks": "Warn if no patterns_weekly rows exist across all active tickers in the most recent N closed weeks (zero-detection signal)",
+    "weekly_pattern_structural_warn_high": "Warn if any ticker exceeds this many structural patterns_weekly rows over its full history (separate from the daily threshold of 2000)",
+    "monthly_pattern_warn_zero_window_months": "Warn if no patterns_monthly rows exist across all active tickers in the most recent N closed months",
+    "weekly_divergence_warn_zero_window_days": "Warn if no divergences_weekly rows exist across all active tickers within this many days (lower bound only — no upper threshold)",
+    "monthly_divergence_warn_zero_window_months": "Warn if no divergences_monthly rows exist across all active tickers within this many months",
+    "weekly_crossover_warn_zero_window_days": "Warn if no crossovers_weekly rows exist across all active tickers within this many days",
+    "monthly_crossover_warn_zero_window_months": "Warn if no crossovers_monthly rows exist across all active tickers within this many months",
+    "weekly_score_coverage_window_weeks": "Score coverage check considers tickers that have indicators_weekly rows in the most recent N weeks; missing scores_weekly counts as a coverage gap",
+    "monthly_score_coverage_window_months": "Score coverage check considers tickers that have indicators_monthly rows in the most recent N months",
+    "category_math_window_days": "How far back to validate weekly/monthly category math (composite ≈ clamp(sum(category × weight) × expansion_factor)). Avoids scanning full history.",
+    "category_math_tolerance": "Absolute tolerance (in score points) for the category-math equality check. Tight (0.01) because the formula is deterministic."
   }
 }

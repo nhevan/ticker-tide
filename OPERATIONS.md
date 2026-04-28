@@ -100,6 +100,22 @@ Never start `run_bot.py` manually in a tmux session on EC2 — the systemd servi
 | `verify_backfill.py` | Post-backfill data quality checks | `--ticker AAPL`, `--quiet`, `--no-telegram`, `--db-path PATH` |
 | `verify_pipeline.py` | Post-calculation computed data checks | `--date YYYY-MM-DD`, `--quiet`, `--no-telegram`, `--db-path PATH` |
 
+`verify_pipeline.py` runs ~45 checks today, organised into sections:
+
+- **Indicator** (`indicator_ranges`, `indicator_coverage`, `indicator_date_alignment`, `indicator_null_percentage`)
+- **Score (daily)** (`score_ranges`, `category_score_ranges`, `confidence_range`, `signal_score_consistency`, `signal_distribution`, `confidence_distribution`, `weighted_score_math`, `regime_values`, `json_fields`)
+- **Pattern / divergence / crossover (daily)** (`pattern_counts`, `pattern_duplicates`, `pattern_field_validity`, `divergence_counts`, `divergence_consistency`, `crossover_validity`)
+- **Profile** (`profile_coverage`, `profile_percentile_order`, `profile_freshness`)
+- **Weekly** (`weekly_candle_validity`, `weekly_indicator_coverage`, `weekly_pattern_count`, `weekly_divergence_count`, `weekly_crossover_count`, `scores_weekly_table_coverage`, `scores_weekly_score_range`, `scores_weekly_category_math`)
+- **Monthly** (`monthly_candle_counts`, `monthly_score_column_coverage`, `monthly_indicator_coverage`, `monthly_pattern_count`, `monthly_divergence_count`, `monthly_crossover_count`, `scores_monthly_table_coverage`, `scores_monthly_score_range`, `scores_monthly_category_math`)
+- **Period integrity** (`no_open_period_persisted` — gates `scores_weekly` / `scores_monthly` against `is_week_closed` / `is_month_closed`)
+- **News + cross-table** (`news_summary_consistency`, `scores_have_indicators`, `indicators_have_ohlcv`, `sr_levels_within_range`)
+- **Signal flips** (`signal_flip_validity`)
+
+The category-math checks (`scores_weekly_category_math` / `scores_monthly_category_math`) re-derive the composite from per-category scores using both the v1 (`weekly_adaptive_weights`) and v2 (`weekly_adaptive_weights_v2`) weight sets and pass if **either** matches within `category_math_tolerance`. This dual-mode tolerance lets a `weekly_score_method` flip from v1 to v2 land mid-history without retroactively failing every old row.
+
+Note: `monthly_score_column_coverage` (renamed from `monthly_score_coverage` in commit 8) inspects the `scores_daily.monthly_score` *column*; the standalone `scores_monthly` *table* is separately covered by `scores_monthly_table_coverage`.
+
 Valid `--phase` values for `run_backfill.py`: `ohlcv`, `macro`, `fundamentals`, `earnings`, `corporate_actions`, `news`, `filings`.
 
 ### Finnhub Sentiment Enrichment

@@ -30,7 +30,13 @@ from src.backfiller.verify_pipeline import (
     check_indicator_ranges,
     check_indicators_have_ohlcv,
     check_json_fields,
+    check_monthly_crossover_count,
+    check_monthly_divergence_count,
+    check_monthly_indicator_coverage,
+    check_monthly_pattern_count,
+    check_monthly_score_column_coverage,
     check_news_summary_consistency,
+    check_no_open_period_persisted,
     check_pattern_counts,
     check_pattern_duplicates,
     check_pattern_field_validity,
@@ -40,10 +46,19 @@ from src.backfiller.verify_pipeline import (
     check_regime_values,
     check_score_ranges,
     check_scores_have_indicators,
+    check_scores_monthly_category_math,
+    check_scores_monthly_score_range,
+    check_scores_monthly_table_coverage,
+    check_scores_weekly_category_math,
+    check_scores_weekly_score_range,
+    check_scores_weekly_table_coverage,
     check_signal_distribution,
     check_signal_flip_validity,
     check_signal_score_consistency,
     check_sr_levels_within_range,
+    check_weekly_crossover_count,
+    check_weekly_divergence_count,
+    check_weekly_pattern_count,
     check_weighted_score_math,
     check_weekly_candle_validity,
     check_weekly_indicator_coverage,
@@ -381,6 +396,217 @@ def _insert_sr_level(
         "(ticker, date_computed, level_price, level_type, touch_count) "
         "VALUES (?, ?, ?, 'support', 3)",
         (ticker, date_computed, level_price),
+    )
+    conn.commit()
+
+
+def _insert_monthly_candle(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    close: float = 100.0,
+) -> None:
+    """Insert a single monthly_candles row."""
+    conn.execute(
+        "INSERT OR REPLACE INTO monthly_candles "
+        "(ticker, month_start, open, high, low, close, volume) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (ticker, month_start, close * 0.99, close * 1.02, close * 0.98, close, 1_000_000),
+    )
+    conn.commit()
+
+
+def _insert_monthly_indicator(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    rsi: float = 50.0,
+) -> None:
+    """Insert a single indicators_monthly row."""
+    conn.execute(
+        "INSERT OR REPLACE INTO indicators_monthly "
+        "(ticker, month_start, rsi_14) VALUES (?, ?, ?)",
+        (ticker, month_start, rsi),
+    )
+    conn.commit()
+
+
+def _insert_weekly_pattern(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str,
+    pattern_name: str = "hammer",
+    pattern_category: str = "candlestick",
+    direction: str = "bullish",
+    strength: int = 3,
+) -> None:
+    """Insert a single patterns_weekly row."""
+    conn.execute(
+        "INSERT INTO patterns_weekly "
+        "(ticker, week_start, pattern_name, pattern_category, direction, strength) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (ticker, week_start, pattern_name, pattern_category, direction, strength),
+    )
+    conn.commit()
+
+
+def _insert_monthly_pattern(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    pattern_name: str = "hammer",
+    pattern_category: str = "candlestick",
+    direction: str = "bullish",
+    strength: int = 3,
+) -> None:
+    """Insert a single patterns_monthly row."""
+    conn.execute(
+        "INSERT INTO patterns_monthly "
+        "(ticker, month_start, pattern_name, pattern_category, direction, strength) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (ticker, month_start, pattern_name, pattern_category, direction, strength),
+    )
+    conn.commit()
+
+
+def _insert_weekly_divergence(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str,
+    divergence_type: str = "regular_bullish",
+    indicator: str = "rsi_14",
+) -> None:
+    """Insert a single divergences_weekly row."""
+    conn.execute(
+        "INSERT INTO divergences_weekly "
+        "(ticker, week_start, indicator, divergence_type, "
+        "price_swing_1_value, price_swing_2_value, "
+        "indicator_swing_1_value, indicator_swing_2_value) "
+        "VALUES (?, ?, ?, ?, 100.0, 95.0, 30.0, 35.0)",
+        (ticker, week_start, indicator, divergence_type),
+    )
+    conn.commit()
+
+
+def _insert_monthly_divergence(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    divergence_type: str = "regular_bullish",
+    indicator: str = "rsi_14",
+) -> None:
+    """Insert a single divergences_monthly row."""
+    conn.execute(
+        "INSERT INTO divergences_monthly "
+        "(ticker, month_start, indicator, divergence_type, "
+        "price_swing_1_value, price_swing_2_value, "
+        "indicator_swing_1_value, indicator_swing_2_value) "
+        "VALUES (?, ?, ?, ?, 100.0, 95.0, 30.0, 35.0)",
+        (ticker, month_start, indicator, divergence_type),
+    )
+    conn.commit()
+
+
+def _insert_weekly_crossover(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str,
+    crossover_type: str = "ema_9_21",
+    direction: str = "bullish",
+) -> None:
+    """Insert a single crossovers_weekly row."""
+    conn.execute(
+        "INSERT INTO crossovers_weekly "
+        "(ticker, week_start, crossover_type, direction, days_ago) "
+        "VALUES (?, ?, ?, ?, 1)",
+        (ticker, week_start, crossover_type, direction),
+    )
+    conn.commit()
+
+
+def _insert_monthly_crossover(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    crossover_type: str = "ema_9_21",
+    direction: str = "bullish",
+) -> None:
+    """Insert a single crossovers_monthly row."""
+    conn.execute(
+        "INSERT INTO crossovers_monthly "
+        "(ticker, month_start, crossover_type, direction, days_ago) "
+        "VALUES (?, ?, ?, ?, 1)",
+        (ticker, month_start, crossover_type, direction),
+    )
+    conn.commit()
+
+
+def _insert_scores_weekly(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str,
+    composite_score: float = 0.0,
+    regime: str = "trending",
+    trend_score: float = 0.0,
+    momentum_score: float = 0.0,
+    volume_score: float = 0.0,
+    volatility_score: float = 0.0,
+    candlestick_score: float = 0.0,
+    structural_score: float = 0.0,
+    fundamental_score: float = 0.0,
+    macro_score: float = 0.0,
+    data_completeness: str = "{}",
+    key_signals: str = "[]",
+) -> None:
+    """Insert a single scores_weekly row."""
+    conn.execute(
+        "INSERT OR REPLACE INTO scores_weekly "
+        "(ticker, week_start, composite_score, regime, "
+        "trend_score, momentum_score, volume_score, volatility_score, "
+        "candlestick_score, structural_score, fundamental_score, macro_score, "
+        "data_completeness, key_signals) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            ticker, week_start, composite_score, regime,
+            trend_score, momentum_score, volume_score, volatility_score,
+            candlestick_score, structural_score, fundamental_score, macro_score,
+            data_completeness, key_signals,
+        ),
+    )
+    conn.commit()
+
+
+def _insert_scores_monthly(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    composite_score: float = 0.0,
+    regime: str = "trending",
+    trend_score: float = 0.0,
+    momentum_score: float = 0.0,
+    volume_score: float = 0.0,
+    volatility_score: float = 0.0,
+    candlestick_score: float = 0.0,
+    structural_score: float = 0.0,
+    fundamental_score: float = 0.0,
+    macro_score: float = 0.0,
+    data_completeness: str = "{}",
+    key_signals: str = "[]",
+) -> None:
+    """Insert a single scores_monthly row."""
+    conn.execute(
+        "INSERT OR REPLACE INTO scores_monthly "
+        "(ticker, month_start, composite_score, regime, "
+        "trend_score, momentum_score, volume_score, volatility_score, "
+        "candlestick_score, structural_score, fundamental_score, macro_score, "
+        "data_completeness, key_signals) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            ticker, month_start, composite_score, regime,
+            trend_score, momentum_score, volume_score, volatility_score,
+            candlestick_score, structural_score, fundamental_score, macro_score,
+            data_completeness, key_signals,
+        ),
     )
     conn.commit()
 
@@ -1607,6 +1833,459 @@ class TestCheckSignalFlipValidity:
         result = check_signal_flip_validity(db_connection)
         assert result.status in ("warn", "fail")
         assert result.details is not None
+
+
+# ---------------------------------------------------------------------------
+# ═══ WEEKLY / MONTHLY PARITY CHECKS (commit 8) ═══
+# ---------------------------------------------------------------------------
+
+def _recent_week_iso(weeks_ago: int = 1) -> str:
+    """Return an ISO Monday roughly ``weeks_ago`` weeks before today."""
+    today = date.today()
+    target = today - timedelta(weeks=weeks_ago)
+    return (target - timedelta(days=target.weekday())).isoformat()
+
+
+def _recent_month_start_iso(months_ago: int = 1) -> str:
+    """Return the first-of-month ISO string ~``months_ago`` months before today."""
+    today = date.today()
+    return (today.replace(day=1) - timedelta(days=months_ago * 31)).replace(day=1).isoformat() \
+        if False else (date(today.year, today.month, 1) - timedelta(days=months_ago * 31)).replace(day=1).isoformat()
+
+
+class TestCheckWeeklyPatternCount:
+    """Tests for check_weekly_pattern_count()."""
+
+    def test_pass_when_recent_patterns_exist(self, db_connection: sqlite3.Connection) -> None:
+        """Recent patterns_weekly rows under structural threshold should pass."""
+        recent = _recent_week_iso(1)
+        _insert_weekly_pattern(db_connection, "AAPL", recent, pattern_category="candlestick")
+        result = check_weekly_pattern_count(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_zero_recent_patterns(self, db_connection: sqlite3.Connection) -> None:
+        """Zero recent patterns_weekly rows should warn."""
+        # Insert ancient pattern outside the 30-week window
+        _insert_weekly_pattern(db_connection, "AAPL", "2020-01-06")
+        result = check_weekly_pattern_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+        assert result.details is not None
+        assert any("0 patterns_weekly" in d for d in result.details)
+
+    def test_warn_when_structural_excess(self, db_connection: sqlite3.Connection) -> None:
+        """Per-ticker structural patterns_weekly > 400 should warn."""
+        recent = _recent_week_iso(1)
+        # 401 structural patterns for AAPL → over weekly threshold (NOT daily 2000)
+        for i in range(401):
+            db_connection.execute(
+                "INSERT INTO patterns_weekly "
+                "(ticker, week_start, pattern_name, pattern_category, direction, strength) "
+                "VALUES ('AAPL', ?, 'double_top', 'structural', 'bearish', 3)",
+                (recent,),
+            )
+        db_connection.commit()
+        result = check_weekly_pattern_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+        assert result.details is not None
+        assert any("401" in d and "structural" in d for d in result.details)
+
+
+class TestCheckMonthlyPatternCount:
+    """Tests for check_monthly_pattern_count()."""
+
+    def test_pass_when_recent_patterns_exist(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_month_start_iso(1)
+        _insert_monthly_pattern(db_connection, "AAPL", recent)
+        result = check_monthly_pattern_count(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_zero(self, db_connection: sqlite3.Connection) -> None:
+        result = check_monthly_pattern_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+    def test_pass_with_only_old_patterns_outside_window(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """A pattern from 30 months ago should be outside the 24-month window → warn."""
+        very_old = (date.today() - timedelta(days=30 * 31)).replace(day=1).isoformat()
+        _insert_monthly_pattern(db_connection, "AAPL", very_old)
+        result = check_monthly_pattern_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+
+class TestCheckWeeklyDivergenceCount:
+    """Tests for check_weekly_divergence_count()."""
+
+    def test_pass_when_recent(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_week_iso(1)
+        _insert_weekly_divergence(db_connection, "AAPL", recent)
+        result = check_weekly_divergence_count(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_zero(self, db_connection: sqlite3.Connection) -> None:
+        result = check_weekly_divergence_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+    def test_no_upper_bound_after_review(self, db_connection: sqlite3.Connection) -> None:
+        """B3: no upper-bound rule — many divergences should still pass."""
+        recent = _recent_week_iso(1)
+        for _ in range(500):
+            _insert_weekly_divergence(db_connection, "AAPL", recent)
+        result = check_weekly_divergence_count(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+
+class TestCheckMonthlyDivergenceCount:
+    """Tests for check_monthly_divergence_count()."""
+
+    def test_pass(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_month_start_iso(1)
+        _insert_monthly_divergence(db_connection, "AAPL", recent)
+        result = check_monthly_divergence_count(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_zero(self, db_connection: sqlite3.Connection) -> None:
+        result = check_monthly_divergence_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+    def test_old_outside_window(self, db_connection: sqlite3.Connection) -> None:
+        very_old = (date.today() - timedelta(days=24 * 31)).replace(day=1).isoformat()
+        _insert_monthly_divergence(db_connection, "AAPL", very_old)
+        result = check_monthly_divergence_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+
+class TestCheckWeeklyCrossoverCount:
+    """Tests for check_weekly_crossover_count()."""
+
+    def test_pass(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_week_iso(1)
+        _insert_weekly_crossover(db_connection, "AAPL", recent)
+        result = check_weekly_crossover_count(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_zero(self, db_connection: sqlite3.Connection) -> None:
+        result = check_weekly_crossover_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+    def test_old_outside_window(self, db_connection: sqlite3.Connection) -> None:
+        _insert_weekly_crossover(db_connection, "AAPL", "2020-01-06")
+        result = check_weekly_crossover_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+
+class TestCheckMonthlyCrossoverCount:
+    """Tests for check_monthly_crossover_count()."""
+
+    def test_pass(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_month_start_iso(1)
+        _insert_monthly_crossover(db_connection, "AAPL", recent)
+        result = check_monthly_crossover_count(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_zero(self, db_connection: sqlite3.Connection) -> None:
+        result = check_monthly_crossover_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+    def test_old_outside_window(self, db_connection: sqlite3.Connection) -> None:
+        very_old = (date.today() - timedelta(days=30 * 31)).replace(day=1).isoformat()
+        _insert_monthly_crossover(db_connection, "AAPL", very_old)
+        result = check_monthly_crossover_count(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+
+class TestCheckScoresWeeklyTableCoverage:
+    """Tests for check_scores_weekly_table_coverage()."""
+
+    def test_pass_when_all_covered(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_week_iso(1)
+        _insert_weekly_indicator(db_connection, "AAPL", recent)
+        _insert_scores_weekly(db_connection, "AAPL", recent, composite_score=10.0)
+        result = check_scores_weekly_table_coverage(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_indicators_but_no_scores(self, db_connection: sqlite3.Connection) -> None:
+        """B1: ticker has indicators_weekly but no scores_weekly → warn."""
+        recent = _recent_week_iso(1)
+        _insert_weekly_indicator(db_connection, "AAPL", recent)
+        # No scores_weekly row
+        result = check_scores_weekly_table_coverage(db_connection, ["AAPL"])
+        assert result.status == "warn"
+        assert result.details is not None
+        assert any("AAPL" in d for d in result.details)
+
+    def test_warmup_only_not_flagged(self, db_connection: sqlite3.Connection) -> None:
+        """B1: ticker with weekly_candles but no indicators_weekly should NOT be flagged."""
+        recent = _recent_week_iso(1)
+        _insert_weekly_candle(db_connection, "AAPL", recent)
+        # No indicators_weekly, no scores_weekly — warm-up case
+        result = check_scores_weekly_table_coverage(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+
+class TestCheckScoresMonthlyTableCoverage:
+    """Tests for check_scores_monthly_table_coverage()."""
+
+    def test_pass_when_all_covered(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_month_start_iso(1)
+        _insert_monthly_indicator(db_connection, "AAPL", recent)
+        _insert_scores_monthly(db_connection, "AAPL", recent, composite_score=10.0)
+        result = check_scores_monthly_table_coverage(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_indicators_but_no_scores(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_month_start_iso(1)
+        _insert_monthly_indicator(db_connection, "AAPL", recent)
+        result = check_scores_monthly_table_coverage(db_connection, ["AAPL"])
+        assert result.status == "warn"
+
+    def test_warmup_only_not_flagged(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_month_start_iso(1)
+        _insert_monthly_candle(db_connection, "AAPL", recent)
+        result = check_scores_monthly_table_coverage(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+
+class TestCheckScoresWeeklyScoreRange:
+    """Tests for check_scores_weekly_score_range()."""
+
+    def test_pass_within_bounds(self, db_connection: sqlite3.Connection) -> None:
+        _insert_scores_weekly(db_connection, "AAPL", "2026-01-05",
+                              composite_score=42.0, trend_score=10.0)
+        result = check_scores_weekly_score_range(db_connection)
+        assert result.status == "pass"
+
+    def test_fail_composite_out_of_range(self, db_connection: sqlite3.Connection) -> None:
+        _insert_scores_weekly(db_connection, "AAPL", "2026-01-05", composite_score=999.0)
+        result = check_scores_weekly_score_range(db_connection)
+        assert result.status == "fail"
+        assert result.details is not None
+
+    def test_null_categories_ignored(self, db_connection: sqlite3.Connection) -> None:
+        """SQL IS NOT NULL filtering means NULL categories don't trigger failures."""
+        # Insert with explicit NULL trend_score, composite still in-range
+        db_connection.execute(
+            "INSERT INTO scores_weekly "
+            "(ticker, week_start, composite_score, regime, trend_score, momentum_score) "
+            "VALUES ('AAPL', '2026-01-05', 50.0, 'trending', NULL, 30.0)",
+        )
+        db_connection.commit()
+        result = check_scores_weekly_score_range(db_connection)
+        assert result.status == "pass"
+
+
+class TestCheckScoresMonthlyScoreRange:
+    """Tests for check_scores_monthly_score_range()."""
+
+    def test_pass(self, db_connection: sqlite3.Connection) -> None:
+        _insert_scores_monthly(db_connection, "AAPL", "2026-01-01",
+                               composite_score=42.0, trend_score=10.0)
+        result = check_scores_monthly_score_range(db_connection)
+        assert result.status == "pass"
+
+    def test_fail_category_out_of_range(self, db_connection: sqlite3.Connection) -> None:
+        _insert_scores_monthly(db_connection, "AAPL", "2026-01-01",
+                               composite_score=10.0, momentum_score=-200.0)
+        result = check_scores_monthly_score_range(db_connection)
+        assert result.status == "fail"
+
+    def test_empty_table_passes(self, db_connection: sqlite3.Connection) -> None:
+        result = check_scores_monthly_score_range(db_connection)
+        assert result.status == "pass"
+
+
+class TestCheckScoresWeeklyCategoryMath:
+    """Tests for check_scores_weekly_category_math() with v1/v2 dual-mode."""
+
+    def test_pass_v1_weights(self, db_connection: sqlite3.Connection) -> None:
+        """A row computed under v1 weights should match within tolerance."""
+        from src.common.config import load_config
+        cfg = load_config("scorer")
+        v1 = cfg["weekly_adaptive_weights"]["trending"]
+        expansion = cfg.get("scoring", {}).get("score_expansion_factor", 1.5)
+        trend, momentum, volume, volatility = 30.0, 20.0, 10.0, 5.0
+        weighted = (trend * v1["trend"] + momentum * v1["momentum"]
+                    + volume * v1["volume"] + volatility * v1["volatility"])
+        composite = max(-100.0, min(100.0, weighted * expansion))
+
+        recent = _recent_week_iso(1)
+        _insert_scores_weekly(
+            db_connection, "AAPL", recent,
+            composite_score=composite, regime="trending",
+            trend_score=trend, momentum_score=momentum,
+            volume_score=volume, volatility_score=volatility,
+        )
+        result = check_scores_weekly_category_math(db_connection)
+        assert result.status == "pass"
+
+    def test_warn_when_neither_v1_nor_v2_matches(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """A clearly wrong composite should fail both v1 and v2 → warn."""
+        recent = _recent_week_iso(1)
+        _insert_scores_weekly(
+            db_connection, "AAPL", recent,
+            composite_score=99.99, regime="trending",
+            trend_score=0.0, momentum_score=0.0,
+            volume_score=0.0, volatility_score=0.0,
+        )
+        result = check_scores_weekly_category_math(db_connection)
+        assert result.status == "warn"
+        assert result.details is not None
+        assert any("AAPL" in d for d in result.details)
+
+    def test_v2_dual_mode_passes(self, db_connection: sqlite3.Connection) -> None:
+        """B2: a row written under v2 weights should be accepted by dual-mode."""
+        from src.common.config import load_config
+        cfg = load_config("scorer")
+        v2 = cfg["weekly_adaptive_weights_v2"]["trending"]
+        expansion = cfg.get("scoring", {}).get("score_expansion_factor", 1.5)
+        # v2 includes candlestick + structural with weight 0.0; same arithmetic for non-zero categories
+        trend, momentum, volume, volatility = 30.0, 20.0, 10.0, 5.0
+        weighted = (trend * v2["trend"] + momentum * v2["momentum"]
+                    + volume * v2["volume"] + volatility * v2["volatility"])
+        composite = max(-100.0, min(100.0, weighted * expansion))
+
+        recent = _recent_week_iso(1)
+        _insert_scores_weekly(
+            db_connection, "AAPL", recent,
+            composite_score=composite, regime="trending",
+            trend_score=trend, momentum_score=momentum,
+            volume_score=volume, volatility_score=volatility,
+            candlestick_score=80.0,  # weighted at 0 → should not affect composite
+            structural_score=-50.0,
+        )
+        result = check_scores_weekly_category_math(db_connection)
+        assert result.status == "pass"
+
+    def test_window_filter_skips_old_rows(self, db_connection: sqlite3.Connection) -> None:
+        """C6: rows older than category_math_window_days are not checked."""
+        # Insert a clearly wrong row from 2 years ago — should be outside 365-day window
+        old_date = (date.today() - timedelta(days=400)).isoformat()
+        _insert_scores_weekly(
+            db_connection, "AAPL", old_date,
+            composite_score=99.99, regime="trending",
+            trend_score=0.0, momentum_score=0.0,
+            volume_score=0.0, volatility_score=0.0,
+        )
+        result = check_scores_weekly_category_math(db_connection)
+        assert result.status == "pass"
+
+
+class TestCheckScoresMonthlyCategoryMath:
+    """Tests for check_scores_monthly_category_math()."""
+
+    def test_pass_v1_weights(self, db_connection: sqlite3.Connection) -> None:
+        from src.common.config import load_config
+        cfg = load_config("scorer")
+        v1 = cfg["monthly_adaptive_weights"]["ranging"]
+        expansion = cfg.get("scoring", {}).get("score_expansion_factor", 1.5)
+        trend, momentum, volume, volatility = 10.0, 25.0, 15.0, 0.0
+        weighted = (trend * v1["trend"] + momentum * v1["momentum"]
+                    + volume * v1["volume"] + volatility * v1["volatility"])
+        composite = max(-100.0, min(100.0, weighted * expansion))
+
+        recent = _recent_month_start_iso(1)
+        _insert_scores_monthly(
+            db_connection, "AAPL", recent,
+            composite_score=composite, regime="ranging",
+            trend_score=trend, momentum_score=momentum,
+            volume_score=volume, volatility_score=volatility,
+        )
+        result = check_scores_monthly_category_math(db_connection)
+        assert result.status == "pass"
+
+    def test_warn_on_mismatch(self, db_connection: sqlite3.Connection) -> None:
+        recent = _recent_month_start_iso(1)
+        _insert_scores_monthly(
+            db_connection, "AAPL", recent,
+            composite_score=88.0, regime="trending",
+            trend_score=0.0, momentum_score=0.0,
+            volume_score=0.0, volatility_score=0.0,
+        )
+        result = check_scores_monthly_category_math(db_connection)
+        assert result.status == "warn"
+
+
+class TestCheckMonthlyIndicatorCoverage:
+    """Tests for check_monthly_indicator_coverage()."""
+
+    def test_pass(self, db_connection: sqlite3.Connection) -> None:
+        _insert_monthly_candle(db_connection, "AAPL", "2026-01-01")
+        _insert_monthly_indicator(db_connection, "AAPL", "2026-01-01")
+        result = check_monthly_indicator_coverage(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+    def test_warn_when_missing(self, db_connection: sqlite3.Connection) -> None:
+        _insert_monthly_candle(db_connection, "AAPL", "2026-01-01")
+        # No indicators_monthly
+        result = check_monthly_indicator_coverage(db_connection, ["AAPL"])
+        assert result.status == "warn"
+        assert result.details is not None
+
+    def test_pass_when_no_candles(self, db_connection: sqlite3.Connection) -> None:
+        """No candles + no indicators → pass (vacuously)."""
+        result = check_monthly_indicator_coverage(db_connection, ["AAPL"])
+        assert result.status == "pass"
+
+
+class TestCheckNoOpenPeriodPersisted:
+    """Tests for check_no_open_period_persisted()."""
+
+    def test_pass_when_period_closed(self, db_connection: sqlite3.Connection) -> None:
+        """A long-past week should pass the closed-period gate."""
+        _insert_scores_weekly(db_connection, "AAPL", "2020-01-06", composite_score=10.0)
+        _insert_scores_monthly(db_connection, "AAPL", "2020-01-01", composite_score=10.0)
+        result = check_no_open_period_persisted(db_connection)
+        assert result.status == "pass"
+
+    def test_fail_when_future_week_persisted(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """C8: future-dated Monday 2099-01-05 should be flagged as not closed."""
+        _insert_scores_weekly(db_connection, "AAPL", "2099-01-05", composite_score=10.0)
+        result = check_no_open_period_persisted(db_connection)
+        assert result.status == "fail"
+        assert result.details is not None
+        assert any("2099-01-05" in d for d in result.details)
+
+    def test_fail_when_future_month_persisted(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """C8: future-dated month 2099-01-01 should be flagged as not closed."""
+        _insert_scores_monthly(db_connection, "AAPL", "2099-01-01", composite_score=10.0)
+        result = check_no_open_period_persisted(db_connection)
+        assert result.status == "fail"
+        assert result.details is not None
+        assert any("2099-01-01" in d for d in result.details)
+
+
+class TestCheckMonthlyScoreColumnCoverage:
+    """Tests for the renamed check_monthly_score_column_coverage() (B4)."""
+
+    def test_pass(self, db_connection: sqlite3.Connection) -> None:
+        """A scores_daily row with non-null monthly_score should pass."""
+        _insert_score(db_connection, "AAPL", "2026-01-02")
+        # Backfill monthly_score directly
+        db_connection.execute(
+            "UPDATE scores_daily SET monthly_score = 25.0 WHERE ticker = 'AAPL'"
+        )
+        db_connection.commit()
+        result = check_monthly_score_column_coverage(db_connection, "2026-01-02")
+        assert result.status == "pass"
+        assert result.name == "monthly_score_column_coverage"
+
+    def test_warn_when_low_coverage(self, db_connection: sqlite3.Connection) -> None:
+        """All rows with NULL monthly_score should trigger warn."""
+        _insert_score(db_connection, "AAPL", "2026-01-02")
+        # monthly_score not set → NULL
+        result = check_monthly_score_column_coverage(db_connection, "2026-01-02")
+        assert result.status == "warn"
+
+    def test_pass_on_empty(self, db_connection: sqlite3.Connection) -> None:
+        """No scores_daily rows → vacuous pass."""
+        result = check_monthly_score_column_coverage(db_connection, "2026-01-02")
+        assert result.status == "pass"
 
 
 # ---------------------------------------------------------------------------

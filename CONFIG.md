@@ -512,6 +512,19 @@ Thresholds for `scripts/verify_pipeline.py`. All keys are optional — the scrip
 | `ema_stuck_days_threshold` | int | `10` | Flag an EMA as stuck (computation error) if it has the same value for this many consecutive trading days; EMA distance from price is never flagged as a warning (logged at INFO only) |
 | `weekly_volume_min_ratio` | float | `0.30` | Flag a week only if its volume is below this fraction of `(trading_days × local_avg_daily_volume)`; reference avg uses a rolling ±42-day window (~60 trading days) so early low-volume tickers aren't compared against inflated all-time averages |
 | `warmup_rows` | int | `50` | Rows per ticker (ordered by date) to skip in range checks; covers the `ta` library's indicator warm-up period |
+| `weekly_pattern_warn_zero_window_weeks` | int | `30` | Warn if no `patterns_weekly` rows exist across all active tickers within the most recent N closed weeks (zero-detection signal). Used by `check_weekly_pattern_count`. |
+| `weekly_pattern_structural_warn_high` | int | `400` | Warn if any single ticker has more than this many `patterns_weekly` structural rows over its full history. Distinct from the daily 2000 constant — weeks compress signal so the threshold is lower. |
+| `monthly_pattern_warn_zero_window_months` | int | `24` | Warn if no `patterns_monthly` rows exist across all active tickers within the most recent N closed months. Used by `check_monthly_pattern_count`. |
+| `weekly_divergence_warn_zero_window_days` | int | `90` | Warn if zero `divergences_weekly` rows exist within this many days. **Lower bound only** — adversarial review dropped the upper-bound rule because divergence detection naturally produces variable counts. |
+| `monthly_divergence_warn_zero_window_months` | int | `12` | Same as `weekly_divergence_warn_zero_window_days` but for `divergences_monthly`. |
+| `weekly_crossover_warn_zero_window_days` | int | `90` | Warn if zero `crossovers_weekly` rows exist within this many days. Used by `check_weekly_crossover_count`. |
+| `monthly_crossover_warn_zero_window_months` | int | `24` | Same as `weekly_crossover_warn_zero_window_days` but for `crossovers_monthly`. |
+| `weekly_score_coverage_window_weeks` | int | `12` | Lookback window for `check_scores_weekly_table_coverage`. A ticker is considered "should be covered" only if it has at least one `indicators_weekly` row in this window — warm-up tickers (candles but no indicators) are NOT counted as gaps. |
+| `monthly_score_coverage_window_months` | int | `6` | Same as `weekly_score_coverage_window_weeks` but for `scores_monthly` / `indicators_monthly`. |
+| `category_math_window_days` | int | `365` | How far back `check_scores_weekly_category_math` and `check_scores_monthly_category_math` validate `composite ≈ clamp(sum(category × weight) × score_expansion_factor)`. Bounds the cost of the deterministic math check. |
+| `category_math_tolerance` | float | `0.01` | Absolute tolerance (in score points) for the category-math equality. Tight (0.01) because the formula is deterministic; the check tries v1 weights then v2 (`weekly_adaptive_weights_v2` / `monthly_adaptive_weights_v2`) and passes if either matches. |
+
+The `_*_warn_zero_*` keys are diagnostic ("nobody is producing data") and only ever produce warnings — never failures. The score-range and category-math checks fail on out-of-bound composites and warn on math drift.
 
 ## Config Changes Requiring Re-runs
 
