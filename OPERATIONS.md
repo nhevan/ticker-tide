@@ -16,7 +16,7 @@
 | Phase | Script called | Expected duration |
 |---|---|---|
 | 2a — Fetcher | `run_daily_fetch()` | 3–8 min (API latency per ~65 symbols) |
-| 2b — Calculator | `run_calculator(mode='incremental')` | 2–4 min |
+| 2b — Calculator | `run_calculator(mode='incremental')` | 2–4 min (per ticker the calculator now also runs the weekly + monthly per-timeframe sub-pipelines: swing_points → S/R → patterns → divergences → crossovers → profiles, against `*_weekly` and `*_monthly` mirror tables; ETFs/benchmarks skip the sub-pipeline) |
 | 3 — Scorer | `run_scorer()` | 1–3 min |
 | 4 — Notifier | `run_notifier()` | 2–5 min (Claude API per qualifying ticker) |
 | **Total** | | **~10–20 min** |
@@ -94,6 +94,8 @@ Never start `run_bot.py` manually in a tmux session on EC2 — the systemd servi
 | `migrate_news_articles_pk.py` | One-time migration: change `news_articles` PK from `id` to `(id, ticker)` | `(none)` |
 | `migrate_add_calibration_columns.py` | One-time: add calibration columns to `scores_daily` | `--db-path PATH` |
 | `migrate_add_monthly.py` | One-time: add `monthly_candles`, `indicators_monthly` tables and `monthly_score` column to `scores_daily` | `--db-path PATH` |
+| `migrate_add_timeframe_parity.py` | One-time: add 14 weekly/monthly parity tables (swing_points, support_resistance, patterns, divergences, crossovers, indicator_profiles per timeframe + scores_weekly/scores_monthly) | `--db-path PATH` |
+| `migrate_fix_scores_completeness_type.py` | One-time: fix `scores_weekly`/`scores_monthly`.`data_completeness` from `REAL` to `TEXT` (commit-1 schema bug). Idempotent — no-op when already TEXT. ABORTS if rows are present and type is REAL. **Must run before commit-6 persistence is exercised.** | `--db-path PATH` |
 | `test_api_access.py` | Test all 5 API keys | `(none)` |
 | `verify_backfill.py` | Post-backfill data quality checks | `--ticker AAPL`, `--quiet`, `--no-telegram`, `--db-path PATH` |
 | `verify_pipeline.py` | Post-calculation computed data checks | `--date YYYY-MM-DD`, `--quiet`, `--no-telegram`, `--db-path PATH` |
@@ -183,6 +185,59 @@ python scripts/run_scorer.py --historical --force
 # 4. Verify
 python scripts/verify_pipeline.py
 ```
+
+**`migrate_add_timeframe_parity.py`** — Adds 14 weekly/monthly parity tables that mirror the existing daily structures: `swing_points_weekly|monthly`, `support_resistance_weekly|monthly`, `patterns_weekly|monthly`, `divergences_weekly|monthly`, `crossovers_weekly|monthly`, `indicator_profiles_weekly|monthly`, plus two new score snapshot tables `scores_weekly` (PK `(ticker, week_start)`) and `scores_monthly` (PK `(ticker, month_start)`). Each new table also gets an `idx_<table>_ticker_<datecol>` index. Uses `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` throughout — fully idempotent.
+
+```bash
+# 1. Run the migration (safe to re-run)
+python scripts/migrate_add_timeframe_parity.py
+
+# 2. Re-run calculator + scorer once the corresponding write paths land
+#    (subsequent commits in the parity series populate these tables).
+#    From commit 4 onward, `run_calculator.py --mode full` also populates the
+#    six event/profile tables for each timeframe: swing_points_weekly /
+#    support_resistance_weekly / patterns_weekly / divergences_weekly /
+#    crossovers_weekly / indicator_profiles_weekly (plus the monthly
+#    counterparts). ETFs and benchmarks remain restricted to candles +
+#    indicators on every timeframe.
+python scripts/run_calculator.py --mode full
+python scripts/run_scorer.py --historical --force
+
+# 3. Verify
+python scripts/verify_pipeline.py
+```
+
+**`migrate_fix_scores_completeness_type.py`** — Corrects a column-type bug introduced by commit 1's parity migration. The `scores_weekly` + `scores_monthly` tables were created with `data_completeness REAL`, but the scorer writes `json.dumps(...)` (a string) to that column — REAL would silently coerce to NULL. This migration drops + recreates each affected table when its column type is REAL. Tables must be empty (commit 6 is the first writer); the migration ABORTS rather than silently destroying data if it finds any rows in a wrong-type table.
+
+```bash
+# 1. Run the migration BEFORE deploying commit 6's scorer changes.
+#    Idempotent — re-runs are no-ops once the column is TEXT.
+python scripts/migrate_fix_scores_completeness_type.py
+
+# 2. Verify both columns are TEXT
+sqlite3 data/signals.db "PRAGMA table_info(scores_weekly);"   | grep data_completeness
+sqlite3 data/signals.db "PRAGMA table_info(scores_monthly);"  | grep data_completeness
+```
+
+### Historical scoring modes (commit 6 expansion)
+
+`run_scorer.py --historical --mode <MODE>` accepts five values:
+
+| Mode | What it walks |
+|---|---|
+| `daily` | Trading dates in the last `daily_lookback_months`. |
+| `weekly` | `week_start` rows from `weekly_candles` between `daily_lookback_months..weekly_lookback_months`. |
+| `monthly` | `month_start` rows from `monthly_candles` between `daily_lookback_months..monthly_lookback_months`. **NEW in commit 6.** |
+| `all` | `daily` + `weekly` + `monthly` together. **NEW in commit 6** — explicit, unambiguous. |
+| `both` | Back-compat alias. **Now also includes monthly** — this is a deliberate semantic expansion in commit 6 so existing callers automatically get monthly coverage. Identical to `all` going forward. |
+
+> **Sparse monthly coverage.** When a `month_start` lands on a non-trading day
+> (e.g. 2026-01-01 holiday), `score_ticker(scoring_date=month_start)` returns
+> None silently because no daily indicator row exists. This is an accepted
+> sparseness in the monthly historical backfill — not every `month_start` is
+> guaranteed to produce a `scores_monthly` row.
+
+**Known re-run-to-fix failure mode.** The save functions used by the calculator/scorer commit a `DELETE FROM <table> WHERE ticker = ?` before the per-row `INSERT` loop. If the process is killed between the delete and the inserts (kill -9, OOM, sudden shutdown), the table for that ticker is left empty until the next run. Re-running the affected phase with `--force` regenerates the rows; no data is lost beyond what the calculator/scorer can recompute from raw OHLCV.
 
 ---
 

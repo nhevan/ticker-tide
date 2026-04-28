@@ -838,3 +838,348 @@ def test_flag_detection_bounded_on_long_history() -> None:
     assert names.count("bull_flag") <= 1, "At most 1 bull_flag should be returned"
     assert names.count("bear_flag") <= 1, "At most 1 bear_flag should be returned"
 
+
+# ── trend_context_candles config-extraction regression ─────────────────────────
+
+
+def test_trend_context_candles_read_from_config() -> None:
+    """
+    The hammer / shooting-star trend-context window must come from
+    config["patterns"]["trend_context_candles"], NOT from the previous
+    module-level _TREND_CONTEXT_CANDLES = 5 constant.
+
+    With trend_context_candles set to a value larger than the dataset, no
+    hammer/shooting_star can ever fire because the gating ``i >= ctx`` check
+    is never satisfied. Setting it to 0 lets the patterns fire from the very
+    first candle. Comparing the two confirms the value is actually consumed.
+    """
+    # 8-candle downtrend with a strong hammer at the end (lower wick > 2x body).
+    records = [_candle(i, 110.0 - i, 110.0 - i + 0.5, 110.0 - i - 0.5, 110.0 - i - 0.2)
+               for i in range(7)]
+    records.append(_candle(7, 103.0, 103.5, 95.0, 103.4))  # tiny body, big lower wick
+    df = pd.DataFrame(records)
+
+    # ctx > len(df): no hammer should be detected (gate is never satisfied).
+    cfg_blocked = {"patterns": {"trend_context_candles": 100}}
+    blocked = detect_candlestick_patterns(df, cfg_blocked)
+    assert not any(p["pattern_name"] == "hammer" for p in blocked)
+
+    # ctx = 5: at least one hammer is detected (matches prior default behaviour).
+    cfg_default = {"patterns": {"trend_context_candles": 5}}
+    enabled = detect_candlestick_patterns(df, cfg_default)
+    assert any(p["pattern_name"] == "hammer" for p in enabled)
+
+
+def test_trend_context_candles_default_when_config_missing() -> None:
+    """When config omits patterns.trend_context_candles, the function falls
+    back to the documented default (5) — same as the previous hardcoded value.
+    """
+    records = [_candle(i, 110.0 - i, 110.0 - i + 0.5, 110.0 - i - 0.5, 110.0 - i - 0.2)
+               for i in range(7)]
+    records.append(_candle(7, 103.0, 103.5, 95.0, 103.4))
+    df = pd.DataFrame(records)
+
+    # No trend_context_candles key → default 5 → hammer detected.
+    found = detect_candlestick_patterns(df, {"patterns": {}})
+    assert any(p["pattern_name"] == "hammer" for p in found)
+
+
+# ── Daily regression: defaults must target patterns_daily ─────────────────────
+
+
+def _insert_ohlcv_daily(db_conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> None:
+    """Insert synthetic OHLCV rows into ohlcv_daily."""
+    rows = [
+        (ticker, row["date"], row["open"], row["high"], row["low"], row["close"], row["volume"])
+        for _, row in df.iterrows()
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO ohlcv_daily (ticker, date, open, high, low, close, volume) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    db_conn.commit()
+
+
+def _insert_weekly_candles(db_conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> None:
+    rows = [
+        (ticker, row["date"], row["open"], row["high"], row["low"], row["close"], row["volume"])
+        for _, row in df.iterrows()
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO weekly_candles (ticker, week_start, open, high, low, close, volume) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    db_conn.commit()
+
+
+def _insert_monthly_candles(db_conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> None:
+    rows = [
+        (ticker, row["date"], row["open"], row["high"], row["low"], row["close"], row["volume"])
+        for _, row in df.iterrows()
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO monthly_candles (ticker, month_start, open, high, low, close, volume) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    db_conn.commit()
+
+
+def test_save_patterns_daily_default_targets_patterns_daily(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    DAILY REGRESSION GUARD: save_patterns_to_db with no kwargs must write to
+    patterns_daily only, never to patterns_weekly or patterns_monthly.
+    """
+    patterns = [{
+        "date": "2024-01-10",
+        "pattern_name": "doji",
+        "pattern_category": "candlestick",
+        "pattern_type": "indecision",
+        "direction": "neutral",
+        "strength": 3,
+        "confirmed": False,
+        "details": None,
+    }]
+    save_patterns_to_db(db_connection, "AAPL", patterns, "candlestick")
+
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+
+    assert daily == 1
+    assert weekly == 0
+    assert monthly == 0
+
+
+def test_detect_all_patterns_daily_default_targets_patterns_daily(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    detect_all_patterns_for_ticker with no kwargs must keep writing to
+    patterns_daily only — guards against an accidental default-flip toward
+    weekly/monthly mirror tables.
+    """
+    ticker = "AAPL"
+    # Simple OHLCV; no swing/SR so structural will be empty but candlestick may fire.
+    records = [_candle(i, 100.0, 100.5, 99.5, 100.0) for i in range(20)]
+    df = pd.DataFrame(records)
+    _insert_ohlcv_daily(db_connection, ticker, df)
+
+    detect_all_patterns_for_ticker(db_connection, ticker, _BASE_CONFIG)
+
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_weekly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_monthly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert weekly == 0, "default invocation must NOT write to patterns_weekly"
+    assert monthly == 0, "default invocation must NOT write to patterns_monthly"
+
+
+# ── Weekly + Monthly parameterization ────────────────────────────────────────
+
+
+def test_save_patterns_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_patterns_to_db with weekly overrides persists to patterns_weekly only."""
+    patterns = [{
+        "date": "2024-01-15",
+        "pattern_name": "hammer",
+        "pattern_category": "candlestick",
+        "pattern_type": "reversal",
+        "direction": "bullish",
+        "strength": 4,
+        "confirmed": False,
+        "details": None,
+    }]
+    count = save_patterns_to_db(
+        db_connection,
+        "AAPL",
+        patterns,
+        "candlestick",
+        dest_table="patterns_weekly",
+        date_column_name="week_start",
+    )
+    assert count == 1
+    rows = db_connection.execute(
+        "SELECT * FROM patterns_weekly WHERE ticker = 'AAPL'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["week_start"] == "2024-01-15"
+    assert rows[0]["pattern_name"] == "hammer"
+
+    # Daily must remain untouched.
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 0
+
+
+def test_save_patterns_monthly_writes_to_monthly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_patterns_to_db with monthly overrides persists to patterns_monthly only."""
+    patterns = [{
+        "date": "2024-01-01",
+        "pattern_name": "double_bottom",
+        "pattern_category": "structural",
+        "pattern_type": "reversal",
+        "direction": "bullish",
+        "strength": 4,
+        "confirmed": True,
+        "details": None,
+    }]
+    save_patterns_to_db(
+        db_connection,
+        "AAPL",
+        patterns,
+        "structural",
+        dest_table="patterns_monthly",
+        date_column_name="month_start",
+    )
+    rows = db_connection.execute(
+        "SELECT * FROM patterns_monthly WHERE ticker = 'AAPL'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["month_start"] == "2024-01-01"
+
+
+def test_detect_all_patterns_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Seed weekly_candles + indicators_weekly + swing_points_weekly +
+    support_resistance_weekly. Calling detect_all_patterns_for_ticker with
+    weekly overrides persists to patterns_weekly only — daily/monthly stay 0.
+    """
+    ticker = "AAPL"
+    # Build 20 candles with one strong bullish engulf at index 19 to get at least
+    # one candlestick pattern reliably.
+    records = [_candle(i, 100.0, 101.0, 99.0, 100.5) for i in range(18)]
+    records.append(_candle(18, 105.0, 105.5, 100.0, 100.5))  # bearish day
+    records.append(_candle(19, 99.0, 107.0, 98.5, 106.0))    # bullish engulf
+    df = pd.DataFrame(records)
+
+    rows = [
+        (ticker, row["date"], row["open"], row["high"], row["low"], row["close"], row["volume"])
+        for _, row in df.iterrows()
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO weekly_candles (ticker, week_start, open, high, low, close, volume) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    # Empty indicator rows is fine — the function reads * and structural needs swing.
+    db_connection.commit()
+
+    detect_all_patterns_for_ticker(
+        db_connection,
+        ticker,
+        _BASE_CONFIG,
+        source_candles_table="weekly_candles",
+        source_candles_date_column="week_start",
+        source_indicators_table="indicators_weekly",
+        source_indicators_date_column="week_start",
+        source_swing_table="swing_points_weekly",
+        source_swing_date_column="week_start",
+        source_sr_table="support_resistance_weekly",
+        dest_table="patterns_weekly",
+        dest_date_column="week_start",
+    )
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_weekly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_daily WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_monthly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert weekly >= 1, "weekly invocation should populate patterns_weekly"
+    assert daily == 0
+    assert monthly == 0
+
+
+def test_detect_all_patterns_monthly_writes_to_monthly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Same as the weekly variant but for monthly_candles -> patterns_monthly."""
+    ticker = "AAPL"
+    records = [_candle(i, 100.0, 101.0, 99.0, 100.5) for i in range(18)]
+    records.append(_candle(18, 105.0, 105.5, 100.0, 100.5))
+    records.append(_candle(19, 99.0, 107.0, 98.5, 106.0))
+    df = pd.DataFrame(records)
+    _insert_monthly_candles(db_connection, ticker, df)
+
+    detect_all_patterns_for_ticker(
+        db_connection,
+        ticker,
+        _BASE_CONFIG,
+        source_candles_table="monthly_candles",
+        source_candles_date_column="month_start",
+        source_indicators_table="indicators_monthly",
+        source_indicators_date_column="month_start",
+        source_swing_table="swing_points_monthly",
+        source_swing_date_column="month_start",
+        source_sr_table="support_resistance_monthly",
+        dest_table="patterns_monthly",
+        dest_date_column="month_start",
+    )
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_monthly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_daily WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM patterns_weekly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert monthly >= 1
+    assert daily == 0
+    assert weekly == 0
+
+
+# ── Whitelist validation ─────────────────────────────────────────────────────
+
+
+def test_save_patterns_rejects_unknown_dest_table(db_connection: sqlite3.Connection) -> None:
+    """Passing an unrecognised dest_table must raise ValueError before SQL runs."""
+    patterns = [{
+        "date": "2024-01-10",
+        "pattern_name": "doji",
+        "pattern_category": "candlestick",
+        "pattern_type": "indecision",
+        "direction": "neutral",
+        "strength": 3,
+        "confirmed": False,
+        "details": None,
+    }]
+    with pytest.raises(ValueError):
+        save_patterns_to_db(
+            db_connection, "AAPL", patterns, "candlestick",
+            dest_table="patterns_daily; DROP TABLE patterns_daily; --",
+        )
+
+
+def test_detect_all_patterns_rejects_unknown_source_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised source_candles_table must raise ValueError."""
+    with pytest.raises(ValueError):
+        detect_all_patterns_for_ticker(
+            db_connection, "AAPL", _BASE_CONFIG,
+            source_candles_table="not_a_real_table",
+        )
+

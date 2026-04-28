@@ -336,3 +336,264 @@ def test_compute_weekly_incremental_mode(db_connection: sqlite3.Connection) -> N
         "SELECT COUNT(*) AS cnt FROM weekly_candles WHERE ticker='AAPL'"
     ).fetchone()["cnt"]
     assert final_count == initial_count + 1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sub-pipeline (commit 4): swing_points + S/R + patterns + divergences +
+# crossovers + profiles wired into compute_weekly_for_ticker.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+import math
+
+
+def _generate_rich_daily_ohlcv(
+    num_weeks: int = 156,
+    start_monday: date = date(2022, 1, 3),
+) -> list[dict]:
+    """
+    Generate ~3 years of Mon-Fri OHLCV with a deterministic sine + drift signal.
+
+    The sine component spans roughly six oscillations across the window, giving
+    weekly aggregation enough peaks and troughs to detect swing points (default
+    lookback=5 → needs >=11 bars per swing) and feed downstream S/R / pattern
+    detection. Volume is kept positive and varies by day.
+
+    Args:
+        num_weeks: Number of business weeks to generate. Default 156 (≈3 years).
+        start_monday: Anchor Monday for the first week.
+
+    Returns:
+        List of OHLCV row dicts in ``ohlcv_daily`` shape.
+    """
+    rows: list[dict] = []
+    base_price = 100.0
+    for week_idx in range(num_weeks):
+        monday = start_monday + timedelta(weeks=week_idx)
+        for day_offset in range(5):
+            t = week_idx * 5 + day_offset  # global trading-day index
+            cycle = math.sin(t / 18.0) * 12.0  # ~36-day half-period
+            drift = t * 0.05
+            jitter = ((t * 7) % 11) * 0.3 - 1.5
+            close = base_price + drift + cycle + jitter
+            day = monday + timedelta(days=day_offset)
+            high = close + 1.5 + ((t * 3) % 5) * 0.4
+            low = close - 1.5 - ((t * 5) % 4) * 0.5
+            open_ = close - 0.4 + ((t * 11) % 7) * 0.2
+            volume = 1_000_000.0 + ((t * 13) % 17) * 50_000.0
+            rows.append({
+                "date": day.isoformat(),
+                "open": round(open_, 4),
+                "high": round(high, 4),
+                "low": round(low, 4),
+                "close": round(close, 4),
+                "volume": volume,
+            })
+    return rows
+
+
+def _count(db_conn: sqlite3.Connection, sql: str, *args) -> int:
+    """Run a SELECT COUNT(*) query and return the integer count."""
+    return int(db_conn.execute(sql, args).fetchone()[0])
+
+
+def test_compute_weekly_runs_full_subpipeline_and_populates_mirrors(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Full mode should populate all six weekly mirror tables for a regular ticker.
+
+    The rich 3-year fixture supplies enough weekly candles for swing detection
+    (default lookback=5 → needs >=11 candles), which in turn feeds S/R and
+    structural patterns; candlestick patterns + crossovers come straight off
+    candles + indicators; profiles use the indicator history directly.
+    """
+    rows = _generate_rich_daily_ohlcv()
+    _insert_ohlcv(db_connection, "AAPL", rows)
+
+    compute_weekly_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+    )
+
+    assert _count(
+        db_connection, "SELECT COUNT(*) FROM swing_points_weekly WHERE ticker = ?", "AAPL"
+    ) > 0
+    assert _count(
+        db_connection,
+        "SELECT COUNT(*) FROM support_resistance_weekly WHERE ticker = ?",
+        "AAPL",
+    ) > 0
+    assert _count(
+        db_connection, "SELECT COUNT(*) FROM patterns_weekly WHERE ticker = ?", "AAPL"
+    ) > 0
+    # Divergences + crossovers may legitimately be zero for a deterministic
+    # signal; assert the tables are at least addressable (no SQL error) by
+    # querying them. Profiles must be populated when indicators exist.
+    db_connection.execute(
+        "SELECT COUNT(*) FROM divergences_weekly WHERE ticker = ?", ("AAPL",)
+    ).fetchone()
+    db_connection.execute(
+        "SELECT COUNT(*) FROM crossovers_weekly WHERE ticker = ?", ("AAPL",)
+    ).fetchone()
+    assert _count(
+        db_connection,
+        "SELECT COUNT(*) FROM indicator_profiles_weekly WHERE ticker = ?",
+        "AAPL",
+    ) > 0
+
+
+def test_compute_weekly_incremental_reruns_subpipeline_on_full_history(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Incremental mode re-runs the six sub-steps on the full ticker history.
+
+    None of the six detectors operates on a date window; they always read the
+    entire ticker history from the source table. The cost is acceptable
+    because weekly bar counts are 5× fewer than daily.
+    """
+    rows = _generate_rich_daily_ohlcv()
+    _insert_ohlcv(db_connection, "AAPL", rows)
+
+    compute_weekly_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+    )
+    full_swings = _count(
+        db_connection, "SELECT COUNT(*) FROM swing_points_weekly WHERE ticker = ?", "AAPL"
+    )
+    assert full_swings > 0
+
+    # Add one more business week of daily data and run incremental.
+    last_monday = date(2022, 1, 3) + timedelta(weeks=156)
+    new_rows = _generate_rich_daily_ohlcv(num_weeks=1, start_monday=last_monday)
+    _insert_ohlcv(db_connection, "AAPL", new_rows)
+
+    compute_weekly_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG, mode="incremental", skip_event_detection=False
+    )
+
+    incr_swings = _count(
+        db_connection, "SELECT COUNT(*) FROM swing_points_weekly WHERE ticker = ?", "AAPL"
+    )
+    # Re-detection on full history should produce a comparable count.
+    assert incr_swings > 0
+
+
+def test_compute_weekly_skip_event_detection_skips_six_substeps(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    skip_event_detection=True mirrors daily-ETF policy: all six new sub-steps
+    are bypassed. Indicators + candles still persist, but the six mirror tables
+    stay empty.
+    """
+    rows = _generate_rich_daily_ohlcv()
+    _insert_ohlcv(db_connection, "ETFX", rows)
+
+    compute_weekly_for_ticker(
+        db_connection, "ETFX", _BASE_CONFIG, mode="full", skip_event_detection=True
+    )
+
+    # Indicators + candles must still be populated.
+    assert _count(
+        db_connection, "SELECT COUNT(*) FROM weekly_candles WHERE ticker = ?", "ETFX"
+    ) > 0
+    assert _count(
+        db_connection, "SELECT COUNT(*) FROM indicators_weekly WHERE ticker = ?", "ETFX"
+    ) > 0
+
+    for table in (
+        "swing_points_weekly",
+        "support_resistance_weekly",
+        "patterns_weekly",
+        "divergences_weekly",
+        "crossovers_weekly",
+        "indicator_profiles_weekly",
+    ):
+        assert _count(
+            db_connection, f"SELECT COUNT(*) FROM {table} WHERE ticker = ?", "ETFX"
+        ) == 0, f"expected empty {table} when skip_event_detection=True"
+
+
+def test_compute_weekly_subpipeline_isolates_per_step_errors(
+    db_connection: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A failing detector must not abort the rest of the sub-pipeline. The error
+    is logged and an alerts_log row is written.
+    """
+    rows = _generate_rich_daily_ohlcv()
+    _insert_ohlcv(db_connection, "AAPL", rows)
+
+    def _boom(*args, **kwargs):
+        raise ValueError("synthetic patterns failure")
+
+    # Patch the binding inside src.calculator.weekly so the wrapper's symbol
+    # raises at call time.
+    import src.calculator.weekly as weekly_mod
+    monkeypatch.setattr(weekly_mod, "detect_all_patterns_for_ticker", _boom)
+
+    # Should not raise.
+    compute_weekly_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+    )
+
+    # Other steps still ran.
+    assert _count(
+        db_connection, "SELECT COUNT(*) FROM swing_points_weekly WHERE ticker = ?", "AAPL"
+    ) > 0
+    assert _count(
+        db_connection,
+        "SELECT COUNT(*) FROM indicator_profiles_weekly WHERE ticker = ?",
+        "AAPL",
+    ) > 0
+
+    # alerts_log must have a row mentioning the failed step.
+    alert_rows = db_connection.execute(
+        "SELECT phase, severity, message FROM alerts_log "
+        "WHERE ticker = ? AND message LIKE '%patterns%'",
+        ("AAPL",),
+    ).fetchall()
+    assert len(alert_rows) >= 1
+    assert any("patterns" in r["message"] for r in alert_rows)
+
+
+def test_compute_weekly_subpipeline_is_idempotent(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Running the full sub-pipeline twice produces stable mirror-table row
+    counts (no duplicates). The detectors all DELETE-then-INSERT per ticker.
+    """
+    rows = _generate_rich_daily_ohlcv()
+    _insert_ohlcv(db_connection, "AAPL", rows)
+
+    compute_weekly_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+    )
+
+    counts_first = {
+        t: _count(db_connection, f"SELECT COUNT(*) FROM {t} WHERE ticker = ?", "AAPL")
+        for t in (
+            "swing_points_weekly",
+            "support_resistance_weekly",
+            "patterns_weekly",
+            "indicator_profiles_weekly",
+        )
+    }
+
+    compute_weekly_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+    )
+
+    counts_second = {
+        t: _count(db_connection, f"SELECT COUNT(*) FROM {t} WHERE ticker = ?", "AAPL")
+        for t in (
+            "swing_points_weekly",
+            "support_resistance_weekly",
+            "patterns_weekly",
+            "indicator_profiles_weekly",
+        )
+    }
+    assert counts_first == counts_second

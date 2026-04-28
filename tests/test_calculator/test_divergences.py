@@ -451,3 +451,339 @@ def test_detect_divergences_for_ticker_end_to_end(db_connection: sqlite3.Connect
         "SELECT * FROM divergences_daily WHERE ticker = ?", (ticker,)
     ).fetchall()
     assert len(rows) >= 1
+
+
+# ── rsi_14 bug-fix regression ────────────────────────────────────────────────
+
+
+def _seed_rsi_bullish_divergence(db_conn: sqlite3.Connection, ticker: str = "AAPL") -> None:
+    """Seed OHLCV + indicators_daily + swing_points with a clear RSI bullish divergence."""
+    # 30 baseline rows
+    ohlcv_rows = [
+        (ticker, _make_date(i), 100.0, 101.0, 99.0, 100.0, 200_000.0)
+        for i in range(30)
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO ohlcv_daily (ticker, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)",
+        ohlcv_rows,
+    )
+
+    rsi_vals = [50.0] * 30
+    rsi_vals[5] = 25.0
+    rsi_vals[20] = 30.0  # higher RSI low
+    ind_rows = [
+        (ticker, _make_date(i), rsi_vals[i], 0.0, 0.0, 0.0, float(i * 100), 50.0)
+        for i in range(30)
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO indicators_daily "
+        "(ticker, date, rsi_14, macd_histogram, macd_line, macd_signal, obv, stoch_k) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ind_rows,
+    )
+
+    swing_rows = [
+        (ticker, _make_date(5), "low", 100.0, 3),
+        (ticker, _make_date(20), "low", 95.0, 3),  # price lower → bullish divergence
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO swing_points (ticker, date, type, price, strength) VALUES (?,?,?,?,?)",
+        swing_rows,
+    )
+    db_conn.commit()
+
+
+def test_rsi_divergence_stored_indicator_is_rsi_14(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Bug fix regression: divergences for RSI must be persisted with
+    indicator='rsi_14' (matching the indicators_daily column name) so the
+    scorer's `d.get("indicator") == "rsi_14"` filter actually matches.
+
+    Prior to the fix the value was stored as 'rsi' and the scorer silently
+    contributed zero to the daily RSI divergence score for every ticker.
+    """
+    _seed_rsi_bullish_divergence(db_connection)
+    config = {
+        "divergences": {
+            "min_swing_distance_days": 5,
+            "max_swing_distance_days": 60,
+        }
+    }
+    detect_divergences_for_ticker(db_connection, "AAPL", config)
+
+    rsi_rows = db_connection.execute(
+        "SELECT indicator, divergence_type FROM divergences_daily "
+        "WHERE ticker = 'AAPL' AND indicator = 'rsi_14'"
+    ).fetchall()
+    assert len(rsi_rows) >= 1, "RSI divergence row must be stored under indicator='rsi_14'"
+
+    # Ensure NO rows were stored under the old 'rsi' value.
+    legacy = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_daily WHERE ticker = 'AAPL' AND indicator = 'rsi'"
+    ).fetchone()["c"]
+    assert legacy == 0, "legacy 'rsi' value must NOT be written anymore"
+
+
+def test_scorer_filter_picks_up_rsi_14_divergence() -> None:
+    """
+    The scorer's filter `d.get("indicator") == "rsi_14"` must match rows
+    produced by the calculator. This is a unit-level guard against the two
+    sides ever drifting apart again.
+    """
+    from src.scorer.pattern_scorer import score_divergences
+
+    # Synthetic divergence row exactly mirroring what the calculator now stores.
+    divergences = [
+        {
+            "date": "2024-04-25",
+            "indicator": "rsi_14",
+            "divergence_type": "regular_bullish",
+            "strength": 4,
+            "price_swing_1_date": "2024-04-10",
+            "price_swing_1_value": 100.0,
+            "price_swing_2_date": "2024-04-25",
+            "price_swing_2_value": 95.0,
+            "indicator_swing_1_value": 25.0,
+            "indicator_swing_2_value": 30.0,
+        }
+    ]
+    rsi_filtered = [d for d in divergences if d.get("indicator") == "rsi_14"]
+    score = score_divergences(rsi_filtered, "2024-04-25")
+    # bullish regular RSI divergence should produce a non-zero positive score.
+    assert score != 0.0, "scorer must produce nonzero score from rsi_14-keyed divergence"
+
+
+# ── Daily regression: defaults must target divergences_daily ─────────────────
+
+
+def test_save_divergences_daily_default_targets_daily_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_divergences_to_db with no kwargs must write to divergences_daily only."""
+    divs = [
+        {
+            "date": "2024-01-10",
+            "indicator": "rsi_14",
+            "divergence_type": "regular_bullish",
+            "price_swing_1_date": "2024-01-01",
+            "price_swing_1_value": 100.0,
+            "price_swing_2_date": "2024-01-10",
+            "price_swing_2_value": 95.0,
+            "indicator_swing_1_value": 25.0,
+            "indicator_swing_2_value": 30.0,
+            "strength": 4,
+        }
+    ]
+    save_divergences_to_db(db_connection, "AAPL", divs)
+
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 1
+    assert weekly == 0
+    assert monthly == 0
+
+
+def test_detect_divergences_daily_default_targets_divergences_daily(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    detect_divergences_for_ticker with no kwargs must keep writing to
+    divergences_daily only — guards against accidental default-flips.
+    """
+    _seed_rsi_bullish_divergence(db_connection)
+    config = {"divergences": {"min_swing_distance_days": 5, "max_swing_distance_days": 60}}
+    detect_divergences_for_ticker(db_connection, "AAPL", config)
+
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert weekly == 0
+    assert monthly == 0
+
+
+# ── Weekly + Monthly parameterization ────────────────────────────────────────
+
+
+def test_save_divergences_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_divergences_to_db with weekly overrides persists to divergences_weekly only."""
+    divs = [
+        {
+            "date": "2024-01-15",
+            "indicator": "rsi_14",
+            "divergence_type": "regular_bearish",
+            "price_swing_1_date": "2024-01-01",
+            "price_swing_1_value": 100.0,
+            "price_swing_2_date": "2024-01-15",
+            "price_swing_2_value": 110.0,
+            "indicator_swing_1_value": 80.0,
+            "indicator_swing_2_value": 70.0,
+            "strength": 5,
+        }
+    ]
+    count = save_divergences_to_db(
+        db_connection, "AAPL", divs,
+        dest_table="divergences_weekly",
+        date_column_name="week_start",
+    )
+    assert count == 1
+    rows = db_connection.execute(
+        "SELECT * FROM divergences_weekly WHERE ticker = 'AAPL'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["week_start"] == "2024-01-15"
+    assert rows[0]["indicator"] == "rsi_14"
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 0
+
+
+def test_detect_divergences_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Seed weekly indicators + swing_points_weekly. Run
+    detect_divergences_for_ticker with weekly overrides; rows must land in
+    divergences_weekly only.
+    """
+    ticker = "AAPL"
+    rsi_vals = [50.0] * 30
+    rsi_vals[5] = 25.0
+    rsi_vals[20] = 30.0
+    ind_rows = [
+        (ticker, _make_date(i), rsi_vals[i], 0.0, 0.0, 0.0, float(i * 100), 50.0)
+        for i in range(30)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO indicators_weekly "
+        "(ticker, week_start, rsi_14, macd_histogram, macd_line, macd_signal, obv, stoch_k) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ind_rows,
+    )
+    swing_rows = [
+        (ticker, _make_date(5), "low", 100.0, 3),
+        (ticker, _make_date(20), "low", 95.0, 3),
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO swing_points_weekly (ticker, week_start, type, price, strength) "
+        "VALUES (?,?,?,?,?)",
+        swing_rows,
+    )
+    db_connection.commit()
+
+    config = {"divergences": {"min_swing_distance_days": 5, "max_swing_distance_days": 60}}
+    count = detect_divergences_for_ticker(
+        db_connection, ticker, config,
+        source_swing_table="swing_points_weekly",
+        source_swing_date_column="week_start",
+        source_indicators_table="indicators_weekly",
+        source_indicators_date_column="week_start",
+        dest_table="divergences_weekly",
+        dest_date_column="week_start",
+    )
+    assert count >= 1
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_weekly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_daily WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert weekly >= 1
+    assert daily == 0
+
+
+def test_detect_divergences_monthly_writes_to_monthly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Same as the weekly variant for the monthly mirror."""
+    ticker = "AAPL"
+    rsi_vals = [50.0] * 30
+    rsi_vals[5] = 25.0
+    rsi_vals[20] = 30.0
+    ind_rows = [
+        (ticker, _make_date(i), rsi_vals[i], 0.0, 0.0, 0.0, float(i * 100), 50.0)
+        for i in range(30)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO indicators_monthly "
+        "(ticker, month_start, rsi_14, macd_histogram, macd_line, macd_signal, obv, stoch_k) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ind_rows,
+    )
+    swing_rows = [
+        (ticker, _make_date(5), "low", 100.0, 3),
+        (ticker, _make_date(20), "low", 95.0, 3),
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO swing_points_monthly (ticker, month_start, type, price, strength) "
+        "VALUES (?,?,?,?,?)",
+        swing_rows,
+    )
+    db_connection.commit()
+
+    config = {"divergences": {"min_swing_distance_days": 5, "max_swing_distance_days": 60}}
+    count = detect_divergences_for_ticker(
+        db_connection, ticker, config,
+        source_swing_table="swing_points_monthly",
+        source_swing_date_column="month_start",
+        source_indicators_table="indicators_monthly",
+        source_indicators_date_column="month_start",
+        dest_table="divergences_monthly",
+        dest_date_column="month_start",
+    )
+    assert count >= 1
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_monthly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM divergences_daily WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert monthly >= 1
+    assert daily == 0
+
+
+# ── Whitelist validation ─────────────────────────────────────────────────────
+
+
+def test_save_divergences_rejects_unknown_dest_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised dest_table must raise ValueError."""
+    divs = [{
+        "date": "2024-01-10", "indicator": "rsi_14", "divergence_type": "regular_bullish",
+        "price_swing_1_date": "2024-01-01", "price_swing_1_value": 100.0,
+        "price_swing_2_date": "2024-01-10", "price_swing_2_value": 95.0,
+        "indicator_swing_1_value": 25.0, "indicator_swing_2_value": 30.0,
+        "strength": 4,
+    }]
+    with pytest.raises(ValueError):
+        save_divergences_to_db(
+            db_connection, "AAPL", divs,
+            dest_table="divergences_daily; DROP TABLE divergences_daily; --",
+        )
+
+
+def test_detect_divergences_rejects_unknown_source_swing_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised source_swing_table must raise ValueError."""
+    config = {"divergences": {"min_swing_distance_days": 5, "max_swing_distance_days": 60}}
+    with pytest.raises(ValueError):
+        detect_divergences_for_ticker(
+            db_connection, "AAPL", config,
+            source_swing_table="bogus_swing_table",
+        )

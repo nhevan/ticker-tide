@@ -399,3 +399,143 @@ def test_compute_all_profiles(db_connection: sqlite3.Connection) -> None:
             (t["symbol"],),
         ).fetchone()["cnt"]
         assert count > 0, f"No profiles written for {t['symbol']}"
+
+
+# ── Daily regression: defaults must target indicator_profiles ────────────────
+
+
+def _insert_indicators_into(
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    table: str,
+    date_col: str,
+    num_rows: int = 60,
+) -> None:
+    """Insert num_rows synthetic indicator rows into the given table."""
+    for i in range(num_rows):
+        db_conn.execute(
+            f"""
+            INSERT OR REPLACE INTO {table}
+                (ticker, {date_col}, rsi_14, stoch_k, stoch_d, cci_20, williams_r,
+                 cmf_20, bb_pctb, adx, macd_histogram, atr_14, obv, ad_line,
+                 macd_line, macd_signal, ema_9, ema_21, ema_50)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ticker, _make_date(i),
+                50.0 + (i % 10), 55.0, 52.0, 80.0, -30.0,
+                0.2, 0.6, 22.0, 0.05, 1.5, 1_000_000.0, 500_000.0,
+                0.3, 0.2, 101.0, 99.5, 97.0,
+            ),
+        )
+    db_conn.commit()
+
+
+def test_compute_profile_daily_default_targets_indicator_profiles(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """compute_profile_for_ticker with no kwargs reads indicators_daily and writes
+    indicator_profiles only — neither weekly nor monthly mirror is touched."""
+    _insert_indicators_into(db_connection, "AAPL", "indicators_daily", "date")
+
+    compute_profile_for_ticker(db_connection, "AAPL", _BASE_CONFIG)
+
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM indicator_profiles WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM indicator_profiles_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM indicator_profiles_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily >= 1
+    assert weekly == 0
+    assert monthly == 0
+
+
+# ── Weekly + Monthly parameterization ────────────────────────────────────────
+
+
+def test_compute_profile_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """compute_profile_for_ticker with weekly overrides reads indicators_weekly
+    and writes to indicator_profiles_weekly only."""
+    _insert_indicators_into(db_connection, "AAPL", "indicators_weekly", "week_start")
+
+    count = compute_profile_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG,
+        source_indicators_table="indicators_weekly",
+        source_indicators_date_column="week_start",
+        dest_table="indicator_profiles_weekly",
+    )
+    assert count >= 1
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM indicator_profiles_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM indicator_profiles WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert weekly >= 1
+    assert daily == 0
+
+
+def test_compute_profile_monthly_writes_to_monthly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """compute_profile_for_ticker with monthly overrides writes to
+    indicator_profiles_monthly only."""
+    _insert_indicators_into(db_connection, "AAPL", "indicators_monthly", "month_start")
+
+    count = compute_profile_for_ticker(
+        db_connection, "AAPL", _BASE_CONFIG,
+        source_indicators_table="indicators_monthly",
+        source_indicators_date_column="month_start",
+        dest_table="indicator_profiles_monthly",
+    )
+    assert count >= 1
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM indicator_profiles_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM indicator_profiles WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert monthly >= 1
+    assert daily == 0
+
+
+# ── Whitelist validation ─────────────────────────────────────────────────────
+
+
+def test_compute_profile_rejects_unknown_source_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised source_indicators_table must raise ValueError."""
+    with pytest.raises(ValueError):
+        compute_profile_for_ticker(
+            db_connection, "AAPL", _BASE_CONFIG,
+            source_indicators_table="bogus_table",
+        )
+
+
+def test_compute_profile_rejects_unknown_dest_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised dest_table must raise ValueError before SQL runs."""
+    with pytest.raises(ValueError):
+        compute_profile_for_ticker(
+            db_connection, "AAPL", _BASE_CONFIG,
+            dest_table="indicator_profiles; DROP TABLE indicator_profiles; --",
+        )
+
+
+def test_compute_all_profiles_rejects_unknown_dest_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """compute_all_profiles validates all identifiers eagerly."""
+    with pytest.raises(ValueError):
+        compute_all_profiles(
+            db_connection, [], _BASE_CONFIG,
+            dest_table="not_a_real_profiles_table",
+        )

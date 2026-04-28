@@ -34,7 +34,8 @@
       "flag_retracement_min_pct": 20,
       "flag_retracement_max_pct": 50
     },
-    "breakout_volume_threshold": 1.5
+    "breakout_volume_threshold": 1.5,
+    "trend_context_candles": 5
   },
   "divergences": {
     "indicators": ["rsi", "macd_histogram", "obv", "stochastic"],

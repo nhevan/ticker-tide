@@ -337,6 +337,38 @@ def _build_schema_statements() -> list[str]:
             UNIQUE(ticker, month_start)
         )""",
 
+        """CREATE TABLE IF NOT EXISTS indicator_profiles_weekly (
+            ticker TEXT NOT NULL,
+            indicator TEXT NOT NULL,
+            p5 REAL,
+            p20 REAL,
+            p50 REAL,
+            p80 REAL,
+            p95 REAL,
+            mean REAL,
+            std REAL,
+            window_start TEXT,
+            window_end TEXT,
+            computed_at TEXT,
+            UNIQUE(ticker, indicator)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS indicator_profiles_monthly (
+            ticker TEXT NOT NULL,
+            indicator TEXT NOT NULL,
+            p5 REAL,
+            p20 REAL,
+            p50 REAL,
+            p80 REAL,
+            p95 REAL,
+            mean REAL,
+            std REAL,
+            window_start TEXT,
+            window_end TEXT,
+            computed_at TEXT,
+            UNIQUE(ticker, indicator)
+        )""",
+
         # ── Pattern & Signal Tables ────────────────────────────────────────────────
         """CREATE TABLE IF NOT EXISTS swing_points (
             ticker TEXT NOT NULL,
@@ -345,6 +377,24 @@ def _build_schema_statements() -> list[str]:
             price REAL,
             strength INTEGER,
             UNIQUE(ticker, date, type)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS swing_points_weekly (
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            type TEXT,
+            price REAL,
+            strength INTEGER,
+            UNIQUE(ticker, week_start, type)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS swing_points_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            type TEXT,
+            price REAL,
+            strength INTEGER,
+            UNIQUE(ticker, month_start, type)
         )""",
 
         """CREATE TABLE IF NOT EXISTS support_resistance (
@@ -361,10 +411,64 @@ def _build_schema_statements() -> list[str]:
             broken_date TEXT
         )""",
 
+        """CREATE TABLE IF NOT EXISTS support_resistance_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            level_price REAL,
+            level_type TEXT,
+            touch_count INTEGER,
+            first_touch TEXT,
+            last_touch TEXT,
+            strength TEXT,
+            broken BOOLEAN DEFAULT 0,
+            broken_date TEXT
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS support_resistance_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            level_price REAL,
+            level_type TEXT,
+            touch_count INTEGER,
+            first_touch TEXT,
+            last_touch TEXT,
+            strength TEXT,
+            broken BOOLEAN DEFAULT 0,
+            broken_date TEXT
+        )""",
+
         """CREATE TABLE IF NOT EXISTS patterns_daily (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
             date TEXT NOT NULL,
+            pattern_name TEXT,
+            pattern_category TEXT,
+            pattern_type TEXT,
+            direction TEXT,
+            strength INTEGER,
+            confirmed BOOLEAN DEFAULT 0,
+            details TEXT
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS patterns_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            pattern_name TEXT,
+            pattern_category TEXT,
+            pattern_type TEXT,
+            direction TEXT,
+            strength INTEGER,
+            confirmed BOOLEAN DEFAULT 0,
+            details TEXT
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS patterns_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
             pattern_name TEXT,
             pattern_category TEXT,
             pattern_type TEXT,
@@ -389,10 +493,58 @@ def _build_schema_statements() -> list[str]:
             strength INTEGER
         )""",
 
+        """CREATE TABLE IF NOT EXISTS divergences_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            indicator TEXT,
+            divergence_type TEXT,
+            price_swing_1_date TEXT,
+            price_swing_1_value REAL,
+            price_swing_2_date TEXT,
+            price_swing_2_value REAL,
+            indicator_swing_1_value REAL,
+            indicator_swing_2_value REAL,
+            strength INTEGER
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS divergences_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            indicator TEXT,
+            divergence_type TEXT,
+            price_swing_1_date TEXT,
+            price_swing_1_value REAL,
+            price_swing_2_date TEXT,
+            price_swing_2_value REAL,
+            indicator_swing_1_value REAL,
+            indicator_swing_2_value REAL,
+            strength INTEGER
+        )""",
+
         """CREATE TABLE IF NOT EXISTS crossovers_daily (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
             date TEXT NOT NULL,
+            crossover_type TEXT,
+            direction TEXT,
+            days_ago INTEGER
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS crossovers_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            crossover_type TEXT,
+            direction TEXT,
+            days_ago INTEGER
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS crossovers_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
             crossover_type TEXT,
             direction TEXT,
             days_ago INTEGER
@@ -434,6 +586,42 @@ def _build_schema_statements() -> list[str]:
             data_completeness TEXT,
             key_signals TEXT,
             UNIQUE(ticker, date)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS scores_weekly (
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            composite_score REAL NOT NULL,
+            regime TEXT,
+            trend_score REAL,
+            momentum_score REAL,
+            volume_score REAL,
+            volatility_score REAL,
+            candlestick_score REAL,
+            structural_score REAL,
+            fundamental_score REAL,
+            macro_score REAL,
+            data_completeness TEXT,
+            key_signals TEXT,
+            PRIMARY KEY (ticker, week_start)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS scores_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            composite_score REAL NOT NULL,
+            regime TEXT,
+            trend_score REAL,
+            momentum_score REAL,
+            volume_score REAL,
+            volatility_score REAL,
+            candlestick_score REAL,
+            structural_score REAL,
+            fundamental_score REAL,
+            macro_score REAL,
+            data_completeness TEXT,
+            key_signals TEXT,
+            PRIMARY KEY (ticker, month_start)
         )""",
 
         """CREATE TABLE IF NOT EXISTS signal_flips (
@@ -513,4 +701,34 @@ def _build_schema_statements() -> list[str]:
         "CREATE INDEX IF NOT EXISTS idx_pipeline_events ON pipeline_events(event, date)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_log_date ON alerts_log(date)",
         "CREATE INDEX IF NOT EXISTS idx_telegram_message_log_received_at ON telegram_message_log(received_at)",
+
+        # ── Timeframe Parity Indexes (weekly + monthly mirrors) ───────────────────
+        "CREATE INDEX IF NOT EXISTS idx_swing_points_weekly_ticker_week_start "
+        "ON swing_points_weekly(ticker, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_swing_points_monthly_ticker_month_start "
+        "ON swing_points_monthly(ticker, month_start)",
+        "CREATE INDEX IF NOT EXISTS idx_support_resistance_weekly_ticker_week_start "
+        "ON support_resistance_weekly(ticker, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_support_resistance_monthly_ticker_month_start "
+        "ON support_resistance_monthly(ticker, month_start)",
+        "CREATE INDEX IF NOT EXISTS idx_patterns_weekly_ticker_week_start "
+        "ON patterns_weekly(ticker, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_patterns_monthly_ticker_month_start "
+        "ON patterns_monthly(ticker, month_start)",
+        "CREATE INDEX IF NOT EXISTS idx_divergences_weekly_ticker_week_start "
+        "ON divergences_weekly(ticker, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_divergences_monthly_ticker_month_start "
+        "ON divergences_monthly(ticker, month_start)",
+        "CREATE INDEX IF NOT EXISTS idx_crossovers_weekly_ticker_week_start "
+        "ON crossovers_weekly(ticker, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_crossovers_monthly_ticker_month_start "
+        "ON crossovers_monthly(ticker, month_start)",
+        "CREATE INDEX IF NOT EXISTS idx_indicator_profiles_weekly_ticker_indicator "
+        "ON indicator_profiles_weekly(ticker, indicator)",
+        "CREATE INDEX IF NOT EXISTS idx_indicator_profiles_monthly_ticker_indicator "
+        "ON indicator_profiles_monthly(ticker, indicator)",
+        "CREATE INDEX IF NOT EXISTS idx_scores_weekly_ticker_week_start "
+        "ON scores_weekly(ticker, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_scores_monthly_ticker_month_start "
+        "ON scores_monthly(ticker, month_start)",
     ]

@@ -9,7 +9,18 @@ Structural patterns (computed from swing points + S/R):
   Double Top, Double Bottom, Bull Flag, Bear Flag,
   Breakout, Breakdown, False Breakout
 
-All pattern parameters come from config/calculator.json.
+All pattern parameters come from config/calculator.json. The number of
+preceding candles required to establish trend context for hammer / shooting
+star is read from ``config["patterns"]["trend_context_candles"]`` (default 5).
+
+Timeframe parametrization
+-------------------------
+``save_patterns_to_db`` and ``detect_all_patterns_for_ticker`` accept
+keyword-only arguments selecting the source candles / indicators / swing /
+support-resistance tables and the destination patterns table + date-column
+name. Defaults preserve the original daily behaviour. Identifiers are
+validated against an explicit whitelist before being interpolated into SQL —
+SQLite parameter binding does not cover identifiers.
 """
 
 from __future__ import annotations
@@ -23,8 +34,69 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Number of preceding candles required to establish trend context for hammer/shooting star
-_TREND_CONTEXT_CANDLES = 5
+# Default trend-context length used when config does not supply
+# patterns.trend_context_candles. Callers should pass `config` so the value
+# can be overridden via config/calculator.json without changing code.
+_DEFAULT_TREND_CONTEXT_CANDLES = 5
+
+
+# ── Whitelists ──────────────────────────────────────────────────────────────────
+# Identifiers below are inlined into SQL via f-strings, so they must be validated
+# against an explicit allow-list. No user input ever flows in here, but the
+# whitelist also documents the supported timeframe surface.
+_ALLOWED_SOURCE_CANDLES_TABLES: frozenset[str] = frozenset(
+    {"ohlcv_daily", "weekly_candles", "monthly_candles"}
+)
+_ALLOWED_SOURCE_CANDLES_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+_ALLOWED_SOURCE_INDICATORS_TABLES: frozenset[str] = frozenset(
+    {"indicators_daily", "indicators_weekly", "indicators_monthly"}
+)
+_ALLOWED_SOURCE_INDICATORS_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+_ALLOWED_SOURCE_SWING_TABLES: frozenset[str] = frozenset(
+    {"swing_points", "swing_points_weekly", "swing_points_monthly"}
+)
+_ALLOWED_SOURCE_SWING_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+_ALLOWED_SOURCE_SR_TABLES: frozenset[str] = frozenset(
+    {"support_resistance", "support_resistance_weekly", "support_resistance_monthly"}
+)
+_ALLOWED_DEST_TABLES: frozenset[str] = frozenset(
+    {"patterns_daily", "patterns_weekly", "patterns_monthly"}
+)
+_ALLOWED_DEST_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+
+
+def _validate_identifier(name: str, allowed: frozenset[str], field: str) -> str:
+    """
+    Validate that an identifier (table or column name) is in the allow-list.
+
+    SQLite bind parameters cannot stand in for identifiers, so any table or
+    column name interpolated into SQL must be checked against an explicit
+    set of permitted values.
+
+    Args:
+        name: Candidate identifier.
+        allowed: Frozenset of permitted identifier strings.
+        field: Human-readable label used in the error message.
+
+    Returns:
+        The validated identifier verbatim.
+
+    Raises:
+        ValueError: If ``name`` is not in ``allowed``.
+    """
+    if name not in allowed:
+        raise ValueError(
+            f"Invalid {field}={name!r}; expected one of {sorted(allowed)}"
+        )
+    return name
 
 
 def detect_candlestick_patterns(ohlcv_df: pd.DataFrame, config: dict) -> list[dict]:
@@ -50,8 +122,10 @@ def detect_candlestick_patterns(ohlcv_df: pd.DataFrame, config: dict) -> list[di
     Args:
         ohlcv_df: DataFrame with columns: date, open, high, low, close, volume.
             Must be sorted by date ascending.
-        config: Calculator config dict (currently unused for candlestick params but
-            kept for API consistency with structural patterns).
+        config: Calculator config dict. Reads
+            ``config["patterns"]["trend_context_candles"]`` (default 5) for the
+            preceding-candle window used to qualify hammer / shooting star
+            trend context.
 
     Returns:
         List of pattern dicts with keys: date, pattern_name, pattern_category,
@@ -59,6 +133,10 @@ def detect_candlestick_patterns(ohlcv_df: pd.DataFrame, config: dict) -> list[di
     """
     df = ohlcv_df.reset_index(drop=True)
     patterns: list[dict] = []
+
+    trend_context_candles = (
+        config.get("patterns", {}).get("trend_context_candles", _DEFAULT_TREND_CONTEXT_CANDLES)
+    )
 
     # Precompute average body sizes for strength calculation
     bodies = (df["close"] - df["open"]).abs()
@@ -80,7 +158,7 @@ def detect_candlestick_patterns(ohlcv_df: pd.DataFrame, config: dict) -> list[di
             ))
 
         # ── Single-candle: Hammer & Shooting Star ─────────────────────────────
-        if i >= _TREND_CONTEXT_CANDLES and body > 0:
+        if i >= trend_context_candles and body > 0:
             open_ = float(row["open"])
             close = float(row["close"])
             high = float(row["high"])
@@ -90,7 +168,7 @@ def detect_candlestick_patterns(ohlcv_df: pd.DataFrame, config: dict) -> list[di
 
             # Hammer: lower_wick > 2x body, upper_wick <= 0.5x body, downtrend context
             if lower_wick > 2.0 * body and upper_wick <= 0.5 * body:
-                if _is_downtrend(df, i, _TREND_CONTEXT_CANDLES):
+                if _is_downtrend(df, i, trend_context_candles):
                     patterns.append(_make_pattern(
                         date=row["date"],
                         name="hammer",
@@ -101,7 +179,7 @@ def detect_candlestick_patterns(ohlcv_df: pd.DataFrame, config: dict) -> list[di
 
             # Shooting Star: upper_wick > 2x body, lower_wick <= 0.5x body, uptrend context
             if upper_wick > 2.0 * body and lower_wick <= 0.5 * body:
-                if _is_uptrend(df, i, _TREND_CONTEXT_CANDLES):
+                if _is_uptrend(df, i, trend_context_candles):
                     patterns.append(_make_pattern(
                         date=row["date"],
                         name="shooting_star",
@@ -657,6 +735,9 @@ def save_patterns_to_db(
     ticker: str,
     patterns: list[dict],
     category: str,
+    *,
+    dest_table: str = "patterns_daily",
+    date_column_name: str = "date",
 ) -> int:
     """
     Delete existing patterns for this ticker and category, then insert fresh ones.
@@ -667,17 +748,37 @@ def save_patterns_to_db(
     Before inserting, deduplicates by (date, pattern_name, direction), keeping only
     the candidate with the highest strength for each unique combination.
 
+    The destination table and its date-column are validated against a
+    whitelist before being interpolated into SQL — SQLite parameter binding
+    does not cover identifiers.
+
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         patterns: List of pattern dicts.
         category: 'candlestick' or 'structural'.
+        dest_table: Destination patterns table. Must be one of
+            ``patterns_daily``, ``patterns_weekly`` or ``patterns_monthly``.
+            Defaults to ``patterns_daily``.
+        date_column_name: Name of the date / period-key column in
+            ``dest_table``. Must be one of ``date``, ``week_start`` or
+            ``month_start``. Defaults to ``date`` (daily).
 
     Returns:
         Number of rows inserted.
+
+    Raises:
+        ValueError: If either identifier is not in the allow-list.
     """
+    safe_dest_table = _validate_identifier(
+        dest_table, _ALLOWED_DEST_TABLES, "dest_table"
+    )
+    safe_date_col = _validate_identifier(
+        date_column_name, _ALLOWED_DEST_DATE_COLUMNS, "date_column_name"
+    )
+
     db_conn.execute(
-        "DELETE FROM patterns_daily WHERE ticker = ? AND pattern_category = ?",
+        f"DELETE FROM {safe_dest_table} WHERE ticker = ? AND pattern_category = ?",
         (ticker, category),
     )
     if not patterns:
@@ -701,57 +802,138 @@ def save_patterns_to_db(
         for p in deduped
     ]
     db_conn.executemany(
-        """INSERT INTO patterns_daily
-           (ticker, date, pattern_name, pattern_category, pattern_type,
+        f"""INSERT INTO {safe_dest_table}
+           (ticker, {safe_date_col}, pattern_name, pattern_category, pattern_type,
             direction, strength, confirmed, details)
            VALUES (?,?,?,?,?,?,?,?,?)""",
         rows,
     )
     db_conn.commit()
     logger.info(
-        "ticker=%s phase=patterns category=%s saved=%d patterns",
-        ticker, category, len(rows),
+        "ticker=%s phase=patterns category=%s dest=%s saved=%d patterns",
+        ticker, category, safe_dest_table, len(rows),
     )
     return len(rows)
 
 
 def detect_all_patterns_for_ticker(
-    db_conn: sqlite3.Connection, ticker: str, config: dict
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    config: dict,
+    *,
+    source_candles_table: str = "ohlcv_daily",
+    source_candles_date_column: str = "date",
+    source_indicators_table: str = "indicators_daily",
+    source_indicators_date_column: str = "date",
+    source_swing_table: str = "swing_points",
+    source_swing_date_column: str = "date",
+    source_sr_table: str = "support_resistance",
+    dest_table: str = "patterns_daily",
+    dest_date_column: str = "date",
 ) -> dict:
     """
     Run full pattern detection for a ticker: load OHLCV, indicators, swing points,
     and S/R levels from DB, detect candlestick and structural patterns, save both.
 
+    Defaults preserve the original daily behaviour: OHLCV from
+    ``ohlcv_daily``, indicators from ``indicators_daily``, swing points from
+    ``swing_points``, S/R levels from ``support_resistance``, results to
+    ``patterns_daily`` keyed by ``date``. To run against the weekly or monthly
+    mirrors, override the keyword-only parameters. Identifiers are validated
+    against an explicit whitelist.
+
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         config: Calculator config dict containing config["patterns"].
+        source_candles_table: OHLCV-like source table. Must be one of
+            ``ohlcv_daily``, ``weekly_candles`` or ``monthly_candles``.
+        source_candles_date_column: Date-column name in
+            ``source_candles_table``. Must be one of ``date``, ``week_start``
+            or ``month_start``.
+        source_indicators_table: Indicators source table. Must be one of
+            ``indicators_daily``, ``indicators_weekly`` or
+            ``indicators_monthly``.
+        source_indicators_date_column: Date-column name in
+            ``source_indicators_table``.
+        source_swing_table: Swing-points source table. Must be one of
+            ``swing_points``, ``swing_points_weekly`` or
+            ``swing_points_monthly``.
+        source_swing_date_column: Date-column name in ``source_swing_table``.
+        source_sr_table: Support/resistance source table. Must be one of
+            ``support_resistance``, ``support_resistance_weekly`` or
+            ``support_resistance_monthly``.
+        dest_table: Destination patterns table. Must be one of
+            ``patterns_daily``, ``patterns_weekly`` or ``patterns_monthly``.
+        dest_date_column: Date-column name in ``dest_table``.
 
     Returns:
         Dict with keys: candlestick_count (int), structural_count (int).
+
+    Raises:
+        ValueError: If any identifier argument is not in the allow-list.
     """
+    safe_candles_table = _validate_identifier(
+        source_candles_table, _ALLOWED_SOURCE_CANDLES_TABLES, "source_candles_table"
+    )
+    safe_candles_date_col = _validate_identifier(
+        source_candles_date_column,
+        _ALLOWED_SOURCE_CANDLES_DATE_COLUMNS,
+        "source_candles_date_column",
+    )
+    safe_indicators_table = _validate_identifier(
+        source_indicators_table,
+        _ALLOWED_SOURCE_INDICATORS_TABLES,
+        "source_indicators_table",
+    )
+    safe_indicators_date_col = _validate_identifier(
+        source_indicators_date_column,
+        _ALLOWED_SOURCE_INDICATORS_DATE_COLUMNS,
+        "source_indicators_date_column",
+    )
+    safe_swing_table = _validate_identifier(
+        source_swing_table, _ALLOWED_SOURCE_SWING_TABLES, "source_swing_table"
+    )
+    safe_swing_date_col = _validate_identifier(
+        source_swing_date_column,
+        _ALLOWED_SOURCE_SWING_DATE_COLUMNS,
+        "source_swing_date_column",
+    )
+    safe_sr_table = _validate_identifier(
+        source_sr_table, _ALLOWED_SOURCE_SR_TABLES, "source_sr_table"
+    )
+    # Validate dest identifiers eagerly so misuse fails fast even when no rows.
+    _validate_identifier(dest_table, _ALLOWED_DEST_TABLES, "dest_table")
+    _validate_identifier(
+        dest_date_column, _ALLOWED_DEST_DATE_COLUMNS, "dest_date_column"
+    )
+
     ohlcv_rows = db_conn.execute(
-        "SELECT date, open, high, low, close, volume FROM ohlcv_daily "
-        "WHERE ticker = ? ORDER BY date ASC",
+        f"SELECT {safe_candles_date_col} AS date, open, high, low, close, volume "
+        f"FROM {safe_candles_table} WHERE ticker = ? "
+        f"ORDER BY {safe_candles_date_col} ASC",
         (ticker,),
     ).fetchall()
     ohlcv_df = pd.DataFrame([dict(r) for r in ohlcv_rows]) if ohlcv_rows else pd.DataFrame()
 
     ind_rows = db_conn.execute(
-        "SELECT * FROM indicators_daily WHERE ticker = ? ORDER BY date ASC",
+        f"SELECT * FROM {safe_indicators_table} WHERE ticker = ? "
+        f"ORDER BY {safe_indicators_date_col} ASC",
         (ticker,),
     ).fetchall()
     indicators_df = pd.DataFrame([dict(r) for r in ind_rows]) if ind_rows else pd.DataFrame()
 
     swing_rows = db_conn.execute(
-        "SELECT date, type, price, strength FROM swing_points WHERE ticker = ? ORDER BY date ASC",
+        f"SELECT {safe_swing_date_col} AS date, type, price, strength "
+        f"FROM {safe_swing_table} WHERE ticker = ? "
+        f"ORDER BY {safe_swing_date_col} ASC",
         (ticker,),
     ).fetchall()
     swing_points = [dict(r) for r in swing_rows]
 
     sr_rows = db_conn.execute(
-        "SELECT level_price, level_type, touch_count, first_touch, last_touch, "
-        "strength, broken, broken_date FROM support_resistance WHERE ticker = ?",
+        f"SELECT level_price, level_type, touch_count, first_touch, last_touch, "
+        f"strength, broken, broken_date FROM {safe_sr_table} WHERE ticker = ?",
         (ticker,),
     ).fetchall()
     sr_levels = [dict(r) for r in sr_rows]
@@ -762,7 +944,14 @@ def detect_all_patterns_for_ticker(
     if not ohlcv_df.empty:
         try:
             candlestick_patterns = detect_candlestick_patterns(ohlcv_df, config)
-            candlestick_count = save_patterns_to_db(db_conn, ticker, candlestick_patterns, "candlestick")
+            candlestick_count = save_patterns_to_db(
+                db_conn,
+                ticker,
+                candlestick_patterns,
+                "candlestick",
+                dest_table=dest_table,
+                date_column_name=dest_date_column,
+            )
         except Exception as exc:
             logger.error("ticker=%s phase=patterns category=candlestick error=%s", ticker, exc)
             db_conn.execute(
@@ -775,7 +964,14 @@ def detect_all_patterns_for_ticker(
             structural_patterns = detect_structural_patterns(
                 ohlcv_df, indicators_df, swing_points, sr_levels, config
             )
-            structural_count = save_patterns_to_db(db_conn, ticker, structural_patterns, "structural")
+            structural_count = save_patterns_to_db(
+                db_conn,
+                ticker,
+                structural_patterns,
+                "structural",
+                dest_table=dest_table,
+                date_column_name=dest_date_column,
+            )
         except Exception as exc:
             logger.error("ticker=%s phase=patterns category=structural error=%s", ticker, exc)
             db_conn.execute(

@@ -268,3 +268,271 @@ def test_detect_sr_for_ticker_end_to_end(db_connection: sqlite3.Connection) -> N
         "SELECT * FROM support_resistance WHERE ticker = ?", (ticker,)
     ).fetchall()
     assert len(rows) >= 1
+
+
+# ── Daily regression: defaults must point at daily tables ────────────────────────
+
+
+def test_detect_sr_daily_default_targets_daily_table(db_connection: sqlite3.Connection) -> None:
+    """
+    DAILY REGRESSION GUARD: calling detect_support_resistance_for_ticker with no
+    extra kwargs must write rows ONLY to the daily support_resistance table,
+    never to the weekly or monthly mirrors.
+    """
+    ticker = "AAPL"
+    ohlcv_rows = [
+        (ticker, _make_date(i), 100.0, 101.0, 99.0, 100.0, 200_000.0)
+        for i in range(30)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO ohlcv_daily (ticker, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)",
+        ohlcv_rows,
+    )
+    swing_rows = [
+        (ticker, _make_date(i * 5), "low", 99.0 + i * 0.1, 3) for i in range(3)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO swing_points (ticker, date, type, price, strength) VALUES (?,?,?,?,?)",
+        swing_rows,
+    )
+    db_connection.commit()
+
+    config = {
+        "support_resistance": {"price_tolerance_pct": 1.5, "min_touches": 2}
+    }
+    count = detect_support_resistance_for_ticker(db_connection, ticker, config)
+    assert count >= 1
+
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance_weekly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance_monthly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert daily >= 1
+    assert weekly == 0
+    assert monthly == 0
+
+
+def test_save_sr_levels_daily_default_targets_daily_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_sr_levels_to_db with no kwargs must write to support_resistance only."""
+    sr_levels = [
+        {
+            "level_price": 100.0,
+            "level_type": "support",
+            "touch_count": 3,
+            "first_touch": "2024-01-05",
+            "last_touch": "2024-03-01",
+            "strength": "moderate",
+            "broken": False,
+            "broken_date": None,
+        }
+    ]
+    count = save_sr_levels_to_db(db_connection, "AAPL", sr_levels)
+    assert count == 1
+
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 1
+    assert weekly == 0
+    assert monthly == 0
+
+
+# ── Weekly parameterization ─────────────────────────────────────────────────────
+
+
+def test_detect_sr_weekly_writes_to_weekly_mirror(db_connection: sqlite3.Connection) -> None:
+    """
+    Seed weekly_candles + swing_points_weekly. Call
+    detect_support_resistance_for_ticker with weekly source/dest overrides and
+    assert rows land in support_resistance_weekly only.
+    """
+    ticker = "AAPL"
+    weekly_rows = [
+        (ticker, _make_date(i * 7), 100.0, 101.0, 99.0, 100.0, 200_000.0)
+        for i in range(30)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO weekly_candles (ticker, week_start, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)",
+        weekly_rows,
+    )
+    weekly_swing_rows = [
+        (ticker, _make_date(i * 7 * 5), "low", 99.0 + i * 0.1, 3) for i in range(3)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO swing_points_weekly (ticker, week_start, type, price, strength) VALUES (?,?,?,?,?)",
+        weekly_swing_rows,
+    )
+    db_connection.commit()
+
+    config = {
+        "support_resistance": {"price_tolerance_pct": 1.5, "min_touches": 2}
+    }
+    count = detect_support_resistance_for_ticker(
+        db_connection,
+        ticker,
+        config,
+        source_swing_table="swing_points_weekly",
+        source_swing_date_column="week_start",
+        source_candles_table="weekly_candles",
+        source_candles_date_column="week_start",
+        dest_table="support_resistance_weekly",
+        dest_date_column="week_start",
+    )
+    assert count >= 1
+
+    weekly_levels = db_connection.execute(
+        "SELECT * FROM support_resistance_weekly WHERE ticker = ?", (ticker,)
+    ).fetchall()
+    daily_levels = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert len(weekly_levels) >= 1
+    assert daily_levels == 0
+    assert weekly_levels[0]["level_type"] == "support"
+    # week_start column populated.
+    assert weekly_levels[0]["week_start"] is not None
+
+
+def test_save_sr_levels_weekly_uses_week_start_column(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_sr_levels_to_db with weekly mirror writes under week_start column."""
+    sr_levels = [
+        {
+            "level_price": 100.0,
+            "level_type": "support",
+            "touch_count": 3,
+            "first_touch": "2024-01-05",
+            "last_touch": "2024-03-01",
+            "strength": "moderate",
+            "broken": False,
+            "broken_date": None,
+        }
+    ]
+    count = save_sr_levels_to_db(
+        db_connection,
+        "AAPL",
+        sr_levels,
+        dest_table="support_resistance_weekly",
+        date_column_name="week_start",
+    )
+    assert count == 1
+
+    rows = db_connection.execute(
+        "SELECT * FROM support_resistance_weekly WHERE ticker = 'AAPL'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["week_start"] is not None
+    assert rows[0]["level_type"] == "support"
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 0
+
+
+# ── Monthly parameterization ────────────────────────────────────────────────────
+
+
+def test_detect_sr_monthly_writes_to_monthly_mirror(db_connection: sqlite3.Connection) -> None:
+    """Seed monthly_candles + swing_points_monthly; call with monthly overrides."""
+    ticker = "AAPL"
+    monthly_rows = [
+        (ticker, _make_date(i * 30), 100.0, 101.0, 99.0, 100.0, 200_000.0)
+        for i in range(30)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO monthly_candles (ticker, month_start, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)",
+        monthly_rows,
+    )
+    monthly_swing_rows = [
+        (ticker, _make_date(i * 30 * 5), "low", 99.0 + i * 0.1, 3) for i in range(3)
+    ]
+    db_connection.executemany(
+        "INSERT OR REPLACE INTO swing_points_monthly (ticker, month_start, type, price, strength) VALUES (?,?,?,?,?)",
+        monthly_swing_rows,
+    )
+    db_connection.commit()
+
+    config = {
+        "support_resistance": {"price_tolerance_pct": 1.5, "min_touches": 2}
+    }
+    count = detect_support_resistance_for_ticker(
+        db_connection,
+        ticker,
+        config,
+        source_swing_table="swing_points_monthly",
+        source_swing_date_column="month_start",
+        source_candles_table="monthly_candles",
+        source_candles_date_column="month_start",
+        dest_table="support_resistance_monthly",
+        dest_date_column="month_start",
+    )
+    assert count >= 1
+
+    monthly_levels = db_connection.execute(
+        "SELECT * FROM support_resistance_monthly WHERE ticker = ?", (ticker,)
+    ).fetchall()
+    daily_levels = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    weekly_levels = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM support_resistance_weekly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    assert len(monthly_levels) >= 1
+    assert daily_levels == 0
+    assert weekly_levels == 0
+    assert monthly_levels[0]["month_start"] is not None
+
+
+# ── Whitelist validation ────────────────────────────────────────────────────────
+
+
+def test_save_sr_levels_rejects_unknown_dest_table(db_connection: sqlite3.Connection) -> None:
+    """Passing an unrecognised dest_table must raise ValueError."""
+    sr_levels = [
+        {
+            "level_price": 100.0,
+            "level_type": "support",
+            "touch_count": 3,
+            "first_touch": "2024-01-05",
+            "last_touch": "2024-03-01",
+            "strength": "moderate",
+            "broken": False,
+            "broken_date": None,
+        }
+    ]
+    with pytest.raises(ValueError):
+        save_sr_levels_to_db(
+            db_connection,
+            "AAPL",
+            sr_levels,
+            dest_table="support_resistance; DROP TABLE support_resistance; --",
+            date_column_name="date_computed",
+        )
+
+
+def test_detect_sr_rejects_unknown_source_swing_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised source_swing_table must raise ValueError."""
+    config = {"support_resistance": {"price_tolerance_pct": 1.5, "min_touches": 2}}
+    with pytest.raises(ValueError):
+        detect_support_resistance_for_ticker(
+            db_connection,
+            "AAPL",
+            config,
+            source_swing_table="not_a_real_table",
+        )

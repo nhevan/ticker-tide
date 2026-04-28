@@ -151,12 +151,13 @@ Controls all indicator periods, pattern detection, and profile computation.
 | `patterns.flag.flag_retracement_min_pct` | float | `20` | Minimum retracement % during consolidation |
 | `patterns.flag.flag_retracement_max_pct` | float | `50` | Maximum retracement % during consolidation |
 | `patterns.breakout_volume_threshold` | float | `1.5` | Volume must be N × 20-day average to confirm a breakout/breakdown |
+| `patterns.trend_context_candles` | int | `5` | Number of preceding candles required to establish trend context for hammer / shooting-star detection. Re-run the calculator (`python scripts/run_calculator.py --mode full`) after changing. |
 
 ### Divergences
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `divergences.indicators` | array | `["rsi","macd_histogram","obv","stochastic"]` | Indicators to check for divergence |
+| `divergences.indicators` | array | `["rsi","macd_histogram","obv","stochastic"]` | Indicators to check for divergence. Note: the ``"rsi"`` entry refers to the indicator family — the calculator persists divergence rows under ``indicator='rsi_14'`` so the column name matches the value used by the scorer's filter. |
 | `divergences.min_swing_distance_days` | int | `5` | Minimum days between swing points for a valid divergence pair |
 | `divergences.max_swing_distance_days` | int | `60` | Maximum days between swing points for a valid divergence pair |
 
@@ -289,6 +290,14 @@ Applied to the base confidence value (`|final_score|`). Final confidence is clam
 |---|---|---|---|
 | `historical_scoring.daily_lookback_months` | int | `12` | Months of daily scores computed in `--historical` mode |
 | `historical_scoring.weekly_lookback_months` | int | `60` | Months of weekly scores computed in `--historical` mode (months 13–60) |
+| `historical_scoring.monthly_lookback_months` | int | `60` | Months of monthly scores computed in `--historical --mode {monthly,both,all}` (months 13–60). Added in commit 6 of the weekly/monthly parity series. |
+
+> **Note on `data_completeness` storage.** `scores_daily.data_completeness`,
+> `scores_weekly.data_completeness`, and `scores_monthly.data_completeness` are all
+> `TEXT` columns that hold a `json.dumps(...)` blob. Commit 1's parity migration
+> incorrectly created the weekly + monthly columns as `REAL`; the
+> `scripts/migrate_fix_scores_completeness_type.py` migration corrects this
+> in-place (idempotent — see OPERATIONS.md).
 
 ### Scoring
 
@@ -338,6 +347,43 @@ more weight to trend since longer timeframes carry more directional persistence.
 | `monthly_adaptive_weights.volatile.momentum` | float | `0.20` | Momentum category weight in volatile regime |
 | `monthly_adaptive_weights.volatile.volume` | float | `0.15` | Volume category weight in volatile regime |
 | `monthly_adaptive_weights.volatile.volatility` | float | `0.30` | Volatility category weight in volatile regime |
+
+### Weekly / monthly score method (v1 vs v2)
+
+`weekly_score_method` and `monthly_score_method` switch the composite definition between
+two algorithms. Default is `v1_4cat` for both — live scoring behaviour is **unchanged**
+until commit 7 retrains the calibrator and validates the v2 distribution.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `weekly_score_method` | string | `"v1_4cat"` | Weekly composite mode. `v1_4cat` = trend/momentum/volume/volatility from indicators only (existing behaviour). `v2_8cat` = adds candlestick + structural categories from `patterns_weekly`, and adds crossovers→trend / divergences→momentum/volume (mirroring daily's category wiring). |
+| `monthly_score_method` | string | `"v1_4cat"` | Monthly composite mode. Same semantics as `weekly_score_method`. **Monthly candlestick is permanently disabled** in v2 — the candlestick-pattern decay window is 7 days, far shorter than monthly bar cadence, so candlestick scores would alias on scoring-vs-month-start timing and were judged unreliable. Structural patterns (28-day window) and divergences (42-day window) are still applied on monthly bars. |
+
+**v2 is not a drop-in replacement.** Even with `candlestick = 0.0` and `structural = 0.0` weights,
+the v2 scalar differs from v1 because the trend / momentum / volume categories now include
+crossover and divergence contributions that v1 ignored. Calibrator retrain (commit 7) is
+**mandatory** before flipping the default to v2 — flipping without retraining will silently
+shift the score distribution and break signal-classification thresholds.
+
+Re-run phase: `scorer` (with `--force` to recompute existing dates).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `weekly_adaptive_weights_v2.<regime>.trend` | float | regime-specific | Trend weight when `weekly_score_method = v2_8cat` |
+| `weekly_adaptive_weights_v2.<regime>.momentum` | float | regime-specific | Momentum weight |
+| `weekly_adaptive_weights_v2.<regime>.volume` | float | regime-specific | Volume weight |
+| `weekly_adaptive_weights_v2.<regime>.volatility` | float | regime-specific | Volatility weight |
+| `weekly_adaptive_weights_v2.<regime>.candlestick` | float | `0.0` | Candlestick weight. Defaults to 0.0 — anti-predictive on daily; not yet validated on weekly. |
+| `weekly_adaptive_weights_v2.<regime>.structural` | float | `0.0` | Structural-pattern weight. Defaults to 0.0 for the same reason. |
+| `monthly_adaptive_weights_v2.<regime>.trend` | float | regime-specific | Trend weight when `monthly_score_method = v2_8cat` |
+| `monthly_adaptive_weights_v2.<regime>.momentum` | float | regime-specific | Momentum weight |
+| `monthly_adaptive_weights_v2.<regime>.volume` | float | regime-specific | Volume weight |
+| `monthly_adaptive_weights_v2.<regime>.volatility` | float | regime-specific | Volatility weight |
+| `monthly_adaptive_weights_v2.<regime>.candlestick` | float | `0.0` | Always-zero in v2 — monthly candlestick is permanently disabled regardless of weight. |
+| `monthly_adaptive_weights_v2.<regime>.structural` | float | `0.0` | Structural-pattern weight. |
+
+If `*_adaptive_weights_v2` is absent, the v2 path falls back to the v1 4-category weights
+plus `candlestick = 0.0` and `structural = 0.0` (same effect as the explicit defaults).
 
 ### Calibration (rolling ridge regression)
 

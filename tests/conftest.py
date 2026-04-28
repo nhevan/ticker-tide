@@ -273,6 +273,36 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             computed_at TEXT,
             UNIQUE(ticker, indicator)
         )""",
+        """CREATE TABLE IF NOT EXISTS indicator_profiles_weekly (
+            ticker TEXT NOT NULL,
+            indicator TEXT NOT NULL,
+            p5 REAL,
+            p20 REAL,
+            p50 REAL,
+            p80 REAL,
+            p95 REAL,
+            mean REAL,
+            std REAL,
+            window_start TEXT,
+            window_end TEXT,
+            computed_at TEXT,
+            UNIQUE(ticker, indicator)
+        )""",
+        """CREATE TABLE IF NOT EXISTS indicator_profiles_monthly (
+            ticker TEXT NOT NULL,
+            indicator TEXT NOT NULL,
+            p5 REAL,
+            p20 REAL,
+            p50 REAL,
+            p80 REAL,
+            p95 REAL,
+            mean REAL,
+            std REAL,
+            window_start TEXT,
+            window_end TEXT,
+            computed_at TEXT,
+            UNIQUE(ticker, indicator)
+        )""",
         """CREATE TABLE IF NOT EXISTS weekly_candles (
             ticker TEXT NOT NULL,
             week_start TEXT NOT NULL,
@@ -353,6 +383,22 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             strength INTEGER,
             UNIQUE(ticker, date, type)
         )""",
+        """CREATE TABLE IF NOT EXISTS swing_points_weekly (
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            type TEXT,
+            price REAL,
+            strength INTEGER,
+            UNIQUE(ticker, week_start, type)
+        )""",
+        """CREATE TABLE IF NOT EXISTS swing_points_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            type TEXT,
+            price REAL,
+            strength INTEGER,
+            UNIQUE(ticker, month_start, type)
+        )""",
         """CREATE TABLE IF NOT EXISTS support_resistance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
@@ -366,10 +412,60 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             broken BOOLEAN DEFAULT 0,
             broken_date TEXT
         )""",
+        """CREATE TABLE IF NOT EXISTS support_resistance_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            level_price REAL,
+            level_type TEXT,
+            touch_count INTEGER,
+            first_touch TEXT,
+            last_touch TEXT,
+            strength TEXT,
+            broken BOOLEAN DEFAULT 0,
+            broken_date TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS support_resistance_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            level_price REAL,
+            level_type TEXT,
+            touch_count INTEGER,
+            first_touch TEXT,
+            last_touch TEXT,
+            strength TEXT,
+            broken BOOLEAN DEFAULT 0,
+            broken_date TEXT
+        )""",
         """CREATE TABLE IF NOT EXISTS patterns_daily (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
             date TEXT NOT NULL,
+            pattern_name TEXT,
+            pattern_category TEXT,
+            pattern_type TEXT,
+            direction TEXT,
+            strength INTEGER,
+            confirmed BOOLEAN DEFAULT 0,
+            details TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS patterns_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            pattern_name TEXT,
+            pattern_category TEXT,
+            pattern_type TEXT,
+            direction TEXT,
+            strength INTEGER,
+            confirmed BOOLEAN DEFAULT 0,
+            details TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS patterns_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
             pattern_name TEXT,
             pattern_category TEXT,
             pattern_type TEXT,
@@ -392,10 +488,54 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             indicator_swing_2_value REAL,
             strength INTEGER
         )""",
+        """CREATE TABLE IF NOT EXISTS divergences_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            indicator TEXT,
+            divergence_type TEXT,
+            price_swing_1_date TEXT,
+            price_swing_1_value REAL,
+            price_swing_2_date TEXT,
+            price_swing_2_value REAL,
+            indicator_swing_1_value REAL,
+            indicator_swing_2_value REAL,
+            strength INTEGER
+        )""",
+        """CREATE TABLE IF NOT EXISTS divergences_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            indicator TEXT,
+            divergence_type TEXT,
+            price_swing_1_date TEXT,
+            price_swing_1_value REAL,
+            price_swing_2_date TEXT,
+            price_swing_2_value REAL,
+            indicator_swing_1_value REAL,
+            indicator_swing_2_value REAL,
+            strength INTEGER
+        )""",
         """CREATE TABLE IF NOT EXISTS crossovers_daily (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
             date TEXT NOT NULL,
+            crossover_type TEXT,
+            direction TEXT,
+            days_ago INTEGER
+        )""",
+        """CREATE TABLE IF NOT EXISTS crossovers_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            crossover_type TEXT,
+            direction TEXT,
+            days_ago INTEGER
+        )""",
+        """CREATE TABLE IF NOT EXISTS crossovers_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
             crossover_type TEXT,
             direction TEXT,
             days_ago INTEGER
@@ -434,6 +574,40 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             data_completeness TEXT,
             key_signals TEXT,
             UNIQUE(ticker, date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS scores_weekly (
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            composite_score REAL NOT NULL,
+            regime TEXT,
+            trend_score REAL,
+            momentum_score REAL,
+            volume_score REAL,
+            volatility_score REAL,
+            candlestick_score REAL,
+            structural_score REAL,
+            fundamental_score REAL,
+            macro_score REAL,
+            data_completeness TEXT,
+            key_signals TEXT,
+            PRIMARY KEY (ticker, week_start)
+        )""",
+        """CREATE TABLE IF NOT EXISTS scores_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            composite_score REAL NOT NULL,
+            regime TEXT,
+            trend_score REAL,
+            momentum_score REAL,
+            volume_score REAL,
+            volatility_score REAL,
+            candlestick_score REAL,
+            structural_score REAL,
+            fundamental_score REAL,
+            macro_score REAL,
+            data_completeness TEXT,
+            key_signals TEXT,
+            PRIMARY KEY (ticker, month_start)
         )""",
         """CREATE TABLE IF NOT EXISTS signal_flips (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

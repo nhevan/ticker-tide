@@ -11,6 +11,17 @@ Swing points are the foundation for:
   - Double Top/Bottom patterns
   - Divergence detection (comparing indicator values at swing points)
   - Fibonacci retracement levels
+
+Timeframe parametrization
+-------------------------
+The persistence-layer functions (``save_swing_points_to_db`` and
+``detect_swing_points_for_ticker``) accept keyword-only arguments that select
+the source candles table, source date-column name, destination swing-points
+table and destination date-column name. Defaults preserve the original daily
+behaviour (``ohlcv_daily`` -> ``swing_points`` keyed on ``date``).
+
+Allowed values are validated against an explicit whitelist to prevent SQL
+injection — SQLite cannot bind table or column identifiers.
 """
 
 from __future__ import annotations
@@ -22,6 +33,49 @@ from datetime import datetime, timezone
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# ── Whitelists ──────────────────────────────────────────────────────────────────
+# Identifiers below are inlined into SQL via f-strings, so they must be validated
+# against an explicit allow-list. No user input ever flows in here, but the
+# whitelist also documents the supported timeframe surface.
+_ALLOWED_SOURCE_CANDLES_TABLES: frozenset[str] = frozenset(
+    {"ohlcv_daily", "weekly_candles", "monthly_candles"}
+)
+_ALLOWED_SOURCE_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+_ALLOWED_DEST_TABLES: frozenset[str] = frozenset(
+    {"swing_points", "swing_points_weekly", "swing_points_monthly"}
+)
+_ALLOWED_DEST_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+
+
+def _validate_identifier(name: str, allowed: frozenset[str], field: str) -> str:
+    """
+    Validate that an identifier (table or column name) is in the allow-list.
+
+    SQLite bind parameters cannot stand in for identifiers, so any table or
+    column name interpolated into a SQL string must be checked against an
+    explicit set of known-good values to prevent injection.
+
+    Args:
+        name: The candidate identifier.
+        allowed: Frozenset of permitted identifier strings.
+        field: Human-readable label used in the error message (e.g. "dest_table").
+
+    Returns:
+        The validated identifier verbatim.
+
+    Raises:
+        ValueError: If ``name`` is not in ``allowed``.
+    """
+    if name not in allowed:
+        raise ValueError(
+            f"Invalid {field}={name!r}; expected one of {sorted(allowed)}"
+        )
+    return name
 
 
 def detect_swing_points(ohlcv_df: pd.DataFrame, lookback_candles: int = 5) -> list[dict]:
@@ -37,7 +91,10 @@ def detect_swing_points(ohlcv_df: pd.DataFrame, lookback_candles: int = 5) -> li
 
     Args:
         ohlcv_df: DataFrame with columns: date, open, high, low, close, volume.
-            Must be sorted by date ascending.
+            Must be sorted by date ascending. The ``date`` column is treated as
+            an opaque period key — it may carry daily ``date``, weekly
+            ``week_start`` or monthly ``month_start`` values; the caller is
+            responsible for choosing the right source.
         lookback_candles: Number of candles required on each side for detection.
 
     Returns:
@@ -124,22 +181,51 @@ def _compute_strength(
 
 
 def save_swing_points_to_db(
-    db_conn: sqlite3.Connection, ticker: str, swing_points: list[dict]
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    swing_points: list[dict],
+    *,
+    dest_table: str = "swing_points",
+    date_column_name: str = "date",
 ) -> int:
     """
     Delete existing swing points for this ticker and insert fresh ones.
 
-    Uses INSERT OR REPLACE to handle the UNIQUE(ticker, date, type) constraint.
+    Uses INSERT OR REPLACE to handle the UNIQUE(ticker, <date_col>, type) constraint.
+    The destination table and date-column name are validated against a whitelist
+    so identifiers can be safely interpolated into SQL — SQLite parameter
+    binding does not cover identifiers.
 
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
-        swing_points: List of dicts from detect_swing_points().
+        swing_points: List of dicts from detect_swing_points(). The ``date``
+            key in each dict is written under ``date_column_name`` in the
+            destination table.
+        dest_table: Destination table name. Must be one of ``swing_points``,
+            ``swing_points_weekly`` or ``swing_points_monthly``. Defaults to
+            ``swing_points`` (daily).
+        date_column_name: Name of the date column in ``dest_table``. Must be
+            one of ``date``, ``week_start`` or ``month_start``. Defaults to
+            ``date`` (daily).
 
     Returns:
         Number of rows inserted.
+
+    Raises:
+        ValueError: If ``dest_table`` or ``date_column_name`` is not in the
+            allow-list.
     """
-    db_conn.execute("DELETE FROM swing_points WHERE ticker = ?", (ticker,))
+    safe_dest_table = _validate_identifier(
+        dest_table, _ALLOWED_DEST_TABLES, "dest_table"
+    )
+    safe_date_col = _validate_identifier(
+        date_column_name, _ALLOWED_DEST_DATE_COLUMNS, "date_column_name"
+    )
+
+    db_conn.execute(
+        f"DELETE FROM {safe_dest_table} WHERE ticker = ?", (ticker,)
+    )
     if not swing_points:
         db_conn.commit()
         return 0
@@ -149,38 +235,87 @@ def save_swing_points_to_db(
         for sp in swing_points
     ]
     db_conn.executemany(
-        "INSERT OR REPLACE INTO swing_points (ticker, date, type, price, strength) VALUES (?,?,?,?,?)",
+        f"INSERT OR REPLACE INTO {safe_dest_table} "
+        f"(ticker, {safe_date_col}, type, price, strength) VALUES (?,?,?,?,?)",
         rows,
     )
     db_conn.commit()
-    logger.info("ticker=%s phase=swing_points saved=%d swing points", ticker, len(rows))
+    logger.info(
+        "ticker=%s phase=swing_points dest=%s saved=%d swing points",
+        ticker,
+        safe_dest_table,
+        len(rows),
+    )
     return len(rows)
 
 
 def detect_swing_points_for_ticker(
-    db_conn: sqlite3.Connection, ticker: str, config: dict
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    config: dict,
+    *,
+    source_candles_table: str = "ohlcv_daily",
+    source_date_column: str = "date",
+    dest_table: str = "swing_points",
+    date_column_name: str = "date",
 ) -> int:
     """
-    Load OHLCV from DB, detect swing points, save results to DB.
+    Load OHLCV from the configured source table, detect swing points, and save
+    results to the configured destination table.
+
+    Defaults preserve the original daily behaviour: read from ``ohlcv_daily``
+    keyed by ``date`` and write to ``swing_points`` keyed by ``date``. To run
+    against weekly or monthly candles, override the four keyword-only
+    parameters; the source date column is aliased to ``date`` internally so the
+    pure detection logic is timeframe-agnostic.
 
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         config: Calculator config dict containing config["swing_points"]["lookback_candles"].
+        source_candles_table: Table to read OHLCV-like rows from. Must be one
+            of ``ohlcv_daily``, ``weekly_candles`` or ``monthly_candles``.
+        source_date_column: Date-column name in ``source_candles_table``. Must
+            be one of ``date``, ``week_start`` or ``month_start``.
+        dest_table: Destination swing-points table. Must be one of
+            ``swing_points``, ``swing_points_weekly`` or ``swing_points_monthly``.
+        date_column_name: Date-column name in ``dest_table``. Must be one of
+            ``date``, ``week_start`` or ``month_start``.
 
     Returns:
         Number of swing points detected and saved.
+
+    Raises:
+        ValueError: If any identifier argument is not in the allow-list.
     """
+    safe_source_table = _validate_identifier(
+        source_candles_table, _ALLOWED_SOURCE_CANDLES_TABLES, "source_candles_table"
+    )
+    safe_source_date_col = _validate_identifier(
+        source_date_column, _ALLOWED_SOURCE_DATE_COLUMNS, "source_date_column"
+    )
+    # Validate dest identifiers eagerly so misuse fails fast even when the
+    # source returns no rows.
+    _validate_identifier(dest_table, _ALLOWED_DEST_TABLES, "dest_table")
+    _validate_identifier(
+        date_column_name, _ALLOWED_DEST_DATE_COLUMNS, "date_column_name"
+    )
+
     lookback = config.get("swing_points", {}).get("lookback_candles", 5)
 
     rows = db_conn.execute(
-        "SELECT date, open, high, low, close, volume FROM ohlcv_daily "
-        "WHERE ticker = ? ORDER BY date ASC",
+        f"SELECT {safe_source_date_col} AS date, open, high, low, close, volume "
+        f"FROM {safe_source_table} WHERE ticker = ? "
+        f"ORDER BY {safe_source_date_col} ASC",
         (ticker,),
     ).fetchall()
 
     if not rows:
-        logger.warning("ticker=%s phase=swing_points no OHLCV data found", ticker)
+        logger.warning(
+            "ticker=%s phase=swing_points source=%s no OHLCV data found",
+            ticker,
+            safe_source_table,
+        )
         return 0
 
     ohlcv_df = pd.DataFrame([dict(r) for r in rows])
@@ -196,4 +331,10 @@ def detect_swing_points_for_ticker(
         db_conn.commit()
         return 0
 
-    return save_swing_points_to_db(db_conn, ticker, swing_points)
+    return save_swing_points_to_db(
+        db_conn,
+        ticker,
+        swing_points,
+        dest_table=dest_table,
+        date_column_name=date_column_name,
+    )

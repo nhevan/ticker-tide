@@ -14,6 +14,13 @@ Each crossover records:
     - crossover_type: 'ema_9_21', 'ema_21_50', or 'macd_signal'
     - direction:      'bullish' (fast crosses above slow) or 'bearish'
     - days_ago:       trading days before the most recent date in the dataset
+
+Timeframe parametrization
+-------------------------
+``save_crossovers_to_db`` and ``detect_crossovers_for_ticker`` accept
+keyword-only arguments selecting the source indicators table and destination
+crossovers table + date-column name. Defaults preserve the original daily
+behaviour. Identifiers are validated against an explicit whitelist.
 """
 
 from __future__ import annotations
@@ -25,6 +32,47 @@ from datetime import datetime, timezone
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# ── Whitelists ──────────────────────────────────────────────────────────────────
+_ALLOWED_SOURCE_INDICATORS_TABLES: frozenset[str] = frozenset(
+    {"indicators_daily", "indicators_weekly", "indicators_monthly"}
+)
+_ALLOWED_SOURCE_INDICATORS_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+_ALLOWED_DEST_TABLES: frozenset[str] = frozenset(
+    {"crossovers_daily", "crossovers_weekly", "crossovers_monthly"}
+)
+_ALLOWED_DEST_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+
+
+def _validate_identifier(name: str, allowed: frozenset[str], field: str) -> str:
+    """
+    Validate that an identifier (table or column name) is in the allow-list.
+
+    SQLite parameter binding does not cover identifiers, so any table or
+    column name interpolated into SQL must be checked against an explicit
+    set of permitted values.
+
+    Args:
+        name: Candidate identifier.
+        allowed: Frozenset of permitted identifier strings.
+        field: Human-readable label used in the error message.
+
+    Returns:
+        The validated identifier verbatim.
+
+    Raises:
+        ValueError: If ``name`` is not in ``allowed``.
+    """
+    if name not in allowed:
+        raise ValueError(
+            f"Invalid {field}={name!r}; expected one of {sorted(allowed)}"
+        )
+    return name
 
 
 def detect_crossover_events(
@@ -128,28 +176,51 @@ def detect_all_crossovers(indicators_df: pd.DataFrame, config: dict) -> list[dic
 
 
 def save_crossovers_to_db(
-    db_conn: sqlite3.Connection, ticker: str, crossovers: list[dict]
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    crossovers: list[dict],
+    *,
+    dest_table: str = "crossovers_daily",
+    date_column_name: str = "date",
 ) -> int:
     """
     Replace all crossover records for a ticker with fresh data.
 
     Deletes existing crossovers for the ticker and inserts all new records.
-    This reflects the recompute-from-scratch semantic.
+    This reflects the recompute-from-scratch semantic. The destination table
+    and its date-column are validated against a whitelist before being
+    interpolated into SQL.
 
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         crossovers: List of crossover dicts with keys: date, crossover_type,
                     direction, days_ago.
+        dest_table: Destination crossovers table. Must be one of
+            ``crossovers_daily``, ``crossovers_weekly`` or
+            ``crossovers_monthly``. Defaults to ``crossovers_daily``.
+        date_column_name: Name of the date / period-key column in
+            ``dest_table``. Must be one of ``date``, ``week_start`` or
+            ``month_start``. Defaults to ``date``.
 
     Returns:
         Number of rows saved.
+
+    Raises:
+        ValueError: If either identifier is not in the allow-list.
     """
-    db_conn.execute("DELETE FROM crossovers_daily WHERE ticker = ?", (ticker,))
+    safe_dest_table = _validate_identifier(
+        dest_table, _ALLOWED_DEST_TABLES, "dest_table"
+    )
+    safe_date_col = _validate_identifier(
+        date_column_name, _ALLOWED_DEST_DATE_COLUMNS, "date_column_name"
+    )
+
+    db_conn.execute(f"DELETE FROM {safe_dest_table} WHERE ticker = ?", (ticker,))
 
     for event in crossovers:
         db_conn.execute(
-            """INSERT INTO crossovers_daily(ticker, date, crossover_type, direction, days_ago)
+            f"""INSERT INTO {safe_dest_table}(ticker, {safe_date_col}, crossover_type, direction, days_ago)
                VALUES (?, ?, ?, ?, ?)""",
             (
                 ticker,
@@ -165,37 +236,88 @@ def save_crossovers_to_db(
 
 
 def detect_crossovers_for_ticker(
-    db_conn: sqlite3.Connection, ticker: str, config: dict
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    config: dict,
+    *,
+    source_indicators_table: str = "indicators_daily",
+    source_indicators_date_column: str = "date",
+    dest_table: str = "crossovers_daily",
+    dest_date_column: str = "date",
 ) -> int:
     """
-    Load indicators from DB, detect all crossovers, and save to crossovers_daily.
+    Load indicators from DB, detect all crossovers, and save to a crossovers table.
+
+    Defaults preserve the original daily behaviour: read indicators from
+    ``indicators_daily`` keyed by ``date`` and write to ``crossovers_daily``
+    keyed by ``date``. To run against the weekly or monthly mirrors, override
+    the keyword-only parameters.
 
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         config: Calculator config dict.
+        source_indicators_table: Indicators source table. Must be one of
+            ``indicators_daily``, ``indicators_weekly`` or
+            ``indicators_monthly``.
+        source_indicators_date_column: Date-column name in
+            ``source_indicators_table``. Must be one of ``date``,
+            ``week_start`` or ``month_start``.
+        dest_table: Destination crossovers table. Must be one of
+            ``crossovers_daily``, ``crossovers_weekly`` or
+            ``crossovers_monthly``.
+        dest_date_column: Date-column name in ``dest_table``.
 
     Returns:
         Number of crossover events found and saved.
+
+    Raises:
+        ValueError: If any identifier argument is not in the allow-list.
     """
+    safe_source_table = _validate_identifier(
+        source_indicators_table,
+        _ALLOWED_SOURCE_INDICATORS_TABLES,
+        "source_indicators_table",
+    )
+    safe_source_date_col = _validate_identifier(
+        source_indicators_date_column,
+        _ALLOWED_SOURCE_INDICATORS_DATE_COLUMNS,
+        "source_indicators_date_column",
+    )
+    # Validate dest identifiers eagerly so misuse fails fast.
+    _validate_identifier(dest_table, _ALLOWED_DEST_TABLES, "dest_table")
+    _validate_identifier(
+        dest_date_column, _ALLOWED_DEST_DATE_COLUMNS, "dest_date_column"
+    )
+
     try:
         cursor = db_conn.execute(
-            """SELECT date, ema_9, ema_21, ema_50, macd_line, macd_signal
-               FROM indicators_daily
+            f"""SELECT {safe_source_date_col} AS date, ema_9, ema_21, ema_50, macd_line, macd_signal
+               FROM {safe_source_table}
                WHERE ticker = ?
-               ORDER BY date ASC""",
+               ORDER BY {safe_source_date_col} ASC""",
             (ticker,),
         )
         rows = cursor.fetchall()
 
         if not rows:
-            logger.warning(f"No indicator data found for {ticker} in indicators_daily")
+            logger.warning(
+                f"No indicator data found for {ticker} in {safe_source_table}"
+            )
             return 0
 
         indicators_df = pd.DataFrame([dict(row) for row in rows])
         crossovers = detect_all_crossovers(indicators_df, config)
-        count = save_crossovers_to_db(db_conn, ticker, crossovers)
-        logger.info(f"Detected {count} crossovers for {ticker}")
+        count = save_crossovers_to_db(
+            db_conn,
+            ticker,
+            crossovers,
+            dest_table=dest_table,
+            date_column_name=dest_date_column,
+        )
+        logger.info(
+            f"Detected {count} crossovers for {ticker} dest={dest_table}"
+        )
         return count
 
     except Exception as exc:

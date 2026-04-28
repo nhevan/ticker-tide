@@ -27,9 +27,18 @@ from typing import Optional
 
 import pandas as pd
 
+from src.calculator.crossovers import detect_crossovers_for_ticker
+from src.calculator.divergences import detect_divergences_for_ticker
 from src.calculator.indicators import compute_all_indicators
+from src.calculator.patterns import detect_all_patterns_for_ticker
+from src.calculator.profiles import compute_profile_for_ticker
+from src.calculator.support_resistance import detect_support_resistance_for_ticker
+from src.calculator.swing_points import detect_swing_points_for_ticker
+from src.common.events import log_alert
 
 logger = logging.getLogger(__name__)
+
+_PHASE = "calculator-weekly"
 
 
 def build_weekly_candles(
@@ -223,9 +232,34 @@ def compute_weekly_for_ticker(
     ticker: str,
     config: dict,
     mode: str = "full",
+    *,
+    skip_event_detection: bool = False,
 ) -> int:
     """
-    End-to-end weekly computation for one ticker: build candles and compute indicators.
+    End-to-end weekly computation for one ticker.
+
+    Pipeline (per ticker, per call):
+      1. Build weekly candles from daily OHLCV and persist them.
+      2. Compute weekly indicators on those candles and persist them.
+
+    When ``skip_event_detection`` is False (default — regular tickers), the
+    following six sub-steps then run against the weekly mirror tables:
+
+      3. ``swing_points_weekly``        (depends on weekly candles)
+      4. ``support_resistance_weekly``  (depends on swing_points_weekly + candles)
+      5. ``patterns_weekly``            (candlestick + structural; needs S/R)
+      6. ``divergences_weekly``         (needs swing_points + indicators)
+      7. ``crossovers_weekly``          (needs indicators)
+      8. ``indicator_profiles_weekly``  (needs indicators)
+
+    Each of the six is wrapped in its own try/except so a single detector
+    failure does not abort the rest. Failures are logged and recorded in
+    ``alerts_log`` under ``phase='calculator-weekly'``.
+
+    When ``skip_event_detection`` is True (sector ETFs and market benchmarks),
+    all six sub-steps are skipped — matching the daily ETF policy in
+    ``run_calculator_for_etfs_and_benchmarks`` (only indicators + candles run
+    for ETFs/benchmarks).
 
     Modes:
       'full':        Load ALL daily OHLCV, rebuild all weekly candles from scratch.
@@ -233,22 +267,36 @@ def compute_weekly_for_ticker(
                      from 2 weeks before that date onward (to recompute the last
                      partial week), build candles for the new period. For indicator
                      computation, loads existing weekly candles + new ones so the
-                     indicator warm-up window is satisfied.
+                     indicator warm-up window is satisfied. The six event/profile
+                     sub-steps re-run on the FULL ticker history each call —
+                     none of them operate on a date window. The cost is acceptable
+                     because weekly bar counts are 5x fewer than daily.
 
     Args:
         db_conn: Open SQLite connection with ohlcv_daily, weekly_candles,
-                 and indicators_weekly tables.
+                 indicators_weekly and the six weekly mirror tables.
         ticker: Ticker symbol, e.g. 'AAPL'.
         config: Calculator config dict.
         mode: 'full' or 'incremental'. Defaults to 'full'.
+        skip_event_detection: When True, skip the six event/profile sub-steps
+            (swing_points, S/R, patterns, divergences, crossovers, profiles).
+            Used for ETF/benchmark tickers to mirror the daily ETF policy.
 
     Returns:
-        Number of weekly candles created/updated.
+        Number of weekly candles created/updated. (The six sub-steps may
+        succeed, partially fail, or be skipped — see ``alerts_log`` for any
+        per-step failures.)
     """
     week_start_day = config.get("weekly", {}).get("week_start_day", "Monday")
 
     if mode == "incremental":
-        return _compute_weekly_incremental(db_conn, ticker, config, week_start_day)
+        return _compute_weekly_incremental(
+            db_conn,
+            ticker,
+            config,
+            week_start_day,
+            skip_event_detection=skip_event_detection,
+        )
 
     # --- full mode ---
     rows = db_conn.execute(
@@ -272,7 +320,159 @@ def compute_weekly_for_ticker(
     indicators_df = compute_weekly_indicators(weekly_df, config)
     save_weekly_indicators_to_db(db_conn, ticker, indicators_df)
 
+    if not skip_event_detection:
+        _run_weekly_subpipeline(db_conn, ticker, config)
+
     return len(weekly_df)
+
+
+def _run_weekly_subpipeline(
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    config: dict,
+) -> None:
+    """
+    Run the six event/profile detectors against the weekly mirror tables.
+
+    Each detector is wrapped in its own try/except so a single failure does
+    not block the rest. Failures are logged and recorded in ``alerts_log``
+    under ``phase='calculator-weekly'``. This mirrors the per-step error
+    handling of the daily orchestrator in ``src/calculator/main.py``.
+
+    Note on profiles: ``config['profiles']['rolling_window_days']`` is tuned
+    for daily data (default 504 trading days ≈ 2 years). On weekly bars this
+    window will exceed available history; ``compute_profile_for_ticker``
+    falls back to using all available data with a warning, which is
+    acceptable here.
+
+    Args:
+        db_conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        config: Calculator config dict.
+    """
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+
+    swing_ok = False
+    try:
+        detect_swing_points_for_ticker(
+            db_conn,
+            ticker,
+            config,
+            source_candles_table="weekly_candles",
+            source_date_column="week_start",
+            dest_table="swing_points_weekly",
+            date_column_name="week_start",
+        )
+        swing_ok = True
+    except Exception as exc:
+        logger.error(
+            f"ticker={ticker} phase={_PHASE} step=swing_points error={exc}",
+            exc_info=True,
+        )
+        log_alert(db_conn, ticker, today, _PHASE, "error", f"swing_points failed: {exc}")
+
+    sr_ok = False
+    if swing_ok:
+        try:
+            detect_support_resistance_for_ticker(
+                db_conn,
+                ticker,
+                config,
+                source_swing_table="swing_points_weekly",
+                source_swing_date_column="week_start",
+                source_candles_table="weekly_candles",
+                source_candles_date_column="week_start",
+                dest_table="support_resistance_weekly",
+                dest_date_column="week_start",
+            )
+            sr_ok = True
+        except Exception as exc:
+            logger.error(
+                f"ticker={ticker} phase={_PHASE} step=support_resistance error={exc}",
+                exc_info=True,
+            )
+            log_alert(
+                db_conn, ticker, today, _PHASE, "error",
+                f"support_resistance failed: {exc}",
+            )
+
+    if swing_ok and sr_ok:
+        try:
+            detect_all_patterns_for_ticker(
+                db_conn,
+                ticker,
+                config,
+                source_candles_table="weekly_candles",
+                source_candles_date_column="week_start",
+                source_indicators_table="indicators_weekly",
+                source_indicators_date_column="week_start",
+                source_swing_table="swing_points_weekly",
+                source_swing_date_column="week_start",
+                source_sr_table="support_resistance_weekly",
+                dest_table="patterns_weekly",
+                dest_date_column="week_start",
+            )
+        except Exception as exc:
+            logger.error(
+                f"ticker={ticker} phase={_PHASE} step=patterns error={exc}",
+                exc_info=True,
+            )
+            log_alert(db_conn, ticker, today, _PHASE, "error", f"patterns failed: {exc}")
+
+    if swing_ok:
+        try:
+            detect_divergences_for_ticker(
+                db_conn,
+                ticker,
+                config,
+                source_swing_table="swing_points_weekly",
+                source_swing_date_column="week_start",
+                source_indicators_table="indicators_weekly",
+                source_indicators_date_column="week_start",
+                dest_table="divergences_weekly",
+                dest_date_column="week_start",
+            )
+        except Exception as exc:
+            logger.error(
+                f"ticker={ticker} phase={_PHASE} step=divergences error={exc}",
+                exc_info=True,
+            )
+            log_alert(
+                db_conn, ticker, today, _PHASE, "error", f"divergences failed: {exc}",
+            )
+
+    try:
+        detect_crossovers_for_ticker(
+            db_conn,
+            ticker,
+            config,
+            source_indicators_table="indicators_weekly",
+            source_indicators_date_column="week_start",
+            dest_table="crossovers_weekly",
+            dest_date_column="week_start",
+        )
+    except Exception as exc:
+        logger.error(
+            f"ticker={ticker} phase={_PHASE} step=crossovers error={exc}",
+            exc_info=True,
+        )
+        log_alert(db_conn, ticker, today, _PHASE, "error", f"crossovers failed: {exc}")
+
+    try:
+        compute_profile_for_ticker(
+            db_conn,
+            ticker,
+            config,
+            source_indicators_table="indicators_weekly",
+            source_indicators_date_column="week_start",
+            dest_table="indicator_profiles_weekly",
+        )
+    except Exception as exc:
+        logger.error(
+            f"ticker={ticker} phase={_PHASE} step=profiles error={exc}",
+            exc_info=True,
+        )
+        log_alert(db_conn, ticker, today, _PHASE, "error", f"profiles failed: {exc}")
 
 
 def _compute_weekly_incremental(
@@ -280,6 +480,8 @@ def _compute_weekly_incremental(
     ticker: str,
     config: dict,
     week_start_day: str,
+    *,
+    skip_event_detection: bool = False,
 ) -> int:
     """
     Incremental weekly computation: only process new/updated weeks.
@@ -288,11 +490,18 @@ def _compute_weekly_incremental(
     from 14 days before that date (to recompute the last potentially partial week),
     and merges with existing weekly candles for indicator computation.
 
+    The six event/profile sub-steps re-run on the FULL ticker history every
+    incremental call. This is intentional: patterns / divergences / S/R
+    depend on the global swing-point series, so a date-windowed run could
+    miss patterns whose anchor falls outside the window. The cost is bounded
+    because weekly bar counts are 5x fewer than daily.
+
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         config: Calculator config dict.
         week_start_day: Week start day string.
+        skip_event_detection: When True, skip the six sub-steps (ETF policy).
 
     Returns:
         Number of new weekly candle rows saved.
@@ -305,7 +514,10 @@ def _compute_weekly_incremental(
     if latest_row is None or latest_row["latest"] is None:
         # No existing data — fall back to full mode
         logger.info(f"No existing weekly data for ticker={ticker}, running full computation")
-        return compute_weekly_for_ticker(db_conn, ticker, config, mode="full")
+        return compute_weekly_for_ticker(
+            db_conn, ticker, config, mode="full",
+            skip_event_detection=skip_event_detection,
+        )
 
     latest_week_start = latest_row["latest"]
     # Load daily OHLCV from 2 weeks before the latest week_start
@@ -351,5 +563,11 @@ def _compute_weekly_incremental(
     new_week_starts = set(new_weeks["week_start"].tolist())
     new_indicators = indicators_df[indicators_df["week_start"].isin(new_week_starts)]
     save_weekly_indicators_to_db(db_conn, ticker, new_indicators)
+
+    # Re-detect events / profiles on the full ticker history. Each detector
+    # reads everything from its source table (no date window), so re-running
+    # is the only way to keep the mirror tables consistent after new bars.
+    if not skip_event_detection:
+        _run_weekly_subpipeline(db_conn, ticker, config)
 
     return len(new_weeks)

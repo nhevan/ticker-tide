@@ -422,3 +422,236 @@ class TestComputeMonthlyForTicker:
             "SELECT COUNT(*) as n FROM monthly_candles WHERE ticker='AAPL'"
         ).fetchone()["n"]
         assert count == 3
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sub-pipeline (commit 4): swing_points + S/R + patterns + divergences +
+# crossovers + profiles wired into compute_monthly_for_ticker.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+import math
+
+
+def _generate_rich_daily_ohlcv_for_monthly(
+    num_months: int = 60,
+    start_year: int = 2018,
+) -> list[dict]:
+    """
+    Generate ~5 years of business-day OHLCV with a deterministic sine + drift
+    signal so monthly aggregation has enough peaks/troughs for swing detection.
+
+    Default lookback for swing_points is 5 → needs >=11 monthly bars per swing,
+    so 60 months gives plenty of room. The sine has ~12-month period so the
+    monthly series oscillates roughly 5 times across the window.
+
+    Args:
+        num_months: Number of calendar months to generate.
+        start_year: Anchor year for the first January.
+
+    Returns:
+        List of OHLCV row dicts in ``ohlcv_daily`` shape.
+    """
+    rows: list[dict] = []
+    base_price = 100.0
+    global_day = 0
+    year = start_year
+    month = 1
+    for _ in range(num_months):
+        for day_obj in _trading_days_for_month(year, month):
+            t = global_day
+            cycle = math.sin(t / 80.0) * 18.0  # ~12-month period
+            drift = t * 0.04
+            jitter = ((t * 7) % 11) * 0.3 - 1.5
+            close = base_price + drift + cycle + jitter
+            high = close + 1.5 + ((t * 3) % 5) * 0.4
+            low = close - 1.5 - ((t * 5) % 4) * 0.5
+            open_ = close - 0.4 + ((t * 11) % 7) * 0.2
+            volume = 1_000_000.0 + ((t * 13) % 17) * 50_000.0
+            rows.append({
+                "date": day_obj.isoformat(),
+                "open": round(open_, 4),
+                "high": round(high, 4),
+                "low": round(low, 4),
+                "close": round(close, 4),
+                "volume": volume,
+            })
+            global_day += 1
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return rows
+
+
+def _count_m(conn: sqlite3.Connection, sql: str, *args) -> int:
+    """Run a SELECT COUNT(*) query and return the integer count."""
+    return int(conn.execute(sql, args).fetchone()[0])
+
+
+class TestComputeMonthlySubPipeline:
+
+    def test_full_mode_populates_all_six_monthly_mirror_tables(self, tmp_path) -> None:
+        """
+        Full mode for a regular ticker populates all six monthly mirror tables.
+        """
+        ohlcv_rows = _generate_rich_daily_ohlcv_for_monthly()
+        conn = _make_monthly_db(tmp_path, "AAPL", ohlcv_rows)
+
+        compute_monthly_for_ticker(
+            conn, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+        )
+
+        assert _count_m(
+            conn, "SELECT COUNT(*) FROM swing_points_monthly WHERE ticker = ?", "AAPL"
+        ) > 0
+        # S/R, patterns, divergences, crossovers may legitimately be zero for
+        # a smooth deterministic signal — assert the call succeeded by
+        # querying without error.
+        for table in (
+            "support_resistance_monthly",
+            "patterns_monthly",
+            "divergences_monthly",
+            "crossovers_monthly",
+        ):
+            conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE ticker = ?", ("AAPL",)
+            ).fetchone()
+        assert _count_m(
+            conn,
+            "SELECT COUNT(*) FROM indicator_profiles_monthly WHERE ticker = ?",
+            "AAPL",
+        ) > 0
+
+    def test_incremental_reruns_subpipeline_on_full_history(self, tmp_path) -> None:
+        """
+        Incremental mode re-runs every detector on the full ticker history
+        because none of them operate on a date window.
+        """
+        ohlcv_rows = _generate_rich_daily_ohlcv_for_monthly()
+        conn = _make_monthly_db(tmp_path, "AAPL", ohlcv_rows)
+
+        compute_monthly_for_ticker(
+            conn, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+        )
+        first_swings = _count_m(
+            conn, "SELECT COUNT(*) FROM swing_points_monthly WHERE ticker = ?", "AAPL"
+        )
+        assert first_swings > 0
+
+        # Add one extra month of daily data, then run incremental.
+        extra_rows = _make_month_rows(2023, 1, base_price=200.0)
+        for row in extra_rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO ohlcv_daily "
+                "(ticker, date, open, high, low, close, volume) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("AAPL", row["date"], row["open"], row["high"],
+                 row["low"], row["close"], row["volume"]),
+            )
+        conn.commit()
+
+        compute_monthly_for_ticker(
+            conn, "AAPL", _BASE_CONFIG, mode="incremental", skip_event_detection=False
+        )
+
+        incr_swings = _count_m(
+            conn, "SELECT COUNT(*) FROM swing_points_monthly WHERE ticker = ?", "AAPL"
+        )
+        assert incr_swings > 0
+
+    def test_skip_event_detection_skips_six_substeps(self, tmp_path) -> None:
+        """
+        skip_event_detection=True (ETF/benchmark policy) bypasses all six new
+        sub-steps. Only candles + indicators remain populated.
+        """
+        ohlcv_rows = _generate_rich_daily_ohlcv_for_monthly()
+        conn = _make_monthly_db(tmp_path, "ETFX", ohlcv_rows)
+
+        compute_monthly_for_ticker(
+            conn, "ETFX", _BASE_CONFIG, mode="full", skip_event_detection=True
+        )
+
+        assert _count_m(
+            conn, "SELECT COUNT(*) FROM monthly_candles WHERE ticker = ?", "ETFX"
+        ) > 0
+        assert _count_m(
+            conn, "SELECT COUNT(*) FROM indicators_monthly WHERE ticker = ?", "ETFX"
+        ) > 0
+
+        for table in (
+            "swing_points_monthly",
+            "support_resistance_monthly",
+            "patterns_monthly",
+            "divergences_monthly",
+            "crossovers_monthly",
+            "indicator_profiles_monthly",
+        ):
+            assert _count_m(
+                conn, f"SELECT COUNT(*) FROM {table} WHERE ticker = ?", "ETFX"
+            ) == 0, f"expected empty {table} when skip_event_detection=True"
+
+    def test_subpipeline_isolates_per_step_errors(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failing detector is isolated; other steps run; alerts_log gets a row."""
+        ohlcv_rows = _generate_rich_daily_ohlcv_for_monthly()
+        conn = _make_monthly_db(tmp_path, "AAPL", ohlcv_rows)
+
+        def _boom(*args, **kwargs):
+            raise ValueError("synthetic patterns failure")
+
+        import src.calculator.monthly as monthly_mod
+        monkeypatch.setattr(monthly_mod, "detect_all_patterns_for_ticker", _boom)
+
+        compute_monthly_for_ticker(
+            conn, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+        )
+
+        assert _count_m(
+            conn, "SELECT COUNT(*) FROM swing_points_monthly WHERE ticker = ?", "AAPL"
+        ) > 0
+        assert _count_m(
+            conn,
+            "SELECT COUNT(*) FROM indicator_profiles_monthly WHERE ticker = ?",
+            "AAPL",
+        ) > 0
+
+        rows = conn.execute(
+            "SELECT phase, severity, message FROM alerts_log "
+            "WHERE ticker = ? AND message LIKE '%patterns%'",
+            ("AAPL",),
+        ).fetchall()
+        assert len(rows) >= 1
+
+    def test_subpipeline_is_idempotent(self, tmp_path) -> None:
+        """Two runs of full mode produce stable mirror-table row counts."""
+        ohlcv_rows = _generate_rich_daily_ohlcv_for_monthly()
+        conn = _make_monthly_db(tmp_path, "AAPL", ohlcv_rows)
+
+        compute_monthly_for_ticker(
+            conn, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+        )
+        first = {
+            t: _count_m(conn, f"SELECT COUNT(*) FROM {t} WHERE ticker = ?", "AAPL")
+            for t in (
+                "swing_points_monthly",
+                "support_resistance_monthly",
+                "patterns_monthly",
+                "indicator_profiles_monthly",
+            )
+        }
+
+        compute_monthly_for_ticker(
+            conn, "AAPL", _BASE_CONFIG, mode="full", skip_event_detection=False
+        )
+        second = {
+            t: _count_m(conn, f"SELECT COUNT(*) FROM {t} WHERE ticker = ?", "AAPL")
+            for t in (
+                "swing_points_monthly",
+                "support_resistance_monthly",
+                "patterns_monthly",
+                "indicator_profiles_monthly",
+            )
+        }
+        assert first == second

@@ -170,7 +170,7 @@ The calculator runs after the fetcher completes (`fetcher_done` event) and write
 - `detect_all_patterns_for_ticker(db_conn, ticker, config)` → populates `patterns_daily` (candlestick + structural)
 - `detect_divergences_for_ticker(db_conn, ticker, config)` → populates `divergences_daily`
 - `compute_fibonacci_for_ticker(db_conn, ticker, config)` → returns result dict (scorer calls on-the-fly)
-- `compute_weekly_for_ticker(db_conn, ticker, config, mode)` → populates `weekly_candles` and `indicators_weekly`; supports `mode="full"` (rebuild all) and `mode="incremental"` (new weeks only)
+- `compute_weekly_for_ticker(db_conn, ticker, config, mode, *, skip_event_detection=False)` → populates `weekly_candles` and `indicators_weekly`; supports `mode="full"` (rebuild all) and `mode="incremental"` (new weeks only). When `skip_event_detection=False` (regular tickers), additionally runs the per-timeframe sub-pipeline against the weekly mirror tables: swing_points → S/R → patterns → divergences → crossovers → profiles. ETFs/benchmarks pass `skip_event_detection=True` to mirror the daily ETF policy. The same surface exists on `compute_monthly_for_ticker` for the monthly mirrors.
 - `compute_profile_for_ticker(db_conn, ticker, config)` → populates `indicator_profiles`
 - `compute_all_profiles(db_conn, tickers, config)` → processes all tickers, computes sector profiles, blends stock+sector
 - `compute_relative_strength_for_ticker(db_conn, ticker, config)` → returns `{"rs_market": float|None, "rs_sector": float|None}`
@@ -207,10 +207,25 @@ Step 5: support_resistance  depends on swing_points
 Step 6: patterns            depends on indicators + swing_points + support_resistance
 Step 7: divergences         depends on indicators + swing_points
 Step 8: profiles            depends on indicators (weekly recompute, skipped if recent)
-Step 9: weekly              independent
-Step 9b: monthly            independent
+Step 9: weekly              independent (runs full per-timeframe sub-pipeline)
+Step 9b: monthly            independent (runs full per-timeframe sub-pipeline)
 Step 10: news               independent
 ```
+
+**Per-timeframe sub-pipelines (commit 4):**
+After steps 9 and 9b persist their candles + indicators, each runs a six-step sub-pipeline against its mirror tables:
+
+```
+weekly_candles + indicators_weekly →
+  swing_points_weekly → support_resistance_weekly →
+  patterns_weekly + divergences_weekly + crossovers_weekly + indicator_profiles_weekly
+
+monthly_candles + indicators_monthly →
+  swing_points_monthly → support_resistance_monthly →
+  patterns_monthly + divergences_monthly + crossovers_monthly + indicator_profiles_monthly
+```
+
+Each sub-step has its own try/except, logs to `alerts_log` under `phase='calculator-weekly'` or `'calculator-monthly'` on failure, and does not block the other sub-steps. Both `mode='full'` and `mode='incremental'` re-run the sub-pipeline against the **full ticker history** every call (none of the detectors operate on a date window). ETFs/benchmarks bypass the entire sub-pipeline via `skip_event_detection=True`, mirroring the daily ETF policy.
 
 **Failure propagation:**
 - `indicators` fails → ticker marked `"failed"`, crossovers/patterns/divergences/profiles skipped.
@@ -574,6 +589,22 @@ Enable WAL mode on connection.
 - atr_14 REAL, keltner_upper REAL, keltner_lower REAL
 - UNIQUE(ticker, month_start)
 
+**indicator_profiles_weekly** — same shape as `indicator_profiles`, computed over weekly indicators
+- ticker TEXT NOT NULL, indicator TEXT NOT NULL
+- p5 REAL, p20 REAL, p50 REAL, p80 REAL, p95 REAL
+- mean REAL, std REAL
+- window_start TEXT, window_end TEXT
+- computed_at TEXT
+- UNIQUE(ticker, indicator)
+
+**indicator_profiles_monthly** — same shape as `indicator_profiles`, computed over monthly indicators
+- ticker TEXT NOT NULL, indicator TEXT NOT NULL
+- p5 REAL, p20 REAL, p50 REAL, p80 REAL, p95 REAL
+- mean REAL, std REAL
+- window_start TEXT, window_end TEXT
+- computed_at TEXT
+- UNIQUE(ticker, indicator)
+
 ### Pattern & Signal Tables
 
 **swing_points**
@@ -583,10 +614,48 @@ Enable WAL mode on connection.
 - strength INTEGER
 - UNIQUE(ticker, date, type)
 
+**swing_points_weekly** — mirrors `swing_points` over weekly candles
+- ticker TEXT NOT NULL, week_start TEXT NOT NULL
+- type TEXT (high/low)
+- price REAL
+- strength INTEGER
+- UNIQUE(ticker, week_start, type)
+
+**swing_points_monthly** — mirrors `swing_points` over monthly candles
+- ticker TEXT NOT NULL, month_start TEXT NOT NULL
+- type TEXT (high/low)
+- price REAL
+- strength INTEGER
+- UNIQUE(ticker, month_start, type)
+
 **support_resistance**
 - id INTEGER PRIMARY KEY AUTOINCREMENT
 - ticker TEXT NOT NULL
 - date_computed TEXT NOT NULL
+- level_price REAL
+- level_type TEXT (support/resistance)
+- touch_count INTEGER
+- first_touch TEXT, last_touch TEXT
+- strength TEXT (weak/moderate/strong)
+- broken BOOLEAN DEFAULT 0
+- broken_date TEXT
+
+**support_resistance_weekly** — mirrors `support_resistance` keyed on `week_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL
+- week_start TEXT NOT NULL
+- level_price REAL
+- level_type TEXT (support/resistance)
+- touch_count INTEGER
+- first_touch TEXT, last_touch TEXT
+- strength TEXT (weak/moderate/strong)
+- broken BOOLEAN DEFAULT 0
+- broken_date TEXT
+
+**support_resistance_monthly** — mirrors `support_resistance` keyed on `month_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL
+- month_start TEXT NOT NULL
 - level_price REAL
 - level_type TEXT (support/resistance)
 - touch_count INTEGER
@@ -606,21 +675,77 @@ Enable WAL mode on connection.
 - confirmed BOOLEAN DEFAULT 0
 - details TEXT (JSON)
 
+**patterns_weekly** — mirrors `patterns_daily` keyed on `week_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL, week_start TEXT NOT NULL
+- pattern_name TEXT
+- pattern_category TEXT
+- pattern_type TEXT
+- direction TEXT
+- strength INTEGER
+- confirmed BOOLEAN DEFAULT 0
+- details TEXT (JSON)
+
+**patterns_monthly** — mirrors `patterns_daily` keyed on `month_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL, month_start TEXT NOT NULL
+- pattern_name TEXT
+- pattern_category TEXT
+- pattern_type TEXT
+- direction TEXT
+- strength INTEGER
+- confirmed BOOLEAN DEFAULT 0
+- details TEXT (JSON)
+
 **divergences_daily**
 - id INTEGER PRIMARY KEY AUTOINCREMENT
 - ticker TEXT NOT NULL, date TEXT NOT NULL
-- indicator TEXT (rsi/macd/obv/stochastic)
+- indicator TEXT (`rsi_14` / `macd_histogram` / `obv` / `stochastic`) — matches the corresponding indicators-table column name so the scorer's `indicator == "rsi_14"` filter actually fires. Prior to commit 3 of the weekly/monthly parity work this column held `"rsi"` and the scorer filtered on `"rsi_14"`, silently zero-ing the daily RSI-divergence contribution to every ticker's score. Recompute divergences (`run_calculator.py --mode full`) and re-run the scorer after deploying that fix.
 - divergence_type TEXT (regular_bullish/regular_bearish/hidden_bullish/hidden_bearish)
 - price_swing_1_date TEXT, price_swing_1_value REAL
 - price_swing_2_date TEXT, price_swing_2_value REAL
 - indicator_swing_1_value REAL, indicator_swing_2_value REAL
 - strength INTEGER (1-5)
 
+**divergences_weekly** — mirrors `divergences_daily` keyed on `week_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL, week_start TEXT NOT NULL
+- indicator TEXT
+- divergence_type TEXT
+- price_swing_1_date TEXT, price_swing_1_value REAL
+- price_swing_2_date TEXT, price_swing_2_value REAL
+- indicator_swing_1_value REAL, indicator_swing_2_value REAL
+- strength INTEGER
+
+**divergences_monthly** — mirrors `divergences_daily` keyed on `month_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL, month_start TEXT NOT NULL
+- indicator TEXT
+- divergence_type TEXT
+- price_swing_1_date TEXT, price_swing_1_value REAL
+- price_swing_2_date TEXT, price_swing_2_value REAL
+- indicator_swing_1_value REAL, indicator_swing_2_value REAL
+- strength INTEGER
+
 **crossovers_daily**
 - id INTEGER PRIMARY KEY AUTOINCREMENT
 - ticker TEXT NOT NULL, date TEXT NOT NULL
 - crossover_type TEXT (ema_9_21/ema_21_50/macd_signal)
 - direction TEXT (bullish/bearish)
+- days_ago INTEGER
+
+**crossovers_weekly** — mirrors `crossovers_daily` keyed on `week_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL, week_start TEXT NOT NULL
+- crossover_type TEXT
+- direction TEXT
+- days_ago INTEGER
+
+**crossovers_monthly** — mirrors `crossovers_daily` keyed on `month_start`
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- ticker TEXT NOT NULL, month_start TEXT NOT NULL
+- crossover_type TEXT
+- direction TEXT
 - days_ago INTEGER
 
 **gaps_daily**
@@ -649,6 +774,53 @@ Enable WAL mode on connection.
 - data_completeness TEXT (JSON)
 - key_signals TEXT (JSON array)
 - UNIQUE(ticker, date)
+
+**scores_weekly** — denormalized weekly composite snapshot for query/UI consumers (e.g., `/detail` and scatter views). NOT in the scoring critical path: the runtime `merge_timeframes()` still consumes the in-memory composite and writes the final ±100 to `scores_daily.final_score`. This table is a write-through projection so historical queries do not need to recompute weekly aggregates from `indicators_weekly`.
+- ticker TEXT NOT NULL, week_start TEXT NOT NULL
+- composite_score REAL NOT NULL — weekly composite (`weekly_score_method` controls how it's computed; see `config/scorer.json`)
+- regime TEXT (trending/ranging/volatile) — regime classification on the weekly window
+- trend_score REAL, momentum_score REAL, volume_score REAL
+- volatility_score REAL, candlestick_score REAL, structural_score REAL
+- fundamental_score REAL, macro_score REAL — inherited from the most recent `scores_daily` row whose date falls in the closed week (`<= week_start + 4 days`, i.e. Friday). NULL when no daily row exists.
+- data_completeness TEXT — JSON object (mirrors `scores_daily.data_completeness`). Stored as TEXT after commit 6's `migrate_fix_scores_completeness_type.py` correction.
+- key_signals TEXT — JSON-encoded array of contributing weekly signals
+- PRIMARY KEY (ticker, week_start)
+
+**scores_monthly** — denormalized monthly composite snapshot, same role as `scores_weekly`. Also NOT in the critical path; populated alongside the daily score so long-horizon queries don't have to recompute.
+- ticker TEXT NOT NULL, month_start TEXT NOT NULL
+- composite_score REAL NOT NULL
+- regime TEXT
+- trend_score REAL, momentum_score REAL, volume_score REAL
+- volatility_score REAL, candlestick_score REAL, structural_score REAL
+- fundamental_score REAL, macro_score REAL — inherited from the most recent `scores_daily` row whose date is `<= calendar.monthrange(year, month)[1]`-th day of the month. NULL when no daily row exists.
+- data_completeness TEXT — JSON object (corrected from REAL → TEXT in commit 6)
+- key_signals TEXT (JSON array)
+- PRIMARY KEY (ticker, month_start)
+
+#### Closed-period gate (commit 6)
+
+Both `scores_weekly` and `scores_monthly` are populated by per-ticker hooks
+in `score_ticker` (`src/scorer/main.py`, after `save_score_to_db`). The
+hooks are gated by `src/scorer/period_gate.py` so we never persist a
+snapshot of an in-progress period:
+
+```text
+is_week_closed(week_start, scoring_date)  := scoring_date >= week_start + 7 days
+is_month_closed(month_start, scoring_date) := (scoring_date.year, scoring_date.month)
+                                              > (month_start.year, month_start.month)
+```
+
+Sunday is therefore considered the LAST day of an in-progress week — the
+gate flips closed only when the next Monday begins. This matches the
+"completed period" mental model used by the UI: a user opening the dashboard
+on Sunday sees results through last Monday's `week_start`, not through the
+current `week_start` whose Monday is still less than seven days old.
+
+The persistence helpers (`src/scorer/persistence.py`) are wrapped in
+per-step try/except so a failure to write `scores_weekly` or `scores_monthly`
+cannot break the daily scoring path. Failures are logged to `alerts_log`
+(`severity='warning'`, `phase='scorer'`) and a WARNING is emitted via the
+standard logger.
 
 **signal_flips**
 - id INTEGER PRIMARY KEY AUTOINCREMENT
@@ -819,9 +991,62 @@ The weekly score uses the same scoring pipeline as daily: all 14 indicators from
 `indicators_weekly` are scored via `score_all_indicators`, rolled up into 4 categories
 (trend, momentum, volume, volatility) with magnitude-weighted averaging, then combined
 via `weekly_adaptive_weights` (regime-specific, 4 categories summing to 1.0) and the
-same expansion factor. Daily profiles are used as fallback when weekly profiles are
-unavailable. Patterns, divergences, news, fundamentals, and macro are not included
-in weekly scoring (no weekly data sources).
+same expansion factor. Profiles come from `indicator_profiles_weekly` (per-timeframe
+percentiles); when that table is empty the scorer falls back to daily profiles and logs
+INFO once per ticker. Sentiment, fundamentals, and macro are still not included on the
+weekly path — they have no weekly data sources.
+
+#### Weekly / monthly score modes (commit 5)
+
+The composite definition is gated on `weekly_score_method` and `monthly_score_method`
+in `config/scorer.json` (default `v1_4cat` for both):
+
+- **`v1_4cat`** — 4 indicator-only categories. Existing behaviour, regression-test pinned.
+- **`v2_8cat`** — adds 2 more applicable categories (candlestick, structural) sourced
+  from `patterns_weekly` / `patterns_monthly`, and mirrors daily's category wiring:
+    - **Crossovers** (from `crossovers_weekly` / `crossovers_monthly`) feed the **trend** category
+      (alongside ema_alignment, MACD, ADX).
+    - **Divergences** (from `divergences_weekly` / `divergences_monthly`) feed the
+      **momentum** category (RSI/MACD/Stoch divergences) and the **volume** category
+      (OBV divergence).
+    - Each pattern_scorer SQL query aliases `week_start AS date` (or `month_start AS date`)
+      so the scorers' recency-decay primitives — which read `row["date"]` — stay
+      timeframe-agnostic.
+
+**Both `compute_weekly_score_breakdown` and `compute_monthly_score_breakdown` return
+the same 7-key dict** (`composite_score`, 4 main categories, `candlestick_score`,
+`structural_score`). In v1 mode the candlestick/structural keys are `None`. The thin
+scalar shims `compute_weekly_score` / `compute_monthly_score` continue to return just
+the composite, keeping `src/scorer/main.py` call sites unchanged.
+
+**Structural category scope reduction.** Daily's structural rollup also folds in
+`gap_score` and `fibonacci_score`; neither has a per-timeframe data source today
+(`gaps_weekly` / `gaps_monthly` and per-timeframe Fibonacci levels are out of scope
+for commits 1–5). Weekly/monthly v2 structural therefore only includes
+`structural_pattern_score` from the corresponding `patterns_*` table.
+
+**v2 scalar differs from v1 even when cdl/struct weights are 0.0.** Because crossovers
+join the trend rollup and divergences join momentum/volume, the magnitude-weighted
+average within those categories shifts whenever a per-timeframe crossover or divergence
+exists. The default flag is `v1_4cat` so live signals are unaffected at this commit;
+flipping to `v2_8cat` requires a calibrator retrain (commit 7).
+
+**Monthly candlestick is permanently None.** The candlestick recency-decay window is
+7 days (≈5 trading days). Monthly bars are 0–30+ days behind any given `scoring_date`,
+so candlestick scores would either zero out or alias on the timing of when scoring runs
+relative to month-end. `compute_monthly_score_breakdown` therefore returns
+`candlestick_score=None` even in v2 mode. Structural patterns (28-day window) and
+divergences (42-day window) remain useful on monthly bars and ARE applied.
+
+**Closed-period invariant.** Both `compute_weekly_score_breakdown` and
+`compute_monthly_score_breakdown` load the most recent bar with `week_start <= scoring_date`
+(or `month_start <= scoring_date`) — this includes the in-progress current week/month
+when scoring runs mid-period. That is intentional: the live composite that feeds
+`merge_timeframes` must reflect today's data. Persistence to `scores_weekly` /
+`scores_monthly` (commit 6) filters to closed-period bars so historical queries see
+stable values. Live and persisted weekly scores can therefore differ for the current
+in-progress bar — by design.
+
 ### Signal: +30 to +100 = BULLISH, -30 to +30 = NEUTRAL, -100 to -30 = BEARISH
 ### Confidence: |Final Score|% + modifiers (timeframe agreement, volume confirmation, earnings proximity, VIX, etc.)
 

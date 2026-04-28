@@ -305,3 +305,177 @@ def test_detect_crossovers_for_ticker_end_to_end(
     assert count > 0
     cursor = db_connection.execute("SELECT COUNT(*) FROM crossovers_daily WHERE ticker='AAPL'")
     assert cursor.fetchone()[0] > 0
+
+
+# ── Daily regression: defaults must target crossovers_daily ──────────────────
+
+
+def _seed_indicators_with_crossover(
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    table: str,
+    date_col: str,
+) -> None:
+    """Seed an indicators_* table with a clear EMA 9/21 bullish crossover."""
+    # 5 rows, EMA 9 was below then crosses above EMA 21 on the 4th row.
+    rows = [
+        (ticker, _make_dates(5).iloc[0], 9.0, 10.0, 12.0, 0.5, 0.6),
+        (ticker, _make_dates(5).iloc[1], 9.0, 10.0, 12.0, 0.5, 0.6),
+        (ticker, _make_dates(5).iloc[2], 9.0, 10.0, 12.0, 0.5, 0.6),
+        (ticker, _make_dates(5).iloc[3], 11.0, 10.0, 12.0, 0.6, 0.5),
+        (ticker, _make_dates(5).iloc[4], 12.0, 10.0, 12.0, 0.7, 0.5),
+    ]
+    db_conn.executemany(
+        f"INSERT OR REPLACE INTO {table} "
+        f"(ticker, {date_col}, ema_9, ema_21, ema_50, macd_line, macd_signal) "
+        f"VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    db_conn.commit()
+
+
+def test_save_crossovers_daily_default_targets_daily_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_crossovers_to_db with no kwargs writes to crossovers_daily only."""
+    crossovers = [{
+        "date": "2024-01-10",
+        "crossover_type": "ema_9_21",
+        "direction": "bullish",
+        "days_ago": 0,
+    }]
+    save_crossovers_to_db(db_connection, "AAPL", crossovers)
+
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 1
+    assert weekly == 0
+    assert monthly == 0
+
+
+def test_detect_crossovers_daily_default_targets_crossovers_daily(
+    db_connection: sqlite3.Connection,
+    default_config: dict,
+) -> None:
+    """detect_crossovers_for_ticker with no kwargs writes to crossovers_daily only."""
+    _seed_indicators_with_crossover(db_connection, "AAPL", "indicators_daily", "date")
+    detect_crossovers_for_ticker(db_connection, "AAPL", default_config)
+
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert weekly == 0
+    assert monthly == 0
+
+
+# ── Weekly + Monthly parameterization ────────────────────────────────────────
+
+
+def test_save_crossovers_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_crossovers_to_db with weekly overrides persists to crossovers_weekly only."""
+    crossovers = [{
+        "date": "2024-01-15",
+        "crossover_type": "ema_9_21",
+        "direction": "bullish",
+        "days_ago": 2,
+    }]
+    save_crossovers_to_db(
+        db_connection, "AAPL", crossovers,
+        dest_table="crossovers_weekly",
+        date_column_name="week_start",
+    )
+    rows = db_connection.execute(
+        "SELECT * FROM crossovers_weekly WHERE ticker = 'AAPL'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["week_start"] == "2024-01-15"
+    assert rows[0]["direction"] == "bullish"
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 0
+
+
+def test_detect_crossovers_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+    default_config: dict,
+) -> None:
+    """detect_crossovers_for_ticker with weekly overrides reads indicators_weekly
+    and writes crossovers_weekly only."""
+    _seed_indicators_with_crossover(db_connection, "AAPL", "indicators_weekly", "week_start")
+    detect_crossovers_for_ticker(
+        db_connection, "AAPL", default_config,
+        source_indicators_table="indicators_weekly",
+        source_indicators_date_column="week_start",
+        dest_table="crossovers_weekly",
+        dest_date_column="week_start",
+    )
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert weekly >= 1
+    assert daily == 0
+
+
+def test_detect_crossovers_monthly_writes_to_monthly_mirror(
+    db_connection: sqlite3.Connection,
+    default_config: dict,
+) -> None:
+    """Same as the weekly variant for the monthly mirror."""
+    _seed_indicators_with_crossover(db_connection, "AAPL", "indicators_monthly", "month_start")
+    detect_crossovers_for_ticker(
+        db_connection, "AAPL", default_config,
+        source_indicators_table="indicators_monthly",
+        source_indicators_date_column="month_start",
+        dest_table="crossovers_monthly",
+        dest_date_column="month_start",
+    )
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM crossovers_daily WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert monthly >= 1
+    assert daily == 0
+
+
+# ── Whitelist validation ─────────────────────────────────────────────────────
+
+
+def test_save_crossovers_rejects_unknown_dest_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised dest_table must raise ValueError."""
+    with pytest.raises(ValueError):
+        save_crossovers_to_db(
+            db_connection, "AAPL", [],
+            dest_table="crossovers_daily; DROP TABLE crossovers_daily; --",
+        )
+
+
+def test_detect_crossovers_rejects_unknown_source_indicators_table(
+    db_connection: sqlite3.Connection,
+    default_config: dict,
+) -> None:
+    """Passing an unrecognised source_indicators_table must raise ValueError."""
+    with pytest.raises(ValueError):
+        detect_crossovers_for_ticker(
+            db_connection, "AAPL", default_config,
+            source_indicators_table="not_a_real_table",
+        )

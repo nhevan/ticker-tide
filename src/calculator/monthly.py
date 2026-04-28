@@ -23,14 +23,23 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
 
+from src.calculator.crossovers import detect_crossovers_for_ticker
+from src.calculator.divergences import detect_divergences_for_ticker
 from src.calculator.indicators import compute_all_indicators
+from src.calculator.patterns import detect_all_patterns_for_ticker
+from src.calculator.profiles import compute_profile_for_ticker
+from src.calculator.support_resistance import detect_support_resistance_for_ticker
+from src.calculator.swing_points import detect_swing_points_for_ticker
+from src.common.events import log_alert
 
 logger = logging.getLogger(__name__)
+
+_PHASE = "calculator-monthly"
 
 
 def build_monthly_candles(
@@ -220,9 +229,34 @@ def compute_monthly_for_ticker(
     ticker: str,
     config: dict,
     mode: str = "full",
+    *,
+    skip_event_detection: bool = False,
 ) -> int:
     """
-    End-to-end monthly computation for one ticker: build candles and compute indicators.
+    End-to-end monthly computation for one ticker.
+
+    Pipeline (per ticker, per call):
+      1. Build monthly candles from daily OHLCV and persist them.
+      2. Compute monthly indicators on those candles and persist them.
+
+    When ``skip_event_detection`` is False (default — regular tickers), the
+    following six sub-steps then run against the monthly mirror tables:
+
+      3. ``swing_points_monthly``        (depends on monthly candles)
+      4. ``support_resistance_monthly``  (depends on swing_points_monthly + candles)
+      5. ``patterns_monthly``            (candlestick + structural; needs S/R)
+      6. ``divergences_monthly``         (needs swing_points + indicators)
+      7. ``crossovers_monthly``          (needs indicators)
+      8. ``indicator_profiles_monthly``  (needs indicators)
+
+    Each of the six is wrapped in its own try/except so a single detector
+    failure does not abort the rest. Failures are logged and recorded in
+    ``alerts_log`` under ``phase='calculator-monthly'``.
+
+    When ``skip_event_detection`` is True (sector ETFs and market benchmarks),
+    all six sub-steps are skipped — matching the daily ETF policy in
+    ``run_calculator_for_etfs_and_benchmarks`` (only indicators + candles run
+    for ETFs/benchmarks).
 
     Modes:
       'full':        Load ALL daily OHLCV, rebuild all monthly candles from scratch.
@@ -230,20 +264,29 @@ def compute_monthly_for_ticker(
                      from 2 months before that date onward (to recompute the last
                      partial month), build candles for the new period. For indicator
                      computation, loads existing monthly candles + new ones so the
-                     indicator warm-up window is satisfied.
+                     indicator warm-up window is satisfied. The six event/profile
+                     sub-steps re-run on the FULL ticker history each call —
+                     none of them operate on a date window. The cost is acceptable
+                     because monthly bar counts are 22x fewer than daily.
 
     Args:
         db_conn: Open SQLite connection with ohlcv_daily, monthly_candles,
-                 and indicators_monthly tables.
+                 indicators_monthly and the six monthly mirror tables.
         ticker: Ticker symbol, e.g. 'AAPL'.
         config: Calculator config dict.
         mode: 'full' or 'incremental'. Defaults to 'full'.
+        skip_event_detection: When True, skip the six event/profile sub-steps.
+            Used for ETF/benchmark tickers to mirror the daily ETF policy.
 
     Returns:
-        Number of monthly candles created/updated.
+        Number of monthly candles created/updated. (The six sub-steps may
+        succeed, partially fail, or be skipped — see ``alerts_log`` for any
+        per-step failures.)
     """
     if mode == "incremental":
-        return _compute_monthly_incremental(db_conn, ticker, config)
+        return _compute_monthly_incremental(
+            db_conn, ticker, config, skip_event_detection=skip_event_detection,
+        )
 
     # --- full mode ---
     rows = db_conn.execute(
@@ -267,13 +310,166 @@ def compute_monthly_for_ticker(
     indicators_df = compute_monthly_indicators(monthly_df, config)
     save_monthly_indicators_to_db(db_conn, ticker, indicators_df)
 
+    if not skip_event_detection:
+        _run_monthly_subpipeline(db_conn, ticker, config)
+
     return len(monthly_df)
+
+
+def _run_monthly_subpipeline(
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    config: dict,
+) -> None:
+    """
+    Run the six event/profile detectors against the monthly mirror tables.
+
+    Each detector is wrapped in its own try/except so a single failure does
+    not block the rest. Failures are logged and recorded in ``alerts_log``
+    under ``phase='calculator-monthly'``. Mirrors per-step error handling of
+    the daily orchestrator in ``src/calculator/main.py``.
+
+    Note on profiles: ``config['profiles']['rolling_window_days']`` is tuned
+    for daily data (default 504 trading days). On monthly bars this window
+    far exceeds available history; ``compute_profile_for_ticker`` falls back
+    to using all available data with a warning, which is acceptable.
+
+    Args:
+        db_conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        config: Calculator config dict.
+    """
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+
+    swing_ok = False
+    try:
+        detect_swing_points_for_ticker(
+            db_conn,
+            ticker,
+            config,
+            source_candles_table="monthly_candles",
+            source_date_column="month_start",
+            dest_table="swing_points_monthly",
+            date_column_name="month_start",
+        )
+        swing_ok = True
+    except Exception as exc:
+        logger.error(
+            f"ticker={ticker} phase={_PHASE} step=swing_points error={exc}",
+            exc_info=True,
+        )
+        log_alert(db_conn, ticker, today, _PHASE, "error", f"swing_points failed: {exc}")
+
+    sr_ok = False
+    if swing_ok:
+        try:
+            detect_support_resistance_for_ticker(
+                db_conn,
+                ticker,
+                config,
+                source_swing_table="swing_points_monthly",
+                source_swing_date_column="month_start",
+                source_candles_table="monthly_candles",
+                source_candles_date_column="month_start",
+                dest_table="support_resistance_monthly",
+                dest_date_column="month_start",
+            )
+            sr_ok = True
+        except Exception as exc:
+            logger.error(
+                f"ticker={ticker} phase={_PHASE} step=support_resistance error={exc}",
+                exc_info=True,
+            )
+            log_alert(
+                db_conn, ticker, today, _PHASE, "error",
+                f"support_resistance failed: {exc}",
+            )
+
+    if swing_ok and sr_ok:
+        try:
+            detect_all_patterns_for_ticker(
+                db_conn,
+                ticker,
+                config,
+                source_candles_table="monthly_candles",
+                source_candles_date_column="month_start",
+                source_indicators_table="indicators_monthly",
+                source_indicators_date_column="month_start",
+                source_swing_table="swing_points_monthly",
+                source_swing_date_column="month_start",
+                source_sr_table="support_resistance_monthly",
+                dest_table="patterns_monthly",
+                dest_date_column="month_start",
+            )
+        except Exception as exc:
+            logger.error(
+                f"ticker={ticker} phase={_PHASE} step=patterns error={exc}",
+                exc_info=True,
+            )
+            log_alert(db_conn, ticker, today, _PHASE, "error", f"patterns failed: {exc}")
+
+    if swing_ok:
+        try:
+            detect_divergences_for_ticker(
+                db_conn,
+                ticker,
+                config,
+                source_swing_table="swing_points_monthly",
+                source_swing_date_column="month_start",
+                source_indicators_table="indicators_monthly",
+                source_indicators_date_column="month_start",
+                dest_table="divergences_monthly",
+                dest_date_column="month_start",
+            )
+        except Exception as exc:
+            logger.error(
+                f"ticker={ticker} phase={_PHASE} step=divergences error={exc}",
+                exc_info=True,
+            )
+            log_alert(
+                db_conn, ticker, today, _PHASE, "error", f"divergences failed: {exc}",
+            )
+
+    try:
+        detect_crossovers_for_ticker(
+            db_conn,
+            ticker,
+            config,
+            source_indicators_table="indicators_monthly",
+            source_indicators_date_column="month_start",
+            dest_table="crossovers_monthly",
+            dest_date_column="month_start",
+        )
+    except Exception as exc:
+        logger.error(
+            f"ticker={ticker} phase={_PHASE} step=crossovers error={exc}",
+            exc_info=True,
+        )
+        log_alert(db_conn, ticker, today, _PHASE, "error", f"crossovers failed: {exc}")
+
+    try:
+        compute_profile_for_ticker(
+            db_conn,
+            ticker,
+            config,
+            source_indicators_table="indicators_monthly",
+            source_indicators_date_column="month_start",
+            dest_table="indicator_profiles_monthly",
+        )
+    except Exception as exc:
+        logger.error(
+            f"ticker={ticker} phase={_PHASE} step=profiles error={exc}",
+            exc_info=True,
+        )
+        log_alert(db_conn, ticker, today, _PHASE, "error", f"profiles failed: {exc}")
 
 
 def _compute_monthly_incremental(
     db_conn: sqlite3.Connection,
     ticker: str,
     config: dict,
+    *,
+    skip_event_detection: bool = False,
 ) -> int:
     """
     Incremental monthly computation: only process new/updated months.
@@ -282,10 +478,15 @@ def _compute_monthly_incremental(
     from ~2 months before that date (to recompute the last potentially partial
     month), and merges with existing monthly candles for indicator computation.
 
+    The six event/profile sub-steps re-run on the FULL ticker history every
+    incremental call (none of them operate on a date window). With monthly
+    bar counts ~22x fewer than daily, the cost is bounded.
+
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         config: Calculator config dict.
+        skip_event_detection: When True, skip the six sub-steps (ETF policy).
 
     Returns:
         Number of new monthly candle rows saved.
@@ -298,7 +499,10 @@ def _compute_monthly_incremental(
     if latest_row is None or latest_row["latest"] is None:
         # No existing data — fall back to full mode
         logger.info(f"No existing monthly data for ticker={ticker}, running full computation")
-        return compute_monthly_for_ticker(db_conn, ticker, config, mode="full")
+        return compute_monthly_for_ticker(
+            db_conn, ticker, config, mode="full",
+            skip_event_detection=skip_event_detection,
+        )
 
     latest_month_start = latest_row["latest"]
     # Load daily OHLCV from ~2 months before the latest month_start
@@ -345,5 +549,11 @@ def _compute_monthly_incremental(
     new_month_starts = set(new_months["month_start"].tolist())
     new_indicators = indicators_df[indicators_df["month_start"].isin(new_month_starts)]
     save_monthly_indicators_to_db(db_conn, ticker, new_indicators)
+
+    # Re-detect events / profiles on the full ticker history. Each detector
+    # reads everything from its source table (no date window), so re-running
+    # is the only way to keep mirror tables consistent after new bars.
+    if not skip_event_detection:
+        _run_monthly_subpipeline(db_conn, ticker, config)
 
     return len(new_months)

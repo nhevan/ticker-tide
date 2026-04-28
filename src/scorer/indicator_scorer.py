@@ -31,25 +31,54 @@ _RSI_FIXED_OVERSOLD = 30.0
 _RSI_FIXED_OVERBOUGHT = 70.0
 
 
-def load_profile_for_ticker(db_conn: sqlite3.Connection, ticker: str) -> dict:
+_VALID_PROFILE_TABLES = {
+    "indicator_profiles",
+    "indicator_profiles_weekly",
+    "indicator_profiles_monthly",
+}
+
+
+def load_profile_for_ticker(
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    *,
+    source_table: str = "indicator_profiles",
+) -> dict:
     """
-    Load the indicator percentile profiles for a ticker from indicator_profiles.
+    Load the indicator percentile profiles for a ticker.
+
+    Reads from one of three whitelisted tables: ``indicator_profiles`` (daily,
+    default), ``indicator_profiles_weekly``, or ``indicator_profiles_monthly``.
+    Any other value for ``source_table`` raises ``ValueError`` to prevent SQL
+    injection via dynamic table names.
 
     Parameters:
-        db_conn: Open SQLite connection with row_factory=sqlite3.Row.
-        ticker: Ticker symbol.
+        db_conn:      Open SQLite connection with row_factory=sqlite3.Row.
+        ticker:       Ticker symbol.
+        source_table: Profile table name to query. Must be one of
+                      {indicator_profiles, indicator_profiles_weekly,
+                      indicator_profiles_monthly}. Default daily.
 
     Returns:
         Dict mapping indicator_name → {p5, p20, p50, p80, p95, mean, std}.
-        Returns empty dict if no profiles exist for this ticker.
+        Returns empty dict if no profiles exist for this ticker in the table.
+
+    Raises:
+        ValueError: If ``source_table`` is not in the whitelist.
     """
+    if source_table not in _VALID_PROFILE_TABLES:
+        raise ValueError(
+            f"Invalid profile source_table '{source_table}'. "
+            f"Must be one of {sorted(_VALID_PROFILE_TABLES)}."
+        )
+    # Whitelist-validated: safe to inline into the SQL string.
     rows = db_conn.execute(
-        "SELECT indicator, p5, p20, p50, p80, p95, mean, std "
-        "FROM indicator_profiles WHERE ticker = ?",
+        f"SELECT indicator, p5, p20, p50, p80, p95, mean, std "
+        f"FROM {source_table} WHERE ticker = ?",
         (ticker,),
     ).fetchall()
     if not rows:
-        logger.debug(f"{ticker}: no indicator profiles found")
+        logger.debug(f"{ticker}: no indicator profiles found in {source_table}")
         return {}
     return {
         row["indicator"]: {

@@ -59,9 +59,14 @@ from src.scorer.pattern_scorer import (
     score_structural_patterns,
 )
 from src.scorer.calibrator import build_feature_vector, calibrate_score
+from src.scorer.persistence import persist_monthly_score_row, persist_weekly_score_row
 from src.scorer.regime import detect_regime, get_atr_sma, get_current_vix, get_regime_weights
 from src.scorer.sector_adjuster import apply_sector_adjustment, compute_sector_etf_score
-from src.scorer.timeframe_merger import compute_monthly_score, compute_weekly_score, merge_timeframes
+from src.scorer.timeframe_merger import (
+    compute_monthly_score_breakdown,
+    compute_weekly_score_breakdown,
+    merge_timeframes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -632,12 +637,18 @@ def score_ticker(
     # 12. Apply sector adjustment
     daily_score = apply_sector_adjustment(raw_daily, sector_etf_score, config)
 
-    # 13. Compute weekly score
-    weekly_score = compute_weekly_score(db_conn, ticker, config, scoring_date=scoring_date, regime=regime)
+    # 13. Compute weekly score breakdown (full per-category dict; composite feeds merge)
+    weekly_breakdown = compute_weekly_score_breakdown(
+        db_conn, ticker, config, scoring_date=scoring_date, regime=regime
+    )
+    weekly_score = weekly_breakdown["composite_score"] if weekly_breakdown is not None else None
     weekly_available = weekly_score is not None
 
-    # 13b. Compute monthly score
-    monthly_score = compute_monthly_score(db_conn, ticker, config, scoring_date=scoring_date, regime=regime)
+    # 13b. Compute monthly score breakdown
+    monthly_breakdown = compute_monthly_score_breakdown(
+        db_conn, ticker, config, scoring_date=scoring_date, regime=regime
+    )
+    monthly_score = monthly_breakdown["composite_score"] if monthly_breakdown is not None else None
     monthly_available = monthly_score is not None
 
     # 14. Merge timeframes → final score (regime-adaptive weights)
@@ -768,6 +779,49 @@ def score_ticker(
 
     # 20. Save to DB
     save_score_to_db(db_conn, score)
+
+    # 20b. Persist closed-period weekly + monthly snapshots.
+    # Both helpers are no-ops on in-progress periods; per-step try/except so a
+    # persist failure cannot break the daily scoring path. Failures are logged
+    # to alerts_log + WARNING for downstream visibility.
+    if weekly_breakdown is not None:
+        try:
+            persist_weekly_score_row(
+                db_conn,
+                ticker,
+                breakdown=weekly_breakdown,
+                regime=regime,
+                data_completeness=data_completeness,
+                key_signals=key_signals,
+                scoring_date=scoring_date,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"{ticker}: scores_weekly persist failed — {exc}", exc_info=True
+            )
+            log_alert(
+                db_conn, ticker, scoring_date, _PHASE,
+                "warning", f"scores_weekly persist failed: {exc}",
+            )
+    if monthly_breakdown is not None:
+        try:
+            persist_monthly_score_row(
+                db_conn,
+                ticker,
+                breakdown=monthly_breakdown,
+                regime=regime,
+                data_completeness=data_completeness,
+                key_signals=key_signals,
+                scoring_date=scoring_date,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"{ticker}: scores_monthly persist failed — {exc}", exc_info=True
+            )
+            log_alert(
+                db_conn, ticker, scoring_date, _PHASE,
+                "warning", f"scores_monthly persist failed: {exc}",
+            )
 
     logger.info(
         f"{ticker}: {signal} (confidence={confidence_result['confidence']:.0f}%, "
@@ -979,19 +1033,31 @@ def run_historical_scoring(
     mode: str = "both",
 ) -> dict:
     """
-    Run historical scoring following Option E.
+    Run historical scoring following Option E (extended for monthly).
 
     Option E strategy:
     - Last 12 months: compute daily scores for each trading day.
-    - Months 13-60: compute weekly scores only (using weekly indicators).
+    - Months 13-60: compute weekly scores using weekly indicators.
+    - Months 13-60: compute monthly scores using monthly indicators.
+
+    Mode semantics:
+      - ``"daily"``    — daily lookback only.
+      - ``"weekly"``   — weekly lookback only.
+      - ``"monthly"``  — monthly lookback only (NEW in commit 6).
+      - ``"all"``      — daily + weekly + monthly (NEW; explicit, unambiguous).
+      - ``"both"``     — daily + weekly + monthly. Kept as a back-compat alias
+                         that NOW INCLUDES monthly. Existing callers that asked
+                         for "both" automatically get monthly coverage too —
+                         this is a deliberate semantic expansion to support
+                         the parity goal.
 
     Parameters:
         db_path: Optional database path override.
         ticker_filter: Optional ticker symbol to restrict scoring.
-        mode: One of "daily", "weekly", or "both" (Option E default).
+        mode: One of "daily", "weekly", "monthly", "both", or "all".
 
     Returns:
-        Summary dict with mode, total_scores, duration_seconds.
+        Summary dict with mode, total_scores, duration_seconds, tickers count.
     """
     load_env()
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -1002,6 +1068,7 @@ def run_historical_scoring(
     hist_cfg = config.get("historical_scoring", {})
     daily_lookback_months: int = hist_cfg.get("daily_lookback_months", 12)
     weekly_lookback_months: int = hist_cfg.get("weekly_lookback_months", 60)
+    monthly_lookback_months: int = hist_cfg.get("monthly_lookback_months", 60)
 
     db_conn = get_connection(resolved_db_path)
 
@@ -1017,7 +1084,7 @@ def run_historical_scoring(
 
     today = date.today()
 
-    if mode in ("daily", "both"):
+    if mode in ("daily", "both", "all"):
         # Build list of trading dates for the last 12 months
         daily_start = today - timedelta(days=daily_lookback_months * 31)
         daily_dates = _get_trading_dates(db_conn, daily_start.isoformat(), today.isoformat())
@@ -1043,7 +1110,7 @@ def run_historical_scoring(
                 except Exception as exc:
                     logger.error(f"{ticker} on {dt}: historical scoring failed — {exc}")
 
-    if mode in ("weekly", "both"):
+    if mode in ("weekly", "both", "all"):
         # Build list of week starts for months 13-60
         weekly_end = today - timedelta(days=daily_lookback_months * 31)
         weekly_start = today - timedelta(days=weekly_lookback_months * 31)
@@ -1069,6 +1136,43 @@ def run_historical_scoring(
                         total_scores += 1
                 except Exception as exc:
                     logger.error(f"{ticker} on {week_start}: weekly historical scoring failed — {exc}")
+
+    if mode in ("monthly", "both", "all"):
+        # Build list of month_starts. We anchor "older than the daily window"
+        # the same way weekly does — monthly composites are most useful where
+        # the daily backfill has already passed.
+        monthly_end = today - timedelta(days=daily_lookback_months * 31)
+        monthly_start = today - timedelta(days=monthly_lookback_months * 31)
+        monthly_dates = _get_monthly_dates(
+            db_conn, monthly_start.isoformat(), monthly_end.isoformat()
+        )
+
+        logger.info(
+            f"Historical monthly scoring: {len(monthly_dates)} months × {len(all_tickers)} tickers"
+        )
+
+        for month_start in monthly_dates:
+            for tc in all_tickers:
+                ticker = tc["symbol"]
+                try:
+                    # NB: month_start may be a non-trading day (e.g. Jan 1 holiday).
+                    # In that case score_ticker returns None silently — this is
+                    # an accepted sparseness; monthly historical coverage is
+                    # not guaranteed for every month_start. See OPERATIONS.md.
+                    result = score_ticker(
+                        db_conn=db_conn,
+                        ticker=ticker,
+                        ticker_config=tc,
+                        scoring_date=month_start,
+                        config=config,
+                        excluded_tickers=training_excluded,
+                    )
+                    if result is not None:
+                        total_scores += 1
+                except Exception as exc:
+                    logger.error(
+                        f"{ticker} on {month_start}: monthly historical scoring failed — {exc}"
+                    )
 
     duration = (datetime.now(tz=timezone.utc) - start_ts).total_seconds()
 
@@ -1138,3 +1242,31 @@ def _get_weekly_dates(
         (start_date, end_date),
     ).fetchall()
     return [r["week_start"] for r in rows]
+
+
+def _get_monthly_dates(
+    db_conn: sqlite3.Connection,
+    start_date: str,
+    end_date: str,
+) -> list[str]:
+    """
+    Return a sorted list of month_start dates from monthly_candles between start and end.
+
+    Mirrors ``_get_weekly_dates`` for the monthly cadence. Used by
+    ``run_historical_scoring`` to drive the per-month iteration when
+    ``mode in {"monthly", "both", "all"}``.
+
+    Parameters:
+        db_conn: Open SQLite connection.
+        start_date: Lower bound (YYYY-MM-DD), inclusive.
+        end_date: Upper bound (YYYY-MM-DD), inclusive.
+
+    Returns:
+        Sorted list of month_start date strings.
+    """
+    rows = db_conn.execute(
+        "SELECT DISTINCT month_start FROM monthly_candles "
+        "WHERE month_start >= ? AND month_start <= ? ORDER BY month_start ASC",
+        (start_date, end_date),
+    ).fetchall()
+    return [r["month_start"] for r in rows]

@@ -245,3 +245,239 @@ def test_detect_swing_points_for_ticker_end_to_end(db_connection: sqlite3.Connec
     ).fetchall()
     assert len(rows) >= 1
     assert any(r["type"] == "high" for r in rows)
+
+
+# ── Daily regression: defaults must point at daily tables ────────────────────────
+
+
+def _insert_weekly_candles(db_conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> None:
+    """Insert synthetic weekly OHLCV rows into weekly_candles using week_start key."""
+    rows = [
+        (ticker, row["date"], row["open"], row["high"], row["low"], row["close"], row["volume"])
+        for _, row in df.iterrows()
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO weekly_candles (ticker, week_start, open, high, low, close, volume) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    db_conn.commit()
+
+
+def _insert_monthly_candles(db_conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> None:
+    """Insert synthetic monthly OHLCV rows into monthly_candles using month_start key."""
+    rows = [
+        (ticker, row["date"], row["open"], row["high"], row["low"], row["close"], row["volume"])
+        for _, row in df.iterrows()
+    ]
+    db_conn.executemany(
+        "INSERT OR REPLACE INTO monthly_candles (ticker, month_start, open, high, low, close, volume) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    db_conn.commit()
+
+
+def test_detect_swing_points_daily_default_targets_swing_points_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    DAILY REGRESSION GUARD: calling detect_swing_points_for_ticker with no extra
+    kwargs must write rows ONLY to the daily swing_points table, never to the
+    weekly or monthly mirrors. This catches accidental default-flips.
+    """
+    n = 15
+    df = _make_spike_ohlcv(n, spike_index=7, spike_high=120.0, base_price=100.0)
+    _insert_ohlcv(db_connection, "AAPL", df)
+
+    config = {"swing_points": {"lookback_candles": 5}}
+    count = detect_swing_points_for_ticker(db_connection, "AAPL", config)
+    assert count >= 1
+
+    daily_rows = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    weekly_rows = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly_rows = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+
+    assert daily_rows >= 1, "default invocation should populate daily swing_points"
+    assert weekly_rows == 0, "default invocation must NOT write to swing_points_weekly"
+    assert monthly_rows == 0, "default invocation must NOT write to swing_points_monthly"
+
+
+def test_save_swing_points_daily_default_targets_daily_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_swing_points_to_db with no kwargs must write to swing_points only."""
+    swing_pts = [
+        {"date": "2024-01-10", "type": "high", "price": 110.0, "strength": 5},
+    ]
+    save_swing_points_to_db(db_connection, "AAPL", swing_pts)
+
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    weekly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points_weekly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    monthly = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points_monthly WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+
+    assert daily == 1
+    assert weekly == 0
+    assert monthly == 0
+
+
+# ── Weekly parameterization ─────────────────────────────────────────────────────
+
+
+def test_detect_swing_points_weekly_writes_to_weekly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Seed weekly_candles with a swing-high pattern. Calling
+    detect_swing_points_for_ticker with weekly source/dest/date overrides must
+    persist results to swing_points_weekly only — daily must remain empty.
+    """
+    ticker = "AAPL"
+    n = 15
+    df = _make_spike_ohlcv(n, spike_index=7, spike_high=130.0, base_price=100.0)
+    _insert_weekly_candles(db_connection, ticker, df)
+
+    config = {"swing_points": {"lookback_candles": 5}}
+    count = detect_swing_points_for_ticker(
+        db_connection,
+        ticker,
+        config,
+        source_candles_table="weekly_candles",
+        source_date_column="week_start",
+        dest_table="swing_points_weekly",
+        date_column_name="week_start",
+    )
+    assert count >= 1
+
+    weekly_rows = db_connection.execute(
+        "SELECT * FROM swing_points_weekly WHERE ticker = ?", (ticker,)
+    ).fetchall()
+    daily_rows = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+
+    assert len(weekly_rows) >= 1
+    assert daily_rows == 0
+    # The week_start column should hold the same date string seeded above.
+    assert weekly_rows[0]["week_start"] == df.iloc[7]["date"]
+    assert weekly_rows[0]["type"] == "high"
+
+
+def test_save_swing_points_weekly_uses_week_start_column(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """save_swing_points_to_db with dest_table=swing_points_weekly + date_column_name=week_start
+    persists to the weekly mirror under the week_start column."""
+    swing_pts = [
+        {"date": "2024-01-15", "type": "high", "price": 110.0, "strength": 5},
+        {"date": "2024-02-12", "type": "low", "price": 90.0, "strength": 4},
+    ]
+    count = save_swing_points_to_db(
+        db_connection,
+        "AAPL",
+        swing_pts,
+        dest_table="swing_points_weekly",
+        date_column_name="week_start",
+    )
+    assert count == 2
+
+    rows = db_connection.execute(
+        "SELECT * FROM swing_points_weekly WHERE ticker = 'AAPL' ORDER BY week_start"
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[0]["week_start"] == "2024-01-15"
+    assert rows[0]["type"] == "high"
+    # Daily must be untouched.
+    daily = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points WHERE ticker = 'AAPL'"
+    ).fetchone()["c"]
+    assert daily == 0
+
+
+# ── Monthly parameterization ────────────────────────────────────────────────────
+
+
+def test_detect_swing_points_monthly_writes_to_monthly_mirror(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """
+    Seed monthly_candles with a trough pattern. Calling
+    detect_swing_points_for_ticker with monthly overrides persists to
+    swing_points_monthly only.
+    """
+    ticker = "AAPL"
+    n = 15
+    df = _make_trough_ohlcv(n, trough_index=7, trough_low=70.0, base_price=100.0)
+    _insert_monthly_candles(db_connection, ticker, df)
+
+    config = {"swing_points": {"lookback_candles": 5}}
+    count = detect_swing_points_for_ticker(
+        db_connection,
+        ticker,
+        config,
+        source_candles_table="monthly_candles",
+        source_date_column="month_start",
+        dest_table="swing_points_monthly",
+        date_column_name="month_start",
+    )
+    assert count >= 1
+
+    monthly_rows = db_connection.execute(
+        "SELECT * FROM swing_points_monthly WHERE ticker = ?", (ticker,)
+    ).fetchall()
+    daily_rows = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+    weekly_rows = db_connection.execute(
+        "SELECT COUNT(*) AS c FROM swing_points_weekly WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"]
+
+    assert len(monthly_rows) >= 1
+    assert daily_rows == 0
+    assert weekly_rows == 0
+    assert monthly_rows[0]["month_start"] == df.iloc[7]["date"]
+    assert monthly_rows[0]["type"] == "low"
+
+
+# ── Whitelist validation ────────────────────────────────────────────────────────
+
+
+def test_save_swing_points_rejects_unknown_dest_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised dest_table must raise ValueError (no SQL injection)."""
+    swing_pts = [{"date": "2024-01-10", "type": "high", "price": 110.0, "strength": 5}]
+    with pytest.raises(ValueError):
+        save_swing_points_to_db(
+            db_connection,
+            "AAPL",
+            swing_pts,
+            dest_table="swing_points; DROP TABLE swing_points; --",
+            date_column_name="date",
+        )
+
+
+def test_detect_swing_points_rejects_unknown_source_table(
+    db_connection: sqlite3.Connection,
+) -> None:
+    """Passing an unrecognised source_candles_table must raise ValueError."""
+    config = {"swing_points": {"lookback_candles": 5}}
+    with pytest.raises(ValueError):
+        detect_swing_points_for_ticker(
+            db_connection,
+            "AAPL",
+            config,
+            source_candles_table="bogus_table",
+        )

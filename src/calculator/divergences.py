@@ -10,7 +10,21 @@ Types:
   Hidden Bullish:   price higher low  + indicator lower low  → continuation up
   Hidden Bearish:   price lower high  + indicator higher high → continuation down
 
-Applied to: RSI, MACD histogram, OBV, Stochastic %K
+Applied to: RSI (stored as ``rsi_14``), MACD histogram, OBV, Stochastic %K.
+
+The indicator name persisted in the ``indicator`` column matches the indicator
+column name in ``indicators_*`` (e.g. ``rsi_14``) so downstream filters in
+the scorer can use the same key. Historical note: prior to this commit RSI
+divergences were stored as ``"rsi"`` while the scorer filtered for
+``"rsi_14"``, silently zero-ing the daily RSI divergence score.
+
+Timeframe parametrization
+-------------------------
+``save_divergences_to_db`` and ``detect_divergences_for_ticker`` accept
+keyword-only arguments selecting the source swing table, source indicators
+table and destination divergences table + date-column name. Defaults preserve
+the original daily behaviour. Identifiers are validated against an explicit
+whitelist before being interpolated into SQL.
 """
 
 from __future__ import annotations
@@ -22,6 +36,53 @@ from datetime import date, datetime, timezone
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# ── Whitelists ──────────────────────────────────────────────────────────────────
+_ALLOWED_SOURCE_SWING_TABLES: frozenset[str] = frozenset(
+    {"swing_points", "swing_points_weekly", "swing_points_monthly"}
+)
+_ALLOWED_SOURCE_SWING_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+_ALLOWED_SOURCE_INDICATORS_TABLES: frozenset[str] = frozenset(
+    {"indicators_daily", "indicators_weekly", "indicators_monthly"}
+)
+_ALLOWED_SOURCE_INDICATORS_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+_ALLOWED_DEST_TABLES: frozenset[str] = frozenset(
+    {"divergences_daily", "divergences_weekly", "divergences_monthly"}
+)
+_ALLOWED_DEST_DATE_COLUMNS: frozenset[str] = frozenset(
+    {"date", "week_start", "month_start"}
+)
+
+
+def _validate_identifier(name: str, allowed: frozenset[str], field: str) -> str:
+    """
+    Validate that an identifier (table or column name) is in the allow-list.
+
+    SQLite parameter binding does not cover identifiers, so any table or
+    column name interpolated into SQL must be checked against an explicit
+    set of permitted values.
+
+    Args:
+        name: Candidate identifier.
+        allowed: Frozenset of permitted identifier strings.
+        field: Human-readable label used in the error message.
+
+    Returns:
+        The validated identifier verbatim.
+
+    Raises:
+        ValueError: If ``name`` is not in ``allowed``.
+    """
+    if name not in allowed:
+        raise ValueError(
+            f"Invalid {field}={name!r}; expected one of {sorted(allowed)}"
+        )
+    return name
 
 
 def get_indicator_value_at_date(
@@ -205,10 +266,16 @@ def detect_all_divergences(
     Run divergence detection for all four configured indicators.
 
     Indicators checked:
-        - RSI (column: rsi_14, name: 'rsi')
+        - RSI (column: rsi_14, name: 'rsi_14')
         - MACD histogram (column: macd_histogram, name: 'macd_histogram')
         - OBV (column: obv, name: 'obv')
         - Stochastic %K (column: stoch_k, name: 'stochastic')
+
+    Note: The RSI indicator is persisted as ``"rsi_14"`` (not ``"rsi"``) so
+    that the stored ``indicator`` column matches the column name in the
+    indicators tables. The scorer filters divergences by ``"rsi_14"`` —
+    storing ``"rsi"`` here previously caused daily RSI divergence scores to
+    be silently zero.
 
     Args:
         swing_points: List of swing point dicts.
@@ -219,7 +286,7 @@ def detect_all_divergences(
         Combined list of all divergences across all indicators.
     """
     indicator_map = [
-        ("rsi_14", "rsi"),
+        ("rsi_14", "rsi_14"),
         ("macd_histogram", "macd_histogram"),
         ("obv", "obv"),
         ("stoch_k", "stochastic"),
@@ -236,20 +303,44 @@ def detect_all_divergences(
 
 
 def save_divergences_to_db(
-    db_conn: sqlite3.Connection, ticker: str, divergences: list[dict]
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    divergences: list[dict],
+    *,
+    dest_table: str = "divergences_daily",
+    date_column_name: str = "date",
 ) -> int:
     """
     Delete existing divergences for this ticker and insert fresh ones.
+
+    The destination table and its date-column are validated against a
+    whitelist before being interpolated into SQL.
 
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         divergences: List of divergence dicts from detect_all_divergences().
+        dest_table: Destination divergences table. Must be one of
+            ``divergences_daily``, ``divergences_weekly`` or
+            ``divergences_monthly``. Defaults to ``divergences_daily``.
+        date_column_name: Name of the date / period-key column in
+            ``dest_table``. Must be one of ``date``, ``week_start`` or
+            ``month_start``. Defaults to ``date`` (daily).
 
     Returns:
         Number of rows inserted.
+
+    Raises:
+        ValueError: If either identifier is not in the allow-list.
     """
-    db_conn.execute("DELETE FROM divergences_daily WHERE ticker = ?", (ticker,))
+    safe_dest_table = _validate_identifier(
+        dest_table, _ALLOWED_DEST_TABLES, "dest_table"
+    )
+    safe_date_col = _validate_identifier(
+        date_column_name, _ALLOWED_DEST_DATE_COLUMNS, "date_column_name"
+    )
+
+    db_conn.execute(f"DELETE FROM {safe_dest_table} WHERE ticker = ?", (ticker,))
     if not divergences:
         db_conn.commit()
         return 0
@@ -271,8 +362,8 @@ def save_divergences_to_db(
         for div in divergences
     ]
     db_conn.executemany(
-        """INSERT INTO divergences_daily
-           (ticker, date, indicator, divergence_type,
+        f"""INSERT INTO {safe_dest_table}
+           (ticker, {safe_date_col}, indicator, divergence_type,
             price_swing_1_date, price_swing_1_value,
             price_swing_2_date, price_swing_2_value,
             indicator_swing_1_value, indicator_swing_2_value, strength)
@@ -280,43 +371,116 @@ def save_divergences_to_db(
         rows,
     )
     db_conn.commit()
-    logger.info("ticker=%s phase=divergences saved=%d divergences", ticker, len(rows))
+    logger.info(
+        "ticker=%s phase=divergences dest=%s saved=%d divergences",
+        ticker,
+        safe_dest_table,
+        len(rows),
+    )
     return len(rows)
 
 
 def detect_divergences_for_ticker(
-    db_conn: sqlite3.Connection, ticker: str, config: dict
+    db_conn: sqlite3.Connection,
+    ticker: str,
+    config: dict,
+    *,
+    source_swing_table: str = "swing_points",
+    source_swing_date_column: str = "date",
+    source_indicators_table: str = "indicators_daily",
+    source_indicators_date_column: str = "date",
+    dest_table: str = "divergences_daily",
+    dest_date_column: str = "date",
 ) -> int:
     """
     Load swing points and indicators from DB, detect all divergences, save to DB.
+
+    Defaults preserve the original daily behaviour: read swing points from
+    ``swing_points`` (keyed by ``date``), read indicators from
+    ``indicators_daily`` (keyed by ``date``), and write divergences to
+    ``divergences_daily`` keyed by ``date``. To run against the weekly or
+    monthly mirrors, override the keyword-only parameters.
 
     Args:
         db_conn: Open SQLite connection.
         ticker: Ticker symbol.
         config: Calculator config dict.
+        source_swing_table: Swing-points source table. Must be one of
+            ``swing_points``, ``swing_points_weekly`` or
+            ``swing_points_monthly``.
+        source_swing_date_column: Date-column name in ``source_swing_table``.
+            Must be one of ``date``, ``week_start`` or ``month_start``.
+        source_indicators_table: Indicators source table. Must be one of
+            ``indicators_daily``, ``indicators_weekly`` or
+            ``indicators_monthly``.
+        source_indicators_date_column: Date-column name in
+            ``source_indicators_table``.
+        dest_table: Destination divergences table. Must be one of
+            ``divergences_daily``, ``divergences_weekly`` or
+            ``divergences_monthly``.
+        dest_date_column: Date-column name in ``dest_table``.
 
     Returns:
         Number of divergences detected and saved.
+
+    Raises:
+        ValueError: If any identifier argument is not in the allow-list.
     """
+    safe_swing_table = _validate_identifier(
+        source_swing_table, _ALLOWED_SOURCE_SWING_TABLES, "source_swing_table"
+    )
+    safe_swing_date_col = _validate_identifier(
+        source_swing_date_column,
+        _ALLOWED_SOURCE_SWING_DATE_COLUMNS,
+        "source_swing_date_column",
+    )
+    safe_indicators_table = _validate_identifier(
+        source_indicators_table,
+        _ALLOWED_SOURCE_INDICATORS_TABLES,
+        "source_indicators_table",
+    )
+    safe_indicators_date_col = _validate_identifier(
+        source_indicators_date_column,
+        _ALLOWED_SOURCE_INDICATORS_DATE_COLUMNS,
+        "source_indicators_date_column",
+    )
+    # Validate dest identifiers eagerly so misuse fails fast.
+    _validate_identifier(dest_table, _ALLOWED_DEST_TABLES, "dest_table")
+    _validate_identifier(
+        dest_date_column, _ALLOWED_DEST_DATE_COLUMNS, "dest_date_column"
+    )
+
     swing_rows = db_conn.execute(
-        "SELECT date, type, price, strength FROM swing_points WHERE ticker = ? ORDER BY date ASC",
+        f"SELECT {safe_swing_date_col} AS date, type, price, strength "
+        f"FROM {safe_swing_table} WHERE ticker = ? "
+        f"ORDER BY {safe_swing_date_col} ASC",
         (ticker,),
     ).fetchall()
 
     if not swing_rows:
-        logger.warning("ticker=%s phase=divergences no swing points found", ticker)
+        logger.warning(
+            "ticker=%s phase=divergences source=%s no swing points found",
+            ticker,
+            safe_swing_table,
+        )
         return 0
 
     swing_points = [dict(r) for r in swing_rows]
 
     ind_rows = db_conn.execute(
-        "SELECT date, rsi_14, macd_histogram, macd_line, macd_signal, obv, stoch_k "
-        "FROM indicators_daily WHERE ticker = ? ORDER BY date ASC",
+        f"SELECT {safe_indicators_date_col} AS date, rsi_14, macd_histogram, "
+        f"macd_line, macd_signal, obv, stoch_k "
+        f"FROM {safe_indicators_table} WHERE ticker = ? "
+        f"ORDER BY {safe_indicators_date_col} ASC",
         (ticker,),
     ).fetchall()
 
     if not ind_rows:
-        logger.warning("ticker=%s phase=divergences no indicator data found", ticker)
+        logger.warning(
+            "ticker=%s phase=divergences source=%s no indicator data found",
+            ticker,
+            safe_indicators_table,
+        )
         return 0
 
     indicators_df = pd.DataFrame([dict(r) for r in ind_rows])
@@ -332,4 +496,10 @@ def detect_divergences_for_ticker(
         db_conn.commit()
         return 0
 
-    return save_divergences_to_db(db_conn, ticker, divergences)
+    return save_divergences_to_db(
+        db_conn,
+        ticker,
+        divergences,
+        dest_table=dest_table,
+        date_column_name=dest_date_column,
+    )

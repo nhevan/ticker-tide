@@ -327,10 +327,13 @@ def run_calculator_for_ticker(
             log_alert(db_conn, ticker, today, _PHASE, "error", msg)
             errors.append(msg)
 
-    # ── Step 9: Weekly candles + indicators (independent) ───────────────────
+    # ── Step 9: Weekly candles + indicators + per-timeframe sub-pipeline ────
+    # Regular tickers run the full weekly sub-pipeline (swing/SR/patterns/
+    # divergences/crossovers/profiles). ETFs and benchmarks pass
+    # skip_event_detection=True from run_calculator_for_etfs_and_benchmarks.
     try:
         result["weekly_candles"] = compute_weekly_for_ticker(
-            db_conn, ticker, config, mode=mode
+            db_conn, ticker, config, mode=mode, skip_event_detection=False,
         )
     except Exception as exc:
         msg = f"weekly failed: {exc}"
@@ -340,10 +343,10 @@ def run_calculator_for_ticker(
         log_alert(db_conn, ticker, today, _PHASE, "error", msg)
         errors.append(msg)
 
-    # ── Step 9b: Monthly candles + indicators (independent) ──────────────────
+    # ── Step 9b: Monthly candles + indicators + per-timeframe sub-pipeline ──
     try:
         result["monthly_candles"] = compute_monthly_for_ticker(
-            db_conn, ticker, config, mode=mode
+            db_conn, ticker, config, mode=mode, skip_event_detection=False,
         )
     except Exception as exc:
         msg = f"monthly failed: {exc}"
@@ -428,8 +431,10 @@ def run_calculator_for_etfs_and_benchmarks(
             continue
 
         try:
+            # ETFs/benchmarks skip the six event/profile sub-steps to mirror
+            # the daily ETF policy (only candles + indicators are persisted).
             weekly_rows = compute_weekly_for_ticker(
-                db_conn, etf_ticker, config, mode=mode
+                db_conn, etf_ticker, config, mode=mode, skip_event_detection=True,
             )
             total_weekly += weekly_rows
             logger.info(
@@ -446,7 +451,7 @@ def run_calculator_for_etfs_and_benchmarks(
 
         try:
             monthly_rows = compute_monthly_for_ticker(
-                db_conn, etf_ticker, config, mode=mode
+                db_conn, etf_ticker, config, mode=mode, skip_event_detection=True,
             )
             total_monthly += monthly_rows
             logger.info(

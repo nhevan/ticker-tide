@@ -63,7 +63,8 @@
   },
   "historical_scoring": {
     "daily_lookback_months": 12,
-    "weekly_lookback_months": 60
+    "weekly_lookback_months": 60,
+    "monthly_lookback_months": 60
   },
   "scoring": {
     "score_expansion_factor": 1.5
@@ -77,5 +78,17 @@
     "trending": { "trend": 0.50, "momentum": 0.20, "volume": 0.15, "volatility": 0.15 },
     "ranging":  { "trend": 0.25, "momentum": 0.35, "volume": 0.20, "volatility": 0.20 },
     "volatile": { "trend": 0.35, "momentum": 0.20, "volume": 0.15, "volatility": 0.30 }
+  },
+  "weekly_score_method": "v1_4cat",
+  "monthly_score_method": "v1_4cat",
+  "weekly_adaptive_weights_v2": {
+    "trending": { "trend": 0.45, "momentum": 0.25, "volume": 0.15, "volatility": 0.15, "candlestick": 0.0, "structural": 0.0 },
+    "ranging":  { "trend": 0.20, "momentum": 0.40, "volume": 0.20, "volatility": 0.20, "candlestick": 0.0, "structural": 0.0 },
+    "volatile": { "trend": 0.30, "momentum": 0.25, "volume": 0.15, "volatility": 0.30, "candlestick": 0.0, "structural": 0.0 }
+  },
+  "monthly_adaptive_weights_v2": {
+    "trending": { "trend": 0.50, "momentum": 0.20, "volume": 0.15, "volatility": 0.15, "candlestick": 0.0, "structural": 0.0 },
+    "ranging":  { "trend": 0.25, "momentum": 0.35, "volume": 0.20, "volatility": 0.20, "candlestick": 0.0, "structural": 0.0 },
+    "volatile": { "trend": 0.35, "momentum": 0.20, "volume": 0.15, "volatility": 0.30, "candlestick": 0.0, "structural": 0.0 }
   }
 }

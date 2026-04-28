@@ -17,27 +17,43 @@ from src.common.db import create_all_tables, get_connection
 ALL_TABLES = [
     "alerts_log",
     "crossovers_daily",
+    "crossovers_monthly",
+    "crossovers_weekly",
     "divergences_daily",
+    "divergences_monthly",
+    "divergences_weekly",
     "dividends",
     "earnings_calendar",
     "filings_8k",
     "fundamentals",
     "gaps_daily",
     "indicator_profiles",
+    "indicator_profiles_monthly",
+    "indicator_profiles_weekly",
     "indicators_daily",
+    "indicators_monthly",
     "indicators_weekly",
+    "monthly_candles",
     "news_articles",
     "news_daily_summary",
     "ohlcv_daily",
     "patterns_daily",
+    "patterns_monthly",
+    "patterns_weekly",
     "pipeline_events",
     "pipeline_runs",
     "scores_daily",
+    "scores_monthly",
+    "scores_weekly",
     "short_interest",
     "signal_flips",
     "splits",
     "support_resistance",
+    "support_resistance_monthly",
+    "support_resistance_weekly",
     "swing_points",
+    "swing_points_monthly",
+    "swing_points_weekly",
     "tickers",
     "treasury_yields",
     "weekly_candles",
@@ -46,18 +62,32 @@ ALL_TABLES = [
 EXPECTED_INDEXES = [
     "idx_alerts_log_date",
     "idx_crossovers_ticker_date",
+    "idx_crossovers_monthly_ticker_month_start",
+    "idx_crossovers_weekly_ticker_week_start",
     "idx_divergences_ticker_date",
+    "idx_divergences_monthly_ticker_month_start",
+    "idx_divergences_weekly_ticker_week_start",
     "idx_gaps_ticker_date",
+    "idx_indicator_profiles_monthly_ticker_indicator",
+    "idx_indicator_profiles_weekly_ticker_indicator",
     "idx_indicators_ticker_date",
     "idx_indicators_weekly_ticker",
     "idx_news_summary_ticker_date",
     "idx_news_ticker_date",
     "idx_ohlcv_ticker_date",
     "idx_patterns_ticker_date",
+    "idx_patterns_monthly_ticker_month_start",
+    "idx_patterns_weekly_ticker_week_start",
     "idx_pipeline_events",
     "idx_scores_ticker_date",
+    "idx_scores_monthly_ticker_month_start",
+    "idx_scores_weekly_ticker_week_start",
     "idx_short_interest_ticker",
+    "idx_support_resistance_monthly_ticker_month_start",
+    "idx_support_resistance_weekly_ticker_week_start",
     "idx_swing_points_ticker_date",
+    "idx_swing_points_monthly_ticker_month_start",
+    "idx_swing_points_weekly_ticker_week_start",
     "idx_weekly_candles_ticker",
 ]
 
@@ -691,6 +721,421 @@ def test_insert_alert_log(fresh_db: sqlite3.Connection) -> None:
     assert row[2] == "fetcher"
     assert row[3] == "error"
     assert row[4] == "API timeout"
+
+
+# ── Connection Tests ───────────────────────────────────────────────────────────
+
+# ── Timeframe Parity Tables (weekly + monthly) ────────────────────────────────
+
+PARITY_NEW_TABLES = [
+    "swing_points_weekly",
+    "swing_points_monthly",
+    "support_resistance_weekly",
+    "support_resistance_monthly",
+    "patterns_weekly",
+    "patterns_monthly",
+    "divergences_weekly",
+    "divergences_monthly",
+    "crossovers_weekly",
+    "crossovers_monthly",
+    "indicator_profiles_weekly",
+    "indicator_profiles_monthly",
+    "scores_weekly",
+    "scores_monthly",
+]
+
+
+def test_parity_tables_created(fresh_db: sqlite3.Connection) -> None:
+    """
+    Every weekly/monthly parity mirror table must exist after create_all_tables().
+
+    These mirror their daily counterparts and replace `date` with `week_start`
+    or `month_start` as appropriate.
+    """
+    cursor = fresh_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    )
+    existing = {row[0] for row in cursor.fetchall()}
+    for table_name in PARITY_NEW_TABLES:
+        assert table_name in existing, f"Parity table '{table_name}' was not created"
+
+
+def test_swing_points_weekly_columns(fresh_db: sqlite3.Connection) -> None:
+    """swing_points_weekly mirrors swing_points but with week_start instead of date."""
+    cursor = fresh_db.execute("PRAGMA table_info(swing_points_weekly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    assert columns == {"ticker", "week_start", "type", "price", "strength"}
+
+
+def test_swing_points_monthly_columns(fresh_db: sqlite3.Connection) -> None:
+    """swing_points_monthly mirrors swing_points but with month_start instead of date."""
+    cursor = fresh_db.execute("PRAGMA table_info(swing_points_monthly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    assert columns == {"ticker", "month_start", "type", "price", "strength"}
+
+
+def test_support_resistance_weekly_columns(fresh_db: sqlite3.Connection) -> None:
+    """support_resistance_weekly mirrors support_resistance with week_start."""
+    cursor = fresh_db.execute("PRAGMA table_info(support_resistance_weekly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "id", "ticker", "week_start", "level_price", "level_type",
+        "touch_count", "first_touch", "last_touch", "strength",
+        "broken", "broken_date",
+    }
+    assert columns == expected
+
+
+def test_support_resistance_monthly_columns(fresh_db: sqlite3.Connection) -> None:
+    """support_resistance_monthly mirrors support_resistance with month_start."""
+    cursor = fresh_db.execute("PRAGMA table_info(support_resistance_monthly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "id", "ticker", "month_start", "level_price", "level_type",
+        "touch_count", "first_touch", "last_touch", "strength",
+        "broken", "broken_date",
+    }
+    assert columns == expected
+
+
+def test_patterns_weekly_columns(fresh_db: sqlite3.Connection) -> None:
+    """patterns_weekly mirrors patterns_daily with week_start instead of date."""
+    cursor = fresh_db.execute("PRAGMA table_info(patterns_weekly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "id", "ticker", "week_start", "pattern_name", "pattern_category",
+        "pattern_type", "direction", "strength", "confirmed", "details",
+    }
+    assert columns == expected
+
+
+def test_patterns_monthly_columns(fresh_db: sqlite3.Connection) -> None:
+    """patterns_monthly mirrors patterns_daily with month_start instead of date."""
+    cursor = fresh_db.execute("PRAGMA table_info(patterns_monthly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "id", "ticker", "month_start", "pattern_name", "pattern_category",
+        "pattern_type", "direction", "strength", "confirmed", "details",
+    }
+    assert columns == expected
+
+
+def test_divergences_weekly_columns(fresh_db: sqlite3.Connection) -> None:
+    """divergences_weekly mirrors divergences_daily with week_start columns."""
+    cursor = fresh_db.execute("PRAGMA table_info(divergences_weekly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "id", "ticker", "week_start", "indicator", "divergence_type",
+        "price_swing_1_date", "price_swing_1_value",
+        "price_swing_2_date", "price_swing_2_value",
+        "indicator_swing_1_value", "indicator_swing_2_value", "strength",
+    }
+    assert columns == expected
+
+
+def test_divergences_monthly_columns(fresh_db: sqlite3.Connection) -> None:
+    """divergences_monthly mirrors divergences_daily with month_start columns."""
+    cursor = fresh_db.execute("PRAGMA table_info(divergences_monthly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "id", "ticker", "month_start", "indicator", "divergence_type",
+        "price_swing_1_date", "price_swing_1_value",
+        "price_swing_2_date", "price_swing_2_value",
+        "indicator_swing_1_value", "indicator_swing_2_value", "strength",
+    }
+    assert columns == expected
+
+
+def test_crossovers_weekly_columns(fresh_db: sqlite3.Connection) -> None:
+    """crossovers_weekly mirrors crossovers_daily with week_start instead of date."""
+    cursor = fresh_db.execute("PRAGMA table_info(crossovers_weekly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {"id", "ticker", "week_start", "crossover_type", "direction", "days_ago"}
+    assert columns == expected
+
+
+def test_crossovers_monthly_columns(fresh_db: sqlite3.Connection) -> None:
+    """crossovers_monthly mirrors crossovers_daily with month_start instead of date."""
+    cursor = fresh_db.execute("PRAGMA table_info(crossovers_monthly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {"id", "ticker", "month_start", "crossover_type", "direction", "days_ago"}
+    assert columns == expected
+
+
+def test_indicator_profiles_weekly_columns(fresh_db: sqlite3.Connection) -> None:
+    """indicator_profiles_weekly mirrors indicator_profiles."""
+    cursor = fresh_db.execute("PRAGMA table_info(indicator_profiles_weekly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "ticker", "indicator", "p5", "p20", "p50", "p80", "p95",
+        "mean", "std", "window_start", "window_end", "computed_at",
+    }
+    assert columns == expected
+
+
+def test_indicator_profiles_monthly_columns(fresh_db: sqlite3.Connection) -> None:
+    """indicator_profiles_monthly mirrors indicator_profiles."""
+    cursor = fresh_db.execute("PRAGMA table_info(indicator_profiles_monthly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "ticker", "indicator", "p5", "p20", "p50", "p80", "p95",
+        "mean", "std", "window_start", "window_end", "computed_at",
+    }
+    assert columns == expected
+
+
+def test_scores_weekly_columns(fresh_db: sqlite3.Connection) -> None:
+    """scores_weekly contains composite, regime, 8 category scores, and key_signals."""
+    cursor = fresh_db.execute("PRAGMA table_info(scores_weekly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "ticker", "week_start", "composite_score", "regime",
+        "trend_score", "momentum_score", "volume_score", "volatility_score",
+        "candlestick_score", "structural_score", "fundamental_score", "macro_score",
+        "data_completeness", "key_signals",
+    }
+    assert columns == expected
+
+
+def test_scores_monthly_columns(fresh_db: sqlite3.Connection) -> None:
+    """scores_monthly contains composite, regime, 8 category scores, and key_signals."""
+    cursor = fresh_db.execute("PRAGMA table_info(scores_monthly)")
+    columns = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "ticker", "month_start", "composite_score", "regime",
+        "trend_score", "momentum_score", "volume_score", "volatility_score",
+        "candlestick_score", "structural_score", "fundamental_score", "macro_score",
+        "data_completeness", "key_signals",
+    }
+    assert columns == expected
+
+
+def test_scores_weekly_data_completeness_is_text(fresh_db: sqlite3.Connection) -> None:
+    """
+    scores_weekly.data_completeness must be TEXT (not REAL).
+
+    Daily stores ``json.dumps(data_completeness)`` (a JSON object string), and the
+    weekly/monthly tables receive the same shape via persist_weekly_score_row /
+    persist_monthly_score_row. A REAL column would silently fail / coerce that
+    string to NULL.
+    """
+    cursor = fresh_db.execute("PRAGMA table_info(scores_weekly)")
+    types_by_name = {row[1]: row[2].upper() for row in cursor.fetchall()}
+    assert types_by_name["data_completeness"] == "TEXT"
+
+
+def test_scores_monthly_data_completeness_is_text(fresh_db: sqlite3.Connection) -> None:
+    """scores_monthly.data_completeness must be TEXT (parity with weekly + daily)."""
+    cursor = fresh_db.execute("PRAGMA table_info(scores_monthly)")
+    types_by_name = {row[1]: row[2].upper() for row in cursor.fetchall()}
+    assert types_by_name["data_completeness"] == "TEXT"
+
+
+def test_scores_weekly_pk_enforcement_plain_insert(fresh_db: sqlite3.Connection) -> None:
+    """
+    Inserting two rows with the same (ticker, week_start) into scores_weekly via
+    plain INSERT must raise IntegrityError because of the composite PK.
+    """
+    fresh_db.execute(
+        "INSERT INTO scores_weekly (ticker, week_start, composite_score) "
+        "VALUES (?, ?, ?)",
+        ("AAPL", "2026-03-16", 42.0),
+    )
+    fresh_db.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        fresh_db.execute(
+            "INSERT INTO scores_weekly (ticker, week_start, composite_score) "
+            "VALUES (?, ?, ?)",
+            ("AAPL", "2026-03-16", 50.0),
+        )
+
+
+def test_scores_weekly_pk_enforcement_replace(fresh_db: sqlite3.Connection) -> None:
+    """
+    INSERT OR REPLACE on scores_weekly with a duplicate (ticker, week_start) overwrites
+    the existing row so only one remains and its composite_score reflects the new value.
+    """
+    fresh_db.execute(
+        "INSERT INTO scores_weekly (ticker, week_start, composite_score) "
+        "VALUES (?, ?, ?)",
+        ("AAPL", "2026-03-16", 42.0),
+    )
+    fresh_db.commit()
+
+    fresh_db.execute(
+        "INSERT OR REPLACE INTO scores_weekly (ticker, week_start, composite_score) "
+        "VALUES (?, ?, ?)",
+        ("AAPL", "2026-03-16", 80.0),
+    )
+    fresh_db.commit()
+
+    rows = fresh_db.execute(
+        "SELECT composite_score FROM scores_weekly WHERE ticker = ? AND week_start = ?",
+        ("AAPL", "2026-03-16"),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == 80.0
+
+
+def test_scores_monthly_pk_enforcement_plain_insert(fresh_db: sqlite3.Connection) -> None:
+    """
+    Inserting two rows with the same (ticker, month_start) into scores_monthly via
+    plain INSERT must raise IntegrityError because of the composite PK.
+    """
+    fresh_db.execute(
+        "INSERT INTO scores_monthly (ticker, month_start, composite_score) "
+        "VALUES (?, ?, ?)",
+        ("AAPL", "2026-03-01", 30.0),
+    )
+    fresh_db.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        fresh_db.execute(
+            "INSERT INTO scores_monthly (ticker, month_start, composite_score) "
+            "VALUES (?, ?, ?)",
+            ("AAPL", "2026-03-01", 35.0),
+        )
+
+
+def test_scores_monthly_pk_enforcement_replace(fresh_db: sqlite3.Connection) -> None:
+    """
+    INSERT OR REPLACE on scores_monthly with a duplicate (ticker, month_start)
+    overwrites the existing row.
+    """
+    fresh_db.execute(
+        "INSERT INTO scores_monthly (ticker, month_start, composite_score) "
+        "VALUES (?, ?, ?)",
+        ("AAPL", "2026-03-01", 30.0),
+    )
+    fresh_db.commit()
+
+    fresh_db.execute(
+        "INSERT OR REPLACE INTO scores_monthly (ticker, month_start, composite_score) "
+        "VALUES (?, ?, ?)",
+        ("AAPL", "2026-03-01", 90.0),
+    )
+    fresh_db.commit()
+
+    rows = fresh_db.execute(
+        "SELECT composite_score FROM scores_monthly WHERE ticker = ? AND month_start = ?",
+        ("AAPL", "2026-03-01"),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == 90.0
+
+
+def test_insert_and_query_scores_weekly(fresh_db: sqlite3.Connection) -> None:
+    """
+    Insert a scores_weekly row with all fields populated and query it back.
+
+    Asserts every category score, regime, composite_score, data_completeness, and
+    key_signals match the inserted values.
+    """
+    fresh_db.execute(
+        "INSERT INTO scores_weekly "
+        "(ticker, week_start, composite_score, regime, "
+        "trend_score, momentum_score, volume_score, volatility_score, "
+        "candlestick_score, structural_score, fundamental_score, macro_score, "
+        "data_completeness, key_signals) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "AAPL", "2026-03-16",
+            58.4, "trending",
+            35.0, 25.0, 18.0, 8.0,
+            12.0, 20.0, 10.0, 5.0,
+            '{"news": true, "fundamentals": true}',
+            '["EMA crossover", "RSI above 60"]',
+        ),
+    )
+    fresh_db.commit()
+
+    row = fresh_db.execute(
+        "SELECT composite_score, regime, trend_score, momentum_score, volume_score, "
+        "volatility_score, candlestick_score, structural_score, "
+        "fundamental_score, macro_score, data_completeness, key_signals "
+        "FROM scores_weekly WHERE ticker = ? AND week_start = ?",
+        ("AAPL", "2026-03-16"),
+    ).fetchone()
+
+    assert row is not None
+    assert row[0] == 58.4
+    assert row[1] == "trending"
+    assert row[2] == 35.0
+    assert row[3] == 25.0
+    assert row[4] == 18.0
+    assert row[5] == 8.0
+    assert row[6] == 12.0
+    assert row[7] == 20.0
+    assert row[8] == 10.0
+    assert row[9] == 5.0
+    assert row[10] == '{"news": true, "fundamentals": true}'
+    assert row[11] == '["EMA crossover", "RSI above 60"]'
+
+
+def test_insert_and_query_scores_monthly(fresh_db: sqlite3.Connection) -> None:
+    """
+    Insert a scores_monthly row, query it back, and verify all values match.
+    """
+    fresh_db.execute(
+        "INSERT INTO scores_monthly "
+        "(ticker, month_start, composite_score, regime, "
+        "trend_score, momentum_score, volume_score, volatility_score, "
+        "candlestick_score, structural_score, fundamental_score, macro_score, "
+        "data_completeness, key_signals) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "AAPL", "2026-03-01",
+            72.0, "trending",
+            40.0, 30.0, 15.0, 10.0,
+            8.0, 18.0, 12.0, 4.0,
+            '{"news": false, "fundamentals": true}',
+            '["monthly MACD bullish"]',
+        ),
+    )
+    fresh_db.commit()
+
+    row = fresh_db.execute(
+        "SELECT composite_score, regime, trend_score, momentum_score, volume_score, "
+        "volatility_score, candlestick_score, structural_score, "
+        "fundamental_score, macro_score, data_completeness, key_signals "
+        "FROM scores_monthly WHERE ticker = ? AND month_start = ?",
+        ("AAPL", "2026-03-01"),
+    ).fetchone()
+
+    assert row is not None
+    assert row[0] == 72.0
+    assert row[1] == "trending"
+    assert row[2] == 40.0
+    assert row[3] == 30.0
+    assert row[4] == 15.0
+    assert row[5] == 10.0
+    assert row[6] == 8.0
+    assert row[7] == 18.0
+    assert row[8] == 12.0
+    assert row[9] == 4.0
+    assert row[10] == '{"news": false, "fundamentals": true}'
+    assert row[11] == '["monthly MACD bullish"]'
+
+
+def test_scores_weekly_composite_score_not_null(fresh_db: sqlite3.Connection) -> None:
+    """scores_weekly.composite_score is NOT NULL — inserting NULL must raise."""
+    with pytest.raises(sqlite3.IntegrityError):
+        fresh_db.execute(
+            "INSERT INTO scores_weekly (ticker, week_start, composite_score) "
+            "VALUES (?, ?, ?)",
+            ("AAPL", "2026-03-16", None),
+        )
+
+
+def test_scores_monthly_composite_score_not_null(fresh_db: sqlite3.Connection) -> None:
+    """scores_monthly.composite_score is NOT NULL — inserting NULL must raise."""
+    with pytest.raises(sqlite3.IntegrityError):
+        fresh_db.execute(
+            "INSERT INTO scores_monthly (ticker, month_start, composite_score) "
+            "VALUES (?, ?, ?)",
+            ("AAPL", "2026-03-01", None),
+        )
 
 
 # ── Connection Tests ───────────────────────────────────────────────────────────

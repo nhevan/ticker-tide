@@ -80,25 +80,27 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/fetcher/market_calendar.py` | `is_market_open_today()` via Polygon market holidays endpoint |
 | `src/calculator/main.py` | `run_calculator(mode, target_date)` — orchestrates all sub-modules per ticker; `target_date` is the trading date the fetcher processed (yesterday UTC in daily pipeline) and drives the `fetcher_done` pre-flight check |
 | `src/calculator/indicators.py` | 15 technical indicators via `ta` library → `indicators_daily` |
-| `src/calculator/weekly.py` | Weekly OHLCV candles + weekly indicators → `weekly_candles`, `indicators_weekly` |
-| `src/calculator/monthly.py` | Monthly OHLCV candles (YYYY-MM-01 key) + monthly indicators → `monthly_candles`, `indicators_monthly` |
-| `src/calculator/profiles.py` | Percentile profiles (p5–p95); sector profile blending → `indicator_profiles` |
-| `src/calculator/crossovers.py` | EMA and MACD crossover detection → `crossovers_daily` |
+| `src/calculator/weekly.py` | Weekly OHLCV candles + weekly indicators → `weekly_candles`, `indicators_weekly`. After indicator persistence, `compute_weekly_for_ticker` runs a six-step sub-pipeline against the weekly mirror tables in dependency order: swing_points → S/R → patterns → divergences → crossovers → profiles. Each step is wrapped in its own try/except (mirrors the daily orchestrator pattern) and writes to `alerts_log` on failure under `phase='calculator-weekly'`. The keyword-only `skip_event_detection: bool = False` parameter bypasses all six sub-steps for ETFs/benchmarks (matches daily ETF policy). Both `mode='full'` and `mode='incremental'` re-run the sub-pipeline on the full ticker history because the detectors do not operate on a date window — acceptable because weekly bar counts are 5x fewer than daily. |
+| `src/calculator/monthly.py` | Monthly OHLCV candles (YYYY-MM-01 key) + monthly indicators → `monthly_candles`, `indicators_monthly`. Same six-step sub-pipeline as weekly, against monthly mirror tables; failures land in `alerts_log` under `phase='calculator-monthly'`. The keyword-only `skip_event_detection: bool = False` parameter bypasses all six sub-steps for ETFs/benchmarks. Both modes re-run the sub-pipeline on the full ticker history (monthly bar counts are 22x fewer than daily, so the cost is bounded). |
+| `src/calculator/profiles.py` | Percentile profiles (p5–p95); sector profile blending → `indicator_profiles` (default daily). Timeframe-parametrized: keyword-only `source_indicators_table`, `source_indicators_date_column`, `dest_table` route reads/writes to weekly (`indicators_weekly` → `indicator_profiles_weekly`) or monthly (`indicators_monthly` → `indicator_profiles_monthly`) mirrors. Identifiers are whitelist-validated. |
+| `src/calculator/crossovers.py` | EMA and MACD crossover detection → `crossovers_daily` (default daily). Timeframe-parametrized: keyword-only `source_indicators_table`, `source_indicators_date_column`, `dest_table`, `dest_date_column` route reads/writes to weekly (`indicators_weekly` → `crossovers_weekly` keyed by `week_start`) or monthly (`indicators_monthly` → `crossovers_monthly` keyed by `month_start`) mirrors. Identifiers are whitelist-validated. |
 | `src/calculator/gaps.py` | Gap classification (Breakaway/Continuation/Exhaustion/Common) → `gaps_daily` |
-| `src/calculator/swing_points.py` | Swing high/low detection → `swing_points` |
-| `src/calculator/support_resistance.py` | Cluster swing points into S/R levels → `support_resistance` |
-| `src/calculator/patterns.py` | 7 candlestick + 7 structural patterns → `patterns_daily` |
-| `src/calculator/divergences.py` | Regular/Hidden Bullish/Bearish divergences → `divergences_daily` |
+| `src/calculator/swing_points.py` | Swing high/low detection → `swing_points` (default daily). Timeframe-parametrized: keyword-only `source_candles_table`, `source_date_column`, `dest_table`, `date_column_name` route reads/writes to weekly (`weekly_candles` → `swing_points_weekly` keyed by `week_start`) or monthly (`monthly_candles` → `swing_points_monthly` keyed by `month_start`) mirrors. Identifiers are whitelist-validated. |
+| `src/calculator/support_resistance.py` | Cluster swing points into S/R levels → `support_resistance` (default daily, keyed by `date_computed`). Timeframe-parametrized: keyword-only `source_swing_table`, `source_swing_date_column`, `source_candles_table`, `source_candles_date_column`, `dest_table`, `dest_date_column` route reads/writes to weekly mirrors (`swing_points_weekly` + `weekly_candles` → `support_resistance_weekly` keyed by `week_start`) or monthly mirrors (`swing_points_monthly` + `monthly_candles` → `support_resistance_monthly` keyed by `month_start`). Identifiers are whitelist-validated. |
+| `src/calculator/patterns.py` | 7 candlestick + 7 structural patterns → `patterns_daily` (default daily). Trend-context window for hammer / shooting-star is read from `config["patterns"]["trend_context_candles"]` (default 5). Timeframe-parametrized: keyword-only `source_candles_table`, `source_candles_date_column`, `source_indicators_table`, `source_indicators_date_column`, `source_swing_table`, `source_swing_date_column`, `source_sr_table`, `dest_table`, `dest_date_column` route reads/writes to weekly or monthly mirror tables. Identifiers are whitelist-validated. |
+| `src/calculator/divergences.py` | Regular/Hidden Bullish/Bearish divergences → `divergences_daily` (default daily). Timeframe-parametrized: keyword-only `source_swing_table`, `source_swing_date_column`, `source_indicators_table`, `source_indicators_date_column`, `dest_table`, `dest_date_column` route reads/writes to weekly (`swing_points_weekly` + `indicators_weekly` → `divergences_weekly`) or monthly mirrors. The persisted `indicator` value for RSI is `"rsi_14"` (matches the indicators-table column name and the scorer's filter). Identifiers are whitelist-validated. |
 | `src/calculator/fibonacci.py` | Fibonacci retracement levels (on-the-fly; not stored) |
 | `src/calculator/relative_strength.py` | RS vs SPY and sector ETF (on-the-fly; not stored) |
 | `src/calculator/news_aggregator.py` | `news_articles` → `news_daily_summary` per ticker per day |
-| `src/scorer/main.py` | `run_scorer()` and `run_historical_scoring()`; per-ticker `score_ticker()` pipeline. `final_score` in `scores_daily` is always the ±100 merged timeframe composite; `calibrated_score` is the ridge prediction (≈ ±2–15%) or NULL; `effective_score` (local only, never persisted) drives signal classification. |
+| `src/scorer/main.py` | `run_scorer()` and `run_historical_scoring()`; per-ticker `score_ticker()` pipeline. `final_score` in `scores_daily` is always the ±100 merged timeframe composite; `calibrated_score` is the ridge prediction (≈ ±2–15%) or NULL; `effective_score` (local only, never persisted) drives signal classification. After `save_score_to_db`, `score_ticker` calls `persist_weekly_score_row` + `persist_monthly_score_row` (commit 6) to write closed-period snapshots; per-step try/except + `alerts_log` warning ensure persistence failures cannot break daily scoring. `run_historical_scoring(mode=...)` accepts `daily`, `weekly`, `monthly`, `both` (back-compat alias — now also covers monthly), and `all`. Helpers `_get_weekly_dates` / `_get_monthly_dates` drive the respective iterations. |
+| `src/scorer/period_gate.py` | Closed-period gate helpers used by the persistence layer. `is_week_closed(week_start, scoring_date)` returns True when `scoring_date >= week_start + 7 days` (Sunday is mid-week, Monday closes). `is_month_closed(month_start, scoring_date)` returns True when `scoring_date` falls in any later `(year, month)` than `month_start`. |
+| `src/scorer/persistence.py` | `persist_weekly_score_row` + `persist_monthly_score_row` — closed-period writers for `scores_weekly` / `scores_monthly`. Resolve the latest `indicators_*.{week_start,month_start} <= scoring_date`, apply the closed-period gate, inherit `fundamental_score` + `macro_score` from the most recent in-period `scores_daily` row via `_inherit_fundamental_macro` (period_end = `week_start + 4 days` for weekly, `calendar.monthrange(year, month)[1]` for monthly), and write via `INSERT OR REPLACE`. `data_completeness` and `key_signals` are JSON-serialised to TEXT. |
 | `src/scorer/regime.py` | Trending/Ranging/Volatile detection from ADX, ATR, VIX; EMA stack alignment override (close/EMA9/EMA21/EMA50 fully aligned → Trending even with low ADX) |
-| `src/scorer/indicator_scorer.py` | Maps indicator values → [−100, +100] using percentile profiles; momentum oscillators (RSI, Stochastic %K, CCI, Williams %R) accept a `regime` parameter — `"trending"` flips to `higher_is_bullish=True` (trend-continuation), `"ranging"`/`"volatile"` use mean-reversion |
+| `src/scorer/indicator_scorer.py` | Maps indicator values → [−100, +100] using percentile profiles; momentum oscillators (RSI, Stochastic %K, CCI, Williams %R) accept a `regime` parameter — `"trending"` flips to `higher_is_bullish=True` (trend-continuation), `"ranging"`/`"volatile"` use mean-reversion. `load_profile_for_ticker(db_conn, ticker, *, source_table="indicator_profiles")` reads from a whitelisted profile table (`indicator_profiles`, `indicator_profiles_weekly`, or `indicator_profiles_monthly`); raises `ValueError` for any other value (mirrors the parametrization pattern used in commit 2/3). |
 | `src/scorer/pattern_scorer.py` | Scores patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
 | `src/scorer/category_scorer.py` | Aggregates component scores into 9 categories; applies adaptive weights |
 | `src/scorer/sector_adjuster.py` | Sector ETF trend score → ±5 to ±10 adjustment on final score |
-| `src/scorer/timeframe_merger.py` | 3-way merge of daily + weekly + monthly into composite score using regime-adaptive weights (trending: 0.10d/0.50w/0.40m, ranging: 0.60d/0.30w/0.10m, volatile: 0.25d/0.45w/0.30m); weights renormalized when a timeframe is absent; `compute_weekly_score()` and `compute_monthly_score()` score their respective indicator tables; requires `scoring_date` and `regime` |
+| `src/scorer/timeframe_merger.py` | 3-way merge of daily + weekly + monthly into composite score using regime-adaptive weights (trending: 0.10d/0.50w/0.40m, ranging: 0.60d/0.30w/0.10m, volatile: 0.25d/0.45w/0.30m); weights renormalized when a timeframe is absent. Public scoring API: `compute_weekly_score_breakdown()` / `compute_monthly_score_breakdown()` return a 7-key dict (`composite_score`, 4 main categories, `candlestick_score`, `structural_score`); thin shims `compute_weekly_score()` / `compute_monthly_score()` return just the composite scalar (used by `src/scorer/main.py`). Mode is gated on `config['weekly_score_method']` / `config['monthly_score_method']` ∈ {`v1_4cat`, `v2_8cat`} — defaults to `v1_4cat`. v2 also reads `patterns_*`, `divergences_*`, `crossovers_*` (with `week_start AS date` / `month_start AS date` aliasing) and routes them through `pattern_scorer`. Profiles come from `indicator_profiles_weekly` / `_monthly` with daily fallback (logs INFO once per ticker). Requires `scoring_date` and `regime`. Monthly candlestick category is permanently `None` (decay-window mismatch). |
 | `src/scorer/calibrator.py` | Rolling ridge regression calibrator: trains on recent signals + realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 17 features (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score + monthly_score); cold-start fallback when < 30 samples; `calibrate_score()` is the main entry point |
 | `src/scorer/confidence.py` | Signal classification; confidence modifiers; `data_completeness`; `key_signals` |
 | `src/scorer/flip_detector.py` | Detects signal direction changes → `signal_flips` |
@@ -257,6 +259,132 @@ SQLite does not support `ALTER TABLE` to modify a PRIMARY KEY. Use the create-ne
 5. Run the migration: `python scripts/migrate_<description>.py`
 
 **Example:** `scripts/migrate_news_articles_pk.py` changes `news_articles` PRIMARY KEY from `id TEXT` to `(id, ticker)` so that the same Polygon article can be stored independently for each ticker that mentions it.
+
+### Weekly / monthly parity tables
+
+`src/common/db.py` defines a set of weekly and monthly mirror tables that share the same column shape as their daily counterparts but key on `week_start` or `month_start` instead of `date`. They are created by `setup_db.py` (or backfilled with `scripts/migrate_add_timeframe_parity.py` for already-deployed databases):
+
+| Daily table | Weekly mirror | Monthly mirror |
+|---|---|---|
+| `swing_points` | `swing_points_weekly` | `swing_points_monthly` |
+| `support_resistance` | `support_resistance_weekly` | `support_resistance_monthly` |
+| `patterns_daily` | `patterns_weekly` | `patterns_monthly` |
+| `divergences_daily` | `divergences_weekly` | `divergences_monthly` |
+| `crossovers_daily` | `crossovers_weekly` | `crossovers_monthly` |
+| `indicator_profiles` | `indicator_profiles_weekly` | `indicator_profiles_monthly` |
+
+Two new score snapshot tables are also part of this set:
+
+- `scores_weekly` — composite PRIMARY KEY `(ticker, week_start)`. Stores the weekly composite, regime, eight category scores, `data_completeness`, and a JSON `key_signals` array.
+- `scores_monthly` — same shape, PRIMARY KEY `(ticker, month_start)`.
+
+Each parity table has a matching `idx_<table>_ticker_<datecol>` index. Adding a new mirror table follows the standard "Add a new table" recipe above; just remember to:
+
+1. Add the `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` to `_build_schema_statements()`.
+2. Append the table to `tests/test_common/test_db.py` (`ALL_TABLES`, `EXPECTED_INDEXES`, and a column-shape test).
+3. Add the table + index DDL to `scripts/migrate_add_timeframe_parity.py` so already-deployed databases pick it up.
+4. Run `python scripts/setup_db.py` (or the migration) and re-run the test suite.
+
+#### Timeframe-parametrized calculator modules
+
+Six calculator modules accept keyword-only timeframe overrides. Defaults preserve daily behaviour; pass weekly/monthly identifiers to drive the mirror tables. All identifiers are validated against an internal whitelist — passing an unknown name raises `ValueError` before any SQL runs (SQLite parameter binding does not cover identifiers, hence the explicit allow-list pattern).
+
+| Module | Function(s) | Daily defaults | Weekly mirrors | Monthly mirrors |
+|---|---|---|---|---|
+| `swing_points.py` | `detect_swing_points_for_ticker`, `save_swing_points_to_db` | `ohlcv_daily` → `swing_points` keyed by `date` | `weekly_candles` → `swing_points_weekly` keyed by `week_start` | `monthly_candles` → `swing_points_monthly` keyed by `month_start` |
+| `support_resistance.py` | `detect_support_resistance_for_ticker`, `save_sr_levels_to_db` | `swing_points` + `ohlcv_daily` → `support_resistance` keyed by `date_computed` | `swing_points_weekly` + `weekly_candles` → `support_resistance_weekly` keyed by `week_start` | `swing_points_monthly` + `monthly_candles` → `support_resistance_monthly` keyed by `month_start` |
+| `patterns.py` | `detect_all_patterns_for_ticker`, `save_patterns_to_db` | `ohlcv_daily` + `indicators_daily` + `swing_points` + `support_resistance` → `patterns_daily` keyed by `date` | weekly equivalents → `patterns_weekly` keyed by `week_start` | monthly equivalents → `patterns_monthly` keyed by `month_start` |
+| `divergences.py` | `detect_divergences_for_ticker`, `save_divergences_to_db` | `swing_points` + `indicators_daily` → `divergences_daily` keyed by `date` | `swing_points_weekly` + `indicators_weekly` → `divergences_weekly` keyed by `week_start` | `swing_points_monthly` + `indicators_monthly` → `divergences_monthly` keyed by `month_start` |
+| `crossovers.py` | `detect_crossovers_for_ticker`, `save_crossovers_to_db` | `indicators_daily` → `crossovers_daily` keyed by `date` | `indicators_weekly` → `crossovers_weekly` keyed by `week_start` | `indicators_monthly` → `crossovers_monthly` keyed by `month_start` |
+| `profiles.py` | `compute_profile_for_ticker`, `compute_sector_profile`, `compute_all_profiles` | `indicators_daily` → `indicator_profiles` | `indicators_weekly` → `indicator_profiles_weekly` | `indicators_monthly` → `indicator_profiles_monthly` |
+
+Note: the `indicator_profiles*` tables have no per-row date column — only `window_start` / `window_end` text fields — so the profile callers expose only `source_indicators_table` / `source_indicators_date_column` / `dest_table` (no destination date-column override).
+
+```python
+from src.calculator.swing_points import detect_swing_points_for_ticker
+from src.calculator.support_resistance import detect_support_resistance_for_ticker
+from src.calculator.patterns import detect_all_patterns_for_ticker
+from src.calculator.divergences import detect_divergences_for_ticker
+from src.calculator.crossovers import detect_crossovers_for_ticker
+from src.calculator.profiles import compute_profile_for_ticker
+
+# Daily (defaults — original behaviour, no kwargs needed):
+detect_swing_points_for_ticker(db_conn, ticker, config)
+detect_support_resistance_for_ticker(db_conn, ticker, config)
+detect_all_patterns_for_ticker(db_conn, ticker, config)
+detect_divergences_for_ticker(db_conn, ticker, config)
+detect_crossovers_for_ticker(db_conn, ticker, config)
+compute_profile_for_ticker(db_conn, ticker, config)
+
+# Weekly (selected examples — full set follows the same pattern):
+detect_swing_points_for_ticker(
+    db_conn, ticker, config,
+    source_candles_table="weekly_candles",
+    source_date_column="week_start",
+    dest_table="swing_points_weekly",
+    date_column_name="week_start",
+)
+detect_all_patterns_for_ticker(
+    db_conn, ticker, config,
+    source_candles_table="weekly_candles",
+    source_candles_date_column="week_start",
+    source_indicators_table="indicators_weekly",
+    source_indicators_date_column="week_start",
+    source_swing_table="swing_points_weekly",
+    source_swing_date_column="week_start",
+    source_sr_table="support_resistance_weekly",
+    dest_table="patterns_weekly",
+    dest_date_column="week_start",
+)
+detect_divergences_for_ticker(
+    db_conn, ticker, config,
+    source_swing_table="swing_points_weekly",
+    source_swing_date_column="week_start",
+    source_indicators_table="indicators_weekly",
+    source_indicators_date_column="week_start",
+    dest_table="divergences_weekly",
+    dest_date_column="week_start",
+)
+detect_crossovers_for_ticker(
+    db_conn, ticker, config,
+    source_indicators_table="indicators_weekly",
+    source_indicators_date_column="week_start",
+    dest_table="crossovers_weekly",
+    dest_date_column="week_start",
+)
+compute_profile_for_ticker(
+    db_conn, ticker, config,
+    source_indicators_table="indicators_weekly",
+    source_indicators_date_column="week_start",
+    dest_table="indicator_profiles_weekly",
+)
+
+# Monthly: substitute monthly_candles / indicators_monthly / swing_points_monthly /
+# support_resistance_monthly / month_start / *_monthly mirror tables.
+```
+
+The `*_to_db` save helpers (`save_swing_points_to_db`, `save_sr_levels_to_db`, `save_patterns_to_db`, `save_divergences_to_db`, `save_crossovers_to_db`) carry the matching `dest_table` / `date_column_name` keyword-only parameters with the same daily defaults.
+
+#### Per-timeframe sub-pipeline (commit 4)
+
+In production, callers do **not** invoke the six parameterized detectors directly for the weekly/monthly timeframes. Instead, `compute_weekly_for_ticker(...)` and `compute_monthly_for_ticker(...)` run the sub-pipeline internally after candles + indicators have been persisted:
+
+1. `swing_points_weekly` / `swing_points_monthly`
+2. `support_resistance_weekly` / `support_resistance_monthly` (depends on 1)
+3. `patterns_weekly` / `patterns_monthly` (depends on 1 + 2)
+4. `divergences_weekly` / `divergences_monthly` (depends on 1)
+5. `crossovers_weekly` / `crossovers_monthly`
+6. `indicator_profiles_weekly` / `indicator_profiles_monthly`
+
+Each sub-step is wrapped in its own try/except — a single detector failure logs to `alerts_log` (`phase='calculator-weekly'` or `'calculator-monthly'`) but does not block the rest. Both `mode='full'` and `mode='incremental'` re-run all six sub-steps against the **full ticker history** every call, because none of the detectors operate on a date window. The cost is acceptable: weekly bar counts are 5× fewer than daily and monthly bar counts 22× fewer.
+
+`compute_*_for_ticker(..., skip_event_detection=True)` bypasses all six sub-steps. This matches the daily ETF policy: in `run_calculator_for_etfs_and_benchmarks`, ETFs and market benchmarks only get candles + indicators (no swing/SR/patterns/divergences/crossovers/profiles). Regular-ticker callers in `run_calculator_for_one_ticker` pass `skip_event_detection=False` (the default) explicitly for documentation clarity.
+
+Note: `config['profiles']['rolling_window_days']` is daily-tuned (default 504 trading days). On weekly/monthly bars this exceeds available history; `compute_profile_for_ticker` falls back to using all available data with a warning, which is acceptable.
+
+#### Latent rsi_14 divergence bug (fixed)
+
+Prior to commit 3 of the weekly/monthly parity work, `detect_all_divergences()` stored divergences for the RSI indicator under `indicator='rsi'` while the scorer's `_load_divergences` filter looked for `indicator='rsi_14'`. The scorer therefore silently contributed zero to the daily RSI-divergence score for every ticker. The fix standardises the persisted indicator name to `'rsi_14'` (matching the indicators-table column name) so the scorer filter actually matches. Regression tests live in `tests/test_calculator/test_divergences.py::test_rsi_divergence_stored_indicator_is_rsi_14` and `tests/test_calculator/test_divergences.py::test_scorer_filter_picks_up_rsi_14_divergence`. After deploying this commit, recompute divergences (`python scripts/run_calculator.py --mode full`) so that historical rows are rewritten under the new value before re-running the scorer.
 
 ---
 
