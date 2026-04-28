@@ -846,8 +846,8 @@ All config comes from `config/notifier.json → ai_reasoner` (model, max_tokens,
 |---|---|
 | `build_ticker_context(db_conn, ticker, score, scoring_date)` | Queries all relevant DB data (indicators, patterns, divergences, crossovers, fundamentals, news, short interest, signal flips) and computes Fibonacci + RS on-the-fly. Returns a richly formatted string for Claude. |
 | `build_market_context(db_conn, scoring_date)` | Builds overall market context: VIX level/interpretation, SPY/QQQ trend, 10Y treasury yield, sector leaders/laggards. |
-| `build_prompt_for_ticker(ticker_context, market_context, is_flip)` | Assembles the full Claude prompt with system role, format instruction (2-4 sentences), and optional flip-change instruction. |
-| `build_prompt_for_daily_summary(bullish, bearish, flips, market_context)` | Builds prompt for a cohesive 3-5 sentence daily briefing covering all qualifying tickers. |
+| `build_prompt_for_ticker(ticker_context, market_context, is_flip)` | Assembles the full Claude prompt with system role, format instruction (1-2 sentences), and optional flip-change instruction. |
+| `build_prompt_for_daily_summary(bullish, bearish, flips, market_context)` | Builds prompt for a cohesive 2-3 sentence daily briefing covering all qualifying tickers. |
 | `call_claude(prompt, config)` | Calls `anthropic.Anthropic().messages.create()`; retries on `RateLimitError` (max 3 attempts, exponential backoff via tenacity); returns fallback string on any error — never crashes the pipeline. |
 | `generate_ticker_reasoning(db_conn, ticker, score, market_context, config, is_flip)` | Orchestrates context → prompt → Claude for one ticker. Returns Claude's analysis string. |
 | `generate_daily_summary(db_conn, bullish, bearish, flips, market_context, config)` | Calls Claude for the daily summary. Returns `"No significant signals today."` if no qualifying tickers. |

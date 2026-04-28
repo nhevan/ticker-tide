@@ -14,7 +14,7 @@ Example output for a single ticker:
    disagree."
 
 The reasoner generates:
-  1. Per-ticker analysis (2-4 sentences each) for qualifying tickers
+  1. Per-ticker analysis (1-2 sentences each) for qualifying tickers
   2. A daily summary covering the overall market + top signals + flips
 """
 
@@ -922,7 +922,7 @@ def build_prompt_for_ticker(
         "You are an expert technical and fundamental analyst reviewing stock signals\n"
         "from a quantitative scoring engine. Your job is to INTERPRET the signals,\n"
         "not just summarize them.\n\n"
-        "For each stock, provide a concise analysis (2-4 sentences) that:\n"
+        "For each stock, provide a concise analysis (1-2 sentences) that:\n"
         "1. States the overall signal direction and why\n"
         "2. Identifies the most important technical factor driving the signal\n"
         "3. Notes any conflicting signals or risks\n"
@@ -934,7 +934,7 @@ def build_prompt_for_ticker(
         f"{market_context}\n\n"
         "STOCK DATA:\n"
         f"{ticker_context}\n\n"
-        "Provide your analysis in 2-4 sentences. Be concise and actionable."
+        "Provide your analysis in 1-2 sentences. Be concise and actionable."
     )
 
 
@@ -1006,7 +1006,7 @@ def build_prompt_for_daily_summary(
     Build the prompt for the daily market summary.
 
     Compiles all qualifying tickers (bullish, bearish, flips) into a structured
-    prompt asking Claude to write cohesive 3-5 sentence prose covering market
+    prompt asking Claude to write cohesive 2-3 sentence prose covering market
     tone, strongest signals, notable flips, and sector themes.
 
     Parameters:
@@ -1033,7 +1033,7 @@ def build_prompt_for_daily_summary(
         f"{bearish_str}\n\n"
         f"SIGNAL CHANGES ({len(flips)}):\n"
         f"{flips_str}\n\n"
-        "Write a 3-5 sentence market summary that:\n"
+        "Write a 2-3 sentence market summary that:\n"
         "1. Notes the overall market tone\n"
         "2. Highlights the strongest conviction signals (highest confidence)\n"
         "3. Mentions any notable signal flips and what they suggest\n"
@@ -1142,7 +1142,7 @@ def generate_ticker_reasoning(
         is_flip: If True, includes flip-specific instructions in the prompt.
 
     Returns:
-        Claude's analysis string (2-4 sentences), or the fallback string on error.
+        Claude's analysis string (1-2 sentences), or the fallback string on error.
     """
     scoring_date = score.get("date", "")
     ticker_context = build_ticker_context(db_conn, ticker, score, scoring_date)
@@ -1173,7 +1173,7 @@ def generate_daily_summary(
         config: Notifier config dict.
 
     Returns:
-        Claude's 3-5 sentence daily summary, or 'No significant signals today.'
+        Claude's 2-3 sentence daily summary, or 'No significant signals today.'
     """
     if not bullish_tickers and not bearish_tickers and not flips:
         return "No significant signals today."

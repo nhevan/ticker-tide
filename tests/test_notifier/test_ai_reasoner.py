@@ -394,7 +394,7 @@ class TestBuildPromptForTicker:
         # Asks for reasoning, not summarizing
         assert "interpret" in prompt.lower() or "reason" in prompt.lower() or "interpret" in prompt.lower()
         # Output format guidance
-        assert "2-4 sentences" in prompt or "2–4" in prompt
+        assert "1-2 sentences" in prompt or "1–2" in prompt
 
     def test_build_prompt_single_ticker_no_flip_flag(self) -> None:
         """Without is_flip, prompt does NOT contain the flip instruction."""
