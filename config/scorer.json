@@ -79,8 +79,8 @@
     "ranging":  { "trend": 0.25, "momentum": 0.35, "volume": 0.20, "volatility": 0.20 },
     "volatile": { "trend": 0.35, "momentum": 0.20, "volume": 0.15, "volatility": 0.30 }
   },
-  "weekly_score_method": "v1_4cat",
-  "monthly_score_method": "v1_4cat",
+  "weekly_score_method": "v2_8cat",
+  "monthly_score_method": "v2_8cat",
   "calibrator_acceptance": {
     "max_mean_delta": 5.0,
     "max_std_delta": 8.0,
