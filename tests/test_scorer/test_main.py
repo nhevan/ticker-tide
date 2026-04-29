@@ -1284,7 +1284,7 @@ class TestScoreTickerPersistsTimeframeRows:
         conn.execute(
             "INSERT OR REPLACE INTO weekly_candles "
             "(ticker, week_start, open, high, low, close, volume) "
-            "VALUES (?, ?, 99.0, 102.0, 98.0, 100.0, 5_000_000)",
+            "VALUES (?, ?, 99.0, 102.0, 98.0, 100.0, 5000000)",
             (ticker, week_start),
         )
         conn.commit()

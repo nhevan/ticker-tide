@@ -65,6 +65,15 @@ def _seed_calibrated(
     conn.close()
 
 
+@pytest.fixture(autouse=True)
+def _disable_dotenv_in_cli(monkeypatch):
+    """Prevent the CLI's load_dotenv() from picking up the operator's real
+    .env credentials and breaking hermeticity. Without this, tests that
+    call monkeypatch.delenv('TELEGRAM_BOT_TOKEN') silently fail on hosts
+    where .env contains a real token (e.g. prod EC2)."""
+    monkeypatch.setattr(gate_cli, "load_dotenv", lambda *a, **k: False)
+
+
 @pytest.fixture
 def stub_telegram(monkeypatch) -> list[tuple[Any, Any, Any]]:
     """
