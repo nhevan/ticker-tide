@@ -428,20 +428,6 @@ re-running the calibrator — only the acceptance check. Adding/removing keys
 in this block does, however, require a redeploy because
 `scripts/check_calibrator_acceptance.py` reads the block on every invocation.
 
-### Timeframe weights (regime-adaptive)
-
-Regime-specific daily/weekly blending weights. In trending markets, weekly dominates;
-in ranging markets, daily dominates; volatile is 50/50.
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `timeframe_weights.trending.daily` | float | `0.2` | Daily weight in trending regime |
-| `timeframe_weights.trending.weekly` | float | `0.8` | Weekly weight in trending regime |
-| `timeframe_weights.ranging.daily` | float | `0.8` | Daily weight in ranging regime |
-| `timeframe_weights.ranging.weekly` | float | `0.2` | Weekly weight in ranging regime |
-| `timeframe_weights.volatile.daily` | float | `0.5` | Daily weight in volatile regime |
-| `timeframe_weights.volatile.weekly` | float | `0.5` | Weekly weight in volatile regime |
-
 ---
 
 ## config/notifier.json

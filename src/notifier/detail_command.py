@@ -91,38 +91,57 @@ def parse_detail_command(
 # Section builders
 # ---------------------------------------------------------------------------
 
-def build_scoring_chain(score: dict) -> str:
+def build_scoring_chain(score: dict, scorer_cfg: dict) -> str:
     """
     Format the scoring chain section showing how the final score was computed.
 
-    Shows daily raw score, weekly score, the weighted merge, the resulting signal,
-    and the confidence with modifier breakdown.
+    Uses regime-adaptive 3-way weights from scorer_cfg["timeframe_weights"].
+    Falls back to "trending" weights if regime is missing or unknown, logging
+    a WARNING only when the regime value is present but not recognised.
 
     Parameters:
-        score: Score dict from scores_daily (all columns as keys).
+        score: Score dict from scores_daily (must contain daily_score,
+            weekly_score, monthly_score, final_score, signal, confidence,
+            regime).
+        scorer_cfg: Full scorer config dict containing "timeframe_weights"
+            nested by regime name.
 
     Returns:
         Formatted string section starting with '═══ SCORING CHAIN ═══'.
     """
-    daily = score.get("daily_score", 0.0) or 0.0
-    weekly = score.get("weekly_score", 0.0) or 0.0
-    final = score.get("final_score", 0.0) or 0.0
+    daily = score.get("daily_score") or 0.0
+    weekly = score.get("weekly_score") or 0.0
+    monthly = score.get("monthly_score") or 0.0
+    final = score.get("final_score") or 0.0
     signal = score.get("signal", "NEUTRAL")
-    confidence = score.get("confidence", 0.0) or 0.0
-    regime = score.get("regime", "unknown")
+    confidence = score.get("confidence") or 0.0
+    raw_regime = score.get("regime")
+    regime = raw_regime or "trending"
 
-    scorer_cfg = load_config("scorer")
-    weights = scorer_cfg.get("timeframe_weights", {})
-    daily_weight: float = weights.get("daily", 0.2)
-    weekly_weight: float = weights.get("weekly", 0.8)
+    timeframe_weights = scorer_cfg.get("timeframe_weights", {})
+    if regime not in timeframe_weights:
+        if raw_regime is not None:
+            logger.warning(
+                "phase=detail_command unknown regime %r in scoring chain; "
+                "falling back to 'trending'",
+                raw_regime,
+            )
+        regime = "trending"
 
-    merged = daily_weight * daily + weekly_weight * weekly
+    weights = timeframe_weights.get(regime, {})
+    w_daily: float = weights.get("daily", 0.0)
+    w_weekly: float = weights.get("weekly", 0.0)
+    w_monthly: float = weights.get("monthly", 0.0)
+
+    merged = w_daily * daily + w_weekly * weekly + w_monthly * monthly
 
     lines = [
         "═══ SCORING CHAIN ═══",
         f"  Daily raw:    {daily:+.1f}",
         f"  Weekly:       {weekly:+.1f}",
-        f"  Merged:       {daily_weight}×{daily:+.1f} + {weekly_weight}×{weekly:+.1f} = {merged:+.1f}",
+        f"  Monthly:      {monthly:+.1f}",
+        f"  Merged ({regime}): "
+        f"{w_daily}×{daily:+.1f} + {w_weekly}×{weekly:+.1f} + {w_monthly}×{monthly:+.1f} = {merged:+.1f}",
         f"  Final score:  {final:+.1f}",
         f"  Signal:       {signal}",
         f"  Confidence:   {confidence:.0f}%",
@@ -897,6 +916,7 @@ def build_full_breakdown(
     ticker: str,
     score: dict,
     config: dict,
+    scorer_cfg: dict,
     indicators: dict | None = None,
     current_price: float | None = None,
     sr_levels: list[dict] | None = None,
@@ -918,6 +938,8 @@ def build_full_breakdown(
         ticker: Ticker symbol.
         score: Score dict from scores_daily.
         config: Notifier config dict.
+        scorer_cfg: Full scorer config dict containing "timeframe_weights"
+            nested by regime, used to display the correct merge formula.
         indicators: Pre-fetched indicator dict (avoids duplicate query if provided).
         current_price: Pre-fetched current close price (avoids duplicate query if provided).
         sr_levels: Pre-fetched S/R levels list (avoids duplicate query if provided).
@@ -957,7 +979,7 @@ def build_full_breakdown(
         )
 
     sections = [
-        build_scoring_chain(score),
+        build_scoring_chain(score, scorer_cfg),
         build_category_scores(score),
         build_indicators_section(indicators),
         build_patterns_section(db_conn, ticker),
@@ -1162,6 +1184,8 @@ def handle_detail_command(
     Returns:
         None
     """
+    scorer_cfg = load_config("scorer")  # loaded once; passed to build_full_breakdown for regime-adaptive weights
+
     parse_result = parse_detail_command(message_text, active_tickers, config)
     if "error" in parse_result:
         send_telegram_message(bot_token, chat_id, parse_result["error"])
@@ -1268,7 +1292,7 @@ def handle_detail_command(
 
         # Step 3: Raw breakdown — reuse pre-fetched data to avoid duplicate queries
         breakdown = build_full_breakdown(
-            db_conn, ticker, score, config,
+            db_conn, ticker, score, config, scorer_cfg,
             indicators=indicators,
             current_price=current_price,
             sr_levels=sr_levels,

@@ -42,6 +42,14 @@ ACTIVE_TICKERS = [
 
 SCORING_DATE = "2026-03-16"
 
+SAMPLE_SCORER_CFG = {
+    "timeframe_weights": {
+        "trending": {"daily": 0.10, "weekly": 0.50, "monthly": 0.40},
+        "ranging":  {"daily": 0.60, "weekly": 0.30, "monthly": 0.10},
+        "volatile": {"daily": 0.25, "weekly": 0.45, "monthly": 0.30},
+    }
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,6 +65,7 @@ def _insert_score(
     regime: str = "ranging",
     daily_score: float = 10.6,
     weekly_score: float = -11.6,
+    monthly_score: float = 0.0,
     trend_score: float = -30.5,
     momentum_score: float = 38.6,
     volume_score: float = 5.0,
@@ -67,15 +76,42 @@ def _insert_score(
     fundamental_score: float = 5.0,
     macro_score: float = -2.0,
 ) -> None:
+    """
+    Insert a row into scores_daily for testing.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        signal: Signal string (e.g. 'NEUTRAL', 'BULLISH').
+        confidence: Confidence percentage.
+        final_score: Final merged score.
+        date_str: Date string in YYYY-MM-DD format.
+        regime: Market regime string.
+        daily_score: Daily timeframe score.
+        weekly_score: Weekly timeframe score.
+        monthly_score: Monthly timeframe score.
+        trend_score: Trend category score.
+        momentum_score: Momentum category score.
+        volume_score: Volume category score.
+        volatility_score: Volatility category score.
+        candlestick_score: Candlestick category score.
+        structural_score: Structural category score.
+        sentiment_score: Sentiment category score.
+        fundamental_score: Fundamental category score.
+        macro_score: Macro category score.
+
+    Returns:
+        None
+    """
     conn.execute(
         "INSERT OR REPLACE INTO scores_daily "
-        "(ticker, date, signal, confidence, final_score, regime, daily_score, weekly_score, "
+        "(ticker, date, signal, confidence, final_score, regime, daily_score, weekly_score, monthly_score, "
         "trend_score, momentum_score, volume_score, volatility_score, candlestick_score, "
         "structural_score, sentiment_score, fundamental_score, macro_score, data_completeness, key_signals) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             ticker, date_str, signal, confidence, final_score, regime,
-            daily_score, weekly_score, trend_score, momentum_score, volume_score,
+            daily_score, weekly_score, monthly_score, trend_score, momentum_score, volume_score,
             volatility_score, candlestick_score, structural_score, sentiment_score,
             fundamental_score, macro_score, "complete",
             json.dumps(["bearish EMA stack", "RSI oversold"]),
@@ -520,23 +556,191 @@ class TestBuildAnalystPrompt:
 
 class TestBuildScoringChain:
     def test_shows_daily_weekly_merged(self) -> None:
-        """build_scoring_chain shows daily, weekly, and merged scores."""
+        """build_scoring_chain shows daily, weekly, monthly, and merged scores with correct ranging arithmetic."""
+        import re
         from src.notifier.detail_command import build_scoring_chain
 
+        # ranging: daily=0.60, weekly=0.30, monthly=0.10
+        # merged = 0.60*10.6 + 0.30*-11.6 + 0.10*0.0 = 6.36 - 3.48 + 0.0 = 2.88
         score = {
             "daily_score": 10.6,
             "weekly_score": -11.6,
+            "monthly_score": 0.0,
             "final_score": 1.7,
             "signal": "NEUTRAL",
             "confidence": 0.0,
             "regime": "ranging",
         }
 
-        result = build_scoring_chain(score)
+        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
 
         assert "10.6" in result
         assert "-11.6" in result or "11.6" in result
         assert "1.7" in result
+        # Assert the correct merged arithmetic value (ranging weights).
+        # Exact value: 0.60*10.6 + 0.30*-11.6 + 0.10*0.0 = 6.36 - 3.48 = 2.88,
+        # displayed as 1dp so output shows 2.9; tolerance covers display rounding.
+        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
+        assert merged_match is not None, f"No merged value found in output:\n{result}"
+        parsed_merged = float(merged_match.group(1))
+        assert abs(parsed_merged - 2.88) < 0.1, f"Expected merged ~2.88, got {parsed_merged}"
+
+    def test_scoring_chain_uses_regime_weights_trending(self) -> None:
+        """build_scoring_chain uses trending weights (0.10/0.50/0.40) for trending regime."""
+        import re
+        from src.notifier.detail_command import build_scoring_chain
+
+        # trending: 0.10*10 + 0.50*20 + 0.40*30 = 1 + 10 + 12 = 23.0
+        score = {
+            "daily_score": 10.0,
+            "weekly_score": 20.0,
+            "monthly_score": 30.0,
+            "final_score": 23.0,
+            "signal": "BULLISH",
+            "confidence": 50.0,
+            "regime": "trending",
+        }
+
+        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
+
+        assert "trending" in result
+        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
+        assert merged_match is not None, f"No merged value found in output:\n{result}"
+        parsed_merged = float(merged_match.group(1))
+        assert abs(parsed_merged - 23.0) < 0.01, f"Expected merged 23.0, got {parsed_merged}"
+
+    def test_scoring_chain_uses_regime_weights_ranging(self) -> None:
+        """build_scoring_chain uses ranging weights (0.60/0.30/0.10) for ranging regime."""
+        import re
+        from src.notifier.detail_command import build_scoring_chain
+
+        # ranging: 0.60*10 + 0.30*20 + 0.10*30 = 6 + 6 + 3 = 15.0
+        score = {
+            "daily_score": 10.0,
+            "weekly_score": 20.0,
+            "monthly_score": 30.0,
+            "final_score": 15.0,
+            "signal": "NEUTRAL",
+            "confidence": 30.0,
+            "regime": "ranging",
+        }
+
+        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
+
+        assert "ranging" in result
+        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
+        assert merged_match is not None, f"No merged value found in output:\n{result}"
+        parsed_merged = float(merged_match.group(1))
+        assert abs(parsed_merged - 15.0) < 0.01, f"Expected merged 15.0, got {parsed_merged}"
+
+    def test_scoring_chain_uses_regime_weights_volatile(self) -> None:
+        """build_scoring_chain uses volatile weights (0.25/0.45/0.30) for volatile regime."""
+        import re
+        from src.notifier.detail_command import build_scoring_chain
+
+        # volatile: 0.25*10 + 0.45*20 + 0.30*30 = 2.5 + 9 + 9 = 20.5
+        score = {
+            "daily_score": 10.0,
+            "weekly_score": 20.0,
+            "monthly_score": 30.0,
+            "final_score": 20.5,
+            "signal": "NEUTRAL",
+            "confidence": 20.0,
+            "regime": "volatile",
+        }
+
+        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
+
+        assert "volatile" in result
+        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
+        assert merged_match is not None, f"No merged value found in output:\n{result}"
+        parsed_merged = float(merged_match.group(1))
+        assert abs(parsed_merged - 20.5) < 0.01, f"Expected merged 20.5, got {parsed_merged}"
+
+    def test_scoring_chain_merged_matches_final_score(self) -> None:
+        """build_scoring_chain merged value matches final_score for a realistic non-degenerate row."""
+        import re
+        from src.notifier.detail_command import build_scoring_chain
+
+        # trending: 0.10*5.0 + 0.50*18.0 + 0.40*12.0 = 0.5 + 9.0 + 4.8 = 14.3
+        score = {
+            "daily_score": 5.0,
+            "weekly_score": 18.0,
+            "monthly_score": 12.0,
+            "final_score": 14.3,
+            "signal": "BULLISH",
+            "confidence": 60.0,
+            "regime": "trending",
+        }
+
+        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
+
+        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
+        assert merged_match is not None, f"No merged value found in output:\n{result}"
+        parsed_merged = float(merged_match.group(1))
+        # merged should match final_score within floating-point tolerance
+        assert abs(parsed_merged - 14.3) < 0.01, f"Expected 14.3, got {parsed_merged}"
+        assert abs(parsed_merged - score["final_score"]) < 0.01
+
+    def test_scoring_chain_unknown_regime_falls_back_to_trending(self, caplog: pytest.LogCaptureFixture) -> None:
+        """build_scoring_chain falls back to trending weights and logs WARNING for unknown regime."""
+        import logging
+        import re
+        from src.notifier.detail_command import build_scoring_chain
+
+        score = {
+            "daily_score": 10.0,
+            "weekly_score": 20.0,
+            "monthly_score": 30.0,
+            "final_score": 23.0,
+            "signal": "BULLISH",
+            "confidence": 50.0,
+            "regime": "weird",
+        }
+
+        with caplog.at_level(logging.WARNING, logger="src.notifier.detail_command"):
+            result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
+
+        # trending weights used: 0.10*10 + 0.50*20 + 0.40*30 = 23.0
+        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
+        assert merged_match is not None, f"No merged value found in output:\n{result}"
+        parsed_merged = float(merged_match.group(1))
+        assert abs(parsed_merged - 23.0) < 0.01, f"Expected trending fallback merged 23.0, got {parsed_merged}"
+        # A WARNING should have been logged about the unknown regime
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("weird" in str(m) for m in warning_messages), (
+            f"Expected WARNING mentioning 'weird', got: {warning_messages}"
+        )
+
+    def test_scoring_chain_missing_regime_falls_back_to_trending_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """build_scoring_chain falls back to trending weights for None regime without logging WARNING."""
+        import logging
+        import re
+        from src.notifier.detail_command import build_scoring_chain
+
+        score = {
+            "daily_score": 10.0,
+            "weekly_score": 20.0,
+            "monthly_score": 30.0,
+            "final_score": 23.0,
+            "signal": "BULLISH",
+            "confidence": 50.0,
+            "regime": None,
+        }
+
+        with caplog.at_level(logging.WARNING, logger="src.notifier.detail_command"):
+            result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
+
+        # trending weights used silently: 0.10*10 + 0.50*20 + 0.40*30 = 23.0
+        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
+        assert merged_match is not None, f"No merged value found in output:\n{result}"
+        parsed_merged = float(merged_match.group(1))
+        assert abs(parsed_merged - 23.0) < 0.01, f"Expected trending fallback merged 23.0, got {parsed_merged}"
+        # No WARNING should be logged for a missing (None) regime
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_messages) == 0, f"Expected no WARNING for None regime, got: {warning_messages}"
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +805,7 @@ class TestBuildFullBreakdown:
             "regime": "ranging",
             "daily_score": 10.6,
             "weekly_score": -11.6,
+            "monthly_score": 0.0,
             "trend_score": -30.5,
             "momentum_score": 38.6,
             "volume_score": 5.0,
@@ -614,7 +819,7 @@ class TestBuildFullBreakdown:
             "key_signals": json.dumps([]),
         }
 
-        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG)
+        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG, SAMPLE_SCORER_CFG)
 
         assert "SCORING CHAIN" in result
         assert "CATEGORY SCORES" in result
@@ -634,6 +839,7 @@ class TestBuildFullBreakdown:
             "regime": "ranging",
             "daily_score": 10.6,
             "weekly_score": -11.6,
+            "monthly_score": 0.0,
             "trend_score": -30.5,
             "momentum_score": 38.6,
             "volume_score": 5.0,
@@ -647,7 +853,7 @@ class TestBuildFullBreakdown:
             "key_signals": json.dumps([]),
         }
 
-        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG)
+        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG, SAMPLE_SCORER_CFG)
 
         assert "None" not in result
 

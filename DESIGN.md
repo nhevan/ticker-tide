@@ -980,12 +980,23 @@ All computed using the `ta` library from OHLCV data. Parameters configurable in 
 | Fundamental | 5% | 5% | 5% |
 | Macro | 5% | 5% | 5% |
 
-### Dual Timeframe: Final = (Daily × 0.2) + (Weekly × 0.8)
+### Regime-Adaptive 3-Way Timeframe Merge: Final = (Daily × w_d) + (Weekly × w_w) + (Monthly × w_m)
 
-Weekly indicators dominate (80%) to optimise for monthly price-movement prediction.
-Backtested across 62 tickers and 5 years of data (5,344 weekly samples with 21-day
-forward returns): 0.2/0.8 yields 58.8% directional accuracy vs 54.4% at the previous
-0.6/0.4 split (+4.4pp). Weights are configurable via `scorer.json` `timeframe_weights`.
+Weights are regime-specific (configured in `scorer.json` `timeframe_weights`):
+
+| Regime | Daily | Weekly | Monthly |
+|---|---|---|---|
+| trending | 0.10 | 0.50 | 0.40 |
+| ranging | 0.60 | 0.30 | 0.10 |
+| volatile | 0.25 | 0.45 | 0.30 |
+
+Weights are renormalized when a timeframe is absent. Weights selected via 5-year
+backtest across 62 tickers (5,344 weekly samples with 21-day forward returns); an
+earlier 2-way 0.2/0.8 (daily/weekly) configuration yielded 58.8% directional accuracy
+vs 54.4% at a 0.6/0.4 split (+4.4pp), motivating the move to weekly-dominant
+weighting that the regime-adaptive 3-way scheme now extends. The `/detail` command
+display previously read the flat 2-way form and silently dropped monthly; this was
+corrected so the displayed merge formula matches `final_score`.
 
 The weekly score uses the same scoring pipeline as daily: all 14 indicators from
 `indicators_weekly` are scored via `score_all_indicators`, rolled up into 4 categories
