@@ -23,6 +23,10 @@ SAMPLE_CONFIG = {
         "sr_levels_to_show": 3,
         "signal_history_days": 30,
         "peer_count": 5,
+        "category_agreement_min_score": 10.0,
+        "calibration_divergence_min_abs": 0.3,
+        "earnings_warning_days": 7,
+        "timeframe_direction_threshold": 15.0,
     },
     "ai_reasoner": {
         "model": "claude-sonnet-4-20250514",
@@ -154,6 +158,110 @@ def _insert_fundamentals(conn: sqlite3.Connection, ticker: str) -> None:
         "revenue_growth_yoy, debt_to_equity, market_cap, dividend_yield) "
         "VALUES (?,?,?,?,?,?,?,?,?,?)",
         (ticker, "2026-01-01", "Q4", 28.5, 6.43, 0.08, 0.05, 0.4, 3_800_000_000_000, 0.005),
+    )
+    conn.commit()
+
+
+def _insert_weekly_score(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str = "2026-03-09",
+    composite_score: float = 20.0,
+    regime: str = "trending",
+    trend_score: float = 25.0,
+    momentum_score: float = 18.0,
+    volume_score: float = 10.0,
+    volatility_score: float = -5.0,
+    candlestick_score: float = 8.0,
+    structural_score: float = 12.0,
+    fundamental_score: float = 6.0,
+    macro_score: float = 3.0,
+) -> None:
+    """
+    Insert a row into scores_weekly for testing.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        week_start: Week start date in YYYY-MM-DD format.
+        composite_score: Weekly composite score.
+        regime: Market regime string.
+        trend_score: Trend category score.
+        momentum_score: Momentum category score.
+        volume_score: Volume category score.
+        volatility_score: Volatility category score.
+        candlestick_score: Candlestick category score.
+        structural_score: Structural category score.
+        fundamental_score: Fundamental category score.
+        macro_score: Macro category score.
+
+    Returns:
+        None
+    """
+    conn.execute(
+        "INSERT OR REPLACE INTO scores_weekly "
+        "(ticker, week_start, composite_score, regime, trend_score, momentum_score, "
+        "volume_score, volatility_score, candlestick_score, structural_score, "
+        "fundamental_score, macro_score, data_completeness, key_signals) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            ticker, week_start, composite_score, regime,
+            trend_score, momentum_score, volume_score, volatility_score,
+            candlestick_score, structural_score, fundamental_score, macro_score,
+            "complete", json.dumps(["weekly signal"]),
+        ),
+    )
+    conn.commit()
+
+
+def _insert_monthly_score(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str = "2026-03-01",
+    composite_score: float = 15.0,
+    regime: str = "trending",
+    trend_score: float = 20.0,
+    momentum_score: float = 15.0,
+    volume_score: float = 8.0,
+    volatility_score: float = -3.0,
+    candlestick_score: float = 5.0,
+    structural_score: float = 10.0,
+    fundamental_score: float = 7.0,
+    macro_score: float = 2.0,
+) -> None:
+    """
+    Insert a row into scores_monthly for testing.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        month_start: Month start date in YYYY-MM-DD format.
+        composite_score: Monthly composite score.
+        regime: Market regime string.
+        trend_score: Trend category score.
+        momentum_score: Momentum category score.
+        volume_score: Volume category score.
+        volatility_score: Volatility category score.
+        candlestick_score: Candlestick category score.
+        structural_score: Structural category score.
+        fundamental_score: Fundamental category score.
+        macro_score: Macro category score.
+
+    Returns:
+        None
+    """
+    conn.execute(
+        "INSERT OR REPLACE INTO scores_monthly "
+        "(ticker, month_start, composite_score, regime, trend_score, momentum_score, "
+        "volume_score, volatility_score, candlestick_score, structural_score, "
+        "fundamental_score, macro_score, data_completeness, key_signals) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            ticker, month_start, composite_score, regime,
+            trend_score, momentum_score, volume_score, volatility_score,
+            candlestick_score, structural_score, fundamental_score, macro_score,
+            "complete", json.dumps(["monthly signal"]),
+        ),
     )
     conn.commit()
 
@@ -510,277 +618,576 @@ class TestBuildSectorPeers:
 
 
 # ---------------------------------------------------------------------------
-# Tests: build_analyst_prompt
+# Tests: build_analyst_prompt (new XML-structured version)
 # ---------------------------------------------------------------------------
 
 class TestBuildAnalystPrompt:
-    def test_contains_all_sections(self) -> None:
-        """build_analyst_prompt includes all provided context sections."""
+    def test_prompt_includes_xml_format_instructions(self) -> None:
+        """build_analyst_prompt system prompt instructs Claude to emit XML-tagged sections."""
         from src.notifier.detail_command import build_analyst_prompt
 
-        prompt = build_analyst_prompt(
-            ticker_context="AAPL context",
-            market_context="Market context",
-            key_levels="Key levels text",
-            signal_triggers="Triggers text",
-            signal_history="History text",
-            earnings_info="Earnings info",
-            sector_peers="Peers text",
-        )
-
-        assert "AAPL context" in prompt
-        assert "Market context" in prompt
-        assert "Key levels text" in prompt
-        assert "Triggers text" in prompt
-
-    def test_contains_analyst_instructions(self) -> None:
-        """build_analyst_prompt contains instructions for 3-4 paragraph analysis."""
-        from src.notifier.detail_command import build_analyst_prompt
-
-        prompt = build_analyst_prompt(
-            ticker_context="AAPL",
+        score = {
+            "ticker": "AAPL", "date": SCORING_DATE, "signal": "BULLISH",
+            "final_score": 35.0, "confidence": 70.0, "regime": "trending",
+            "daily_score": 30.0, "weekly_score": 40.0, "monthly_score": 25.0,
+            "calibrated_score": 0.8,
+        }
+        system_prompt, _user_prompt = build_analyst_prompt(
+            ticker="AAPL",
+            score=score,
+            weekly_row=None,
+            monthly_row=None,
             market_context="",
             key_levels="",
             signal_triggers="",
             signal_history="",
             earnings_info="",
             sector_peers="",
+            calibration_divergence_note="",
         )
 
-        assert "paragraph" in prompt.lower() or "3-4" in prompt or "analysis" in prompt.lower()
+        assert "<verdict>" in system_prompt
+        assert "<timeframe_note>" in system_prompt
+        assert "<reasoning>" in system_prompt
 
-
-# ---------------------------------------------------------------------------
-# Tests: build_scoring_chain
-# ---------------------------------------------------------------------------
-
-class TestBuildScoringChain:
-    def test_shows_daily_weekly_merged(self) -> None:
-        """build_scoring_chain shows daily, weekly, monthly, and merged scores with correct ranging arithmetic."""
-        import re
-        from src.notifier.detail_command import build_scoring_chain
-
-        # ranging: daily=0.60, weekly=0.30, monthly=0.10
-        # merged = 0.60*10.6 + 0.30*-11.6 + 0.10*0.0 = 6.36 - 3.48 + 0.0 = 2.88
-        score = {
-            "daily_score": 10.6,
-            "weekly_score": -11.6,
-            "monthly_score": 0.0,
-            "final_score": 1.7,
-            "signal": "NEUTRAL",
-            "confidence": 0.0,
-            "regime": "ranging",
-        }
-
-        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
-
-        assert "10.6" in result
-        assert "-11.6" in result or "11.6" in result
-        assert "1.7" in result
-        # Assert the correct merged arithmetic value (ranging weights).
-        # Exact value: 0.60*10.6 + 0.30*-11.6 + 0.10*0.0 = 6.36 - 3.48 = 2.88,
-        # displayed as 1dp so output shows 2.9; tolerance covers display rounding.
-        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
-        assert merged_match is not None, f"No merged value found in output:\n{result}"
-        parsed_merged = float(merged_match.group(1))
-        assert abs(parsed_merged - 2.88) < 0.1, f"Expected merged ~2.88, got {parsed_merged}"
-
-    def test_scoring_chain_uses_regime_weights_trending(self) -> None:
-        """build_scoring_chain uses trending weights (0.10/0.50/0.40) for trending regime."""
-        import re
-        from src.notifier.detail_command import build_scoring_chain
-
-        # trending: 0.10*10 + 0.50*20 + 0.40*30 = 1 + 10 + 12 = 23.0
-        score = {
-            "daily_score": 10.0,
-            "weekly_score": 20.0,
-            "monthly_score": 30.0,
-            "final_score": 23.0,
-            "signal": "BULLISH",
-            "confidence": 50.0,
-            "regime": "trending",
-        }
-
-        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
-
-        assert "trending" in result
-        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
-        assert merged_match is not None, f"No merged value found in output:\n{result}"
-        parsed_merged = float(merged_match.group(1))
-        assert abs(parsed_merged - 23.0) < 0.01, f"Expected merged 23.0, got {parsed_merged}"
-
-    def test_scoring_chain_uses_regime_weights_ranging(self) -> None:
-        """build_scoring_chain uses ranging weights (0.60/0.30/0.10) for ranging regime."""
-        import re
-        from src.notifier.detail_command import build_scoring_chain
-
-        # ranging: 0.60*10 + 0.30*20 + 0.10*30 = 6 + 6 + 3 = 15.0
-        score = {
-            "daily_score": 10.0,
-            "weekly_score": 20.0,
-            "monthly_score": 30.0,
-            "final_score": 15.0,
-            "signal": "NEUTRAL",
-            "confidence": 30.0,
-            "regime": "ranging",
-        }
-
-        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
-
-        assert "ranging" in result
-        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
-        assert merged_match is not None, f"No merged value found in output:\n{result}"
-        parsed_merged = float(merged_match.group(1))
-        assert abs(parsed_merged - 15.0) < 0.01, f"Expected merged 15.0, got {parsed_merged}"
-
-    def test_scoring_chain_uses_regime_weights_volatile(self) -> None:
-        """build_scoring_chain uses volatile weights (0.25/0.45/0.30) for volatile regime."""
-        import re
-        from src.notifier.detail_command import build_scoring_chain
-
-        # volatile: 0.25*10 + 0.45*20 + 0.30*30 = 2.5 + 9 + 9 = 20.5
-        score = {
-            "daily_score": 10.0,
-            "weekly_score": 20.0,
-            "monthly_score": 30.0,
-            "final_score": 20.5,
-            "signal": "NEUTRAL",
-            "confidence": 20.0,
-            "regime": "volatile",
-        }
-
-        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
-
-        assert "volatile" in result
-        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
-        assert merged_match is not None, f"No merged value found in output:\n{result}"
-        parsed_merged = float(merged_match.group(1))
-        assert abs(parsed_merged - 20.5) < 0.01, f"Expected merged 20.5, got {parsed_merged}"
-
-    def test_scoring_chain_merged_matches_final_score(self) -> None:
-        """build_scoring_chain merged value matches final_score for a realistic non-degenerate row."""
-        import re
-        from src.notifier.detail_command import build_scoring_chain
-
-        # trending: 0.10*5.0 + 0.50*18.0 + 0.40*12.0 = 0.5 + 9.0 + 4.8 = 14.3
-        score = {
-            "daily_score": 5.0,
-            "weekly_score": 18.0,
-            "monthly_score": 12.0,
-            "final_score": 14.3,
-            "signal": "BULLISH",
-            "confidence": 60.0,
-            "regime": "trending",
-        }
-
-        result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
-
-        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
-        assert merged_match is not None, f"No merged value found in output:\n{result}"
-        parsed_merged = float(merged_match.group(1))
-        # merged should match final_score within floating-point tolerance
-        assert abs(parsed_merged - 14.3) < 0.01, f"Expected 14.3, got {parsed_merged}"
-        assert abs(parsed_merged - score["final_score"]) < 0.01
-
-    def test_scoring_chain_unknown_regime_falls_back_to_trending(self, caplog: pytest.LogCaptureFixture) -> None:
-        """build_scoring_chain falls back to trending weights and logs WARNING for unknown regime."""
-        import logging
-        import re
-        from src.notifier.detail_command import build_scoring_chain
+    def test_prompt_includes_weekly_monthly_context(self) -> None:
+        """build_analyst_prompt user prompt contains weekly and monthly score context."""
+        from src.notifier.detail_command import build_analyst_prompt
 
         score = {
-            "daily_score": 10.0,
-            "weekly_score": 20.0,
-            "monthly_score": 30.0,
-            "final_score": 23.0,
-            "signal": "BULLISH",
-            "confidence": 50.0,
-            "regime": "weird",
+            "ticker": "AAPL", "date": SCORING_DATE, "signal": "BULLISH",
+            "final_score": 35.0, "confidence": 70.0, "regime": "trending",
+            "daily_score": 30.0, "weekly_score": 40.0, "monthly_score": 25.0,
+            "calibrated_score": None,
         }
+        weekly_row = {"composite_score": 40.0, "trend_score": 25.0, "momentum_score": 18.0}
+        monthly_row = {"composite_score": 25.0, "trend_score": 20.0, "momentum_score": 12.0}
 
-        with caplog.at_level(logging.WARNING, logger="src.notifier.detail_command"):
-            result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
-
-        # trending weights used: 0.10*10 + 0.50*20 + 0.40*30 = 23.0
-        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
-        assert merged_match is not None, f"No merged value found in output:\n{result}"
-        parsed_merged = float(merged_match.group(1))
-        assert abs(parsed_merged - 23.0) < 0.01, f"Expected trending fallback merged 23.0, got {parsed_merged}"
-        # A WARNING should have been logged about the unknown regime
-        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("weird" in str(m) for m in warning_messages), (
-            f"Expected WARNING mentioning 'weird', got: {warning_messages}"
+        _system_prompt, user_prompt = build_analyst_prompt(
+            ticker="AAPL",
+            score=score,
+            weekly_row=weekly_row,
+            monthly_row=monthly_row,
+            market_context="",
+            key_levels="",
+            signal_triggers="",
+            signal_history="",
+            earnings_info="",
+            sector_peers="",
+            calibration_divergence_note="",
         )
 
-    def test_scoring_chain_missing_regime_falls_back_to_trending_no_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """build_scoring_chain falls back to trending weights for None regime without logging WARNING."""
-        import logging
-        import re
-        from src.notifier.detail_command import build_scoring_chain
+        assert "40.0" in user_prompt or "weekly" in user_prompt.lower()
+        assert "25.0" in user_prompt or "monthly" in user_prompt.lower()
+
+    def test_prompt_includes_calibration_note_when_divergence_flagged(self) -> None:
+        """build_analyst_prompt user prompt includes calibration note when note is non-empty."""
+        from src.notifier.detail_command import build_analyst_prompt
 
         score = {
-            "daily_score": 10.0,
-            "weekly_score": 20.0,
-            "monthly_score": 30.0,
-            "final_score": 23.0,
+            "ticker": "AAPL", "date": SCORING_DATE, "signal": "BULLISH",
+            "final_score": 35.0, "confidence": 70.0, "regime": "trending",
+            "daily_score": 30.0, "weekly_score": 40.0, "monthly_score": 25.0,
+            "calibrated_score": -0.5,
+        }
+
+        _system_prompt, user_prompt = build_analyst_prompt(
+            ticker="AAPL",
+            score=score,
+            weekly_row=None,
+            monthly_row=None,
+            market_context="",
+            key_levels="",
+            signal_triggers="",
+            signal_history="",
+            earnings_info="",
+            sector_peers="",
+            calibration_divergence_note="⚠️ Calibrated score -0.50 contradicts BULLISH signal",
+        )
+
+        assert "⚠️ Calibrated score -0.50 contradicts BULLISH signal" in user_prompt
+
+    def test_prompt_omits_calibration_note_when_no_divergence(self) -> None:
+        """build_analyst_prompt user prompt omits calibration text when note is empty."""
+        from src.notifier.detail_command import build_analyst_prompt
+
+        score = {
+            "ticker": "AAPL", "date": SCORING_DATE, "signal": "BULLISH",
+            "final_score": 35.0, "confidence": 70.0, "regime": "trending",
+            "daily_score": 30.0, "weekly_score": 40.0, "monthly_score": 25.0,
+            "calibrated_score": 0.6,
+        }
+
+        _system_prompt, user_prompt = build_analyst_prompt(
+            ticker="AAPL",
+            score=score,
+            weekly_row=None,
+            monthly_row=None,
+            market_context="",
+            key_levels="",
+            signal_triggers="",
+            signal_history="",
+            earnings_info="",
+            sector_peers="",
+            calibration_divergence_note="",
+        )
+
+        assert "calibrat" not in user_prompt.lower() or "calibration" not in user_prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: fetch_weekly_score / fetch_monthly_score
+# ---------------------------------------------------------------------------
+
+class TestFetchWeeklyScore:
+    def test_fetch_weekly_score_returns_latest_row(self, db_connection: sqlite3.Connection) -> None:
+        """fetch_weekly_score returns the most recent scores_weekly row for the ticker."""
+        from src.notifier.detail_command import fetch_weekly_score
+
+        _insert_weekly_score(db_connection, "AAPL", week_start="2026-03-02", composite_score=10.0)
+        _insert_weekly_score(db_connection, "AAPL", week_start="2026-03-09", composite_score=20.0)
+
+        result = fetch_weekly_score(db_connection, "AAPL")
+
+        assert result is not None
+        assert result["week_start"] == "2026-03-09"
+        assert result["composite_score"] == 20.0
+
+    def test_fetch_weekly_score_returns_none_when_empty(self, db_connection: sqlite3.Connection) -> None:
+        """fetch_weekly_score returns None when no rows exist for the ticker."""
+        from src.notifier.detail_command import fetch_weekly_score
+
+        result = fetch_weekly_score(db_connection, "AAPL")
+
+        assert result is None
+
+
+class TestFetchMonthlyScore:
+    def test_fetch_monthly_score_returns_latest_row(self, db_connection: sqlite3.Connection) -> None:
+        """fetch_monthly_score returns the most recent scores_monthly row for the ticker."""
+        from src.notifier.detail_command import fetch_monthly_score
+
+        _insert_monthly_score(db_connection, "AAPL", month_start="2026-02-01", composite_score=12.0)
+        _insert_monthly_score(db_connection, "AAPL", month_start="2026-03-01", composite_score=18.0)
+
+        result = fetch_monthly_score(db_connection, "AAPL")
+
+        assert result is not None
+        assert result["month_start"] == "2026-03-01"
+        assert result["composite_score"] == 18.0
+
+    def test_fetch_monthly_score_returns_none_when_empty(self, db_connection: sqlite3.Connection) -> None:
+        """fetch_monthly_score returns None when no rows exist for the ticker."""
+        from src.notifier.detail_command import fetch_monthly_score
+
+        result = fetch_monthly_score(db_connection, "AAPL")
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_timeframe_table
+# ---------------------------------------------------------------------------
+
+class TestBuildTimeframeTable:
+    def _make_daily_score(self) -> dict:
+        """Return a minimal daily score dict for table tests."""
+        return {
+            "final_score": 30.0,
+            "trend_score": 25.0,
+            "momentum_score": 20.0,
             "signal": "BULLISH",
-            "confidence": 50.0,
-            "regime": None,
         }
 
-        with caplog.at_level(logging.WARNING, logger="src.notifier.detail_command"):
-            result = build_scoring_chain(score, SAMPLE_SCORER_CFG)
+    def _make_weekly_row(self) -> dict:
+        """Return a minimal weekly row dict for table tests (no sentiment_score)."""
+        return {
+            "composite_score": 20.0,
+            "trend_score": 18.0,
+            "momentum_score": 15.0,
+        }
 
-        # trending weights used silently: 0.10*10 + 0.50*20 + 0.40*30 = 23.0
-        merged_match = re.search(r"Merged.*?=\s*([+-]?\d+\.?\d*)", result)
-        assert merged_match is not None, f"No merged value found in output:\n{result}"
-        parsed_merged = float(merged_match.group(1))
-        assert abs(parsed_merged - 23.0) < 0.01, f"Expected trending fallback merged 23.0, got {parsed_merged}"
-        # No WARNING should be logged for a missing (None) regime
-        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warning_messages) == 0, f"Expected no WARNING for None regime, got: {warning_messages}"
+    def _make_monthly_row(self) -> dict:
+        """Return a minimal monthly row dict for table tests (no sentiment_score)."""
+        return {
+            "composite_score": 16.0,
+            "trend_score": 14.0,
+            "momentum_score": 12.0,
+        }
+
+    def test_build_timeframe_table_renders_three_rows(self) -> None:
+        """build_timeframe_table produces a table with Daily, Weekly, and Monthly rows."""
+        from src.notifier.detail_command import build_timeframe_table
+
+        result = build_timeframe_table(
+            daily_row=self._make_daily_score(),
+            weekly_row=self._make_weekly_row(),
+            monthly_row=self._make_monthly_row(),
+            config=SAMPLE_CONFIG,
+        )
+
+        assert "Daily" in result
+        assert "Weekly" in result
+        assert "Monthly" in result
+
+    def test_build_timeframe_table_renders_na_for_missing_weekly(self) -> None:
+        """build_timeframe_table shows N/A for the Weekly row when weekly_row is None."""
+        from src.notifier.detail_command import build_timeframe_table
+
+        result = build_timeframe_table(
+            daily_row=self._make_daily_score(),
+            weekly_row=None,
+            monthly_row=self._make_monthly_row(),
+            config=SAMPLE_CONFIG,
+        )
+
+        assert "N/A" in result
+
+    def test_build_timeframe_table_renders_na_for_missing_monthly(self) -> None:
+        """build_timeframe_table shows N/A for the Monthly row when monthly_row is None."""
+        from src.notifier.detail_command import build_timeframe_table
+
+        result = build_timeframe_table(
+            daily_row=self._make_daily_score(),
+            weekly_row=self._make_weekly_row(),
+            monthly_row=None,
+            config=SAMPLE_CONFIG,
+        )
+
+        assert "N/A" in result
+
+    def test_build_timeframe_table_does_not_read_sentiment_from_weekly_monthly_rows(self) -> None:
+        """build_timeframe_table accepts weekly/monthly rows without sentiment_score key — no KeyError."""
+        from src.notifier.detail_command import build_timeframe_table
+
+        # Rows explicitly have no sentiment_score key
+        weekly_no_sentiment = {"composite_score": 20.0, "trend_score": 18.0, "momentum_score": 15.0}
+        monthly_no_sentiment = {"composite_score": 16.0, "trend_score": 14.0, "momentum_score": 12.0}
+
+        # Must not raise KeyError
+        result = build_timeframe_table(
+            daily_row=self._make_daily_score(),
+            weekly_row=weekly_no_sentiment,
+            monthly_row=monthly_no_sentiment,
+            config=SAMPLE_CONFIG,
+        )
+
+        assert "Sentiment" not in result
+        assert isinstance(result, str)
+
+    def test_build_timeframe_table_uses_config_direction_threshold(self) -> None:
+        """build_timeframe_table renders ▲/▼/▬ based on timeframe_direction_threshold config."""
+        from src.notifier.detail_command import build_timeframe_table
+
+        high_threshold_config = {
+            "detail_command": {**SAMPLE_CONFIG["detail_command"], "timeframe_direction_threshold": 50.0}
+        }
+        low_threshold_config = {
+            "detail_command": {**SAMPLE_CONFIG["detail_command"], "timeframe_direction_threshold": 5.0}
+        }
+
+        daily_row = {"final_score": 30.0, "trend_score": 25.0, "momentum_score": 20.0, "signal": "BULLISH"}
+
+        result_high = build_timeframe_table(daily_row=daily_row, weekly_row=None, monthly_row=None, config=high_threshold_config)
+        result_low = build_timeframe_table(daily_row=daily_row, weekly_row=None, monthly_row=None, config=low_threshold_config)
+
+        # With threshold=50, score=30 is below threshold → ▬
+        # With threshold=5, score=30 is above threshold → ▲
+        assert "▬" in result_high
+        assert "▲" in result_low
+
+    def test_build_timeframe_table_renders_under_markdownv2_correctly(self) -> None:
+        """build_timeframe_table output is wrapped in a triple-backtick code block (MarkdownV2-safe)."""
+        from src.notifier.detail_command import build_timeframe_table
+
+        result = build_timeframe_table(
+            daily_row=self._make_daily_score(),
+            weekly_row=self._make_weekly_row(),
+            monthly_row=self._make_monthly_row(),
+            config=SAMPLE_CONFIG,
+        )
+
+        assert result.startswith("```")
+        assert result.endswith("```")
 
 
 # ---------------------------------------------------------------------------
-# Tests: build_category_scores
+# Tests: build_deterministic_confidence
 # ---------------------------------------------------------------------------
 
-class TestBuildCategoryScores:
-    def test_shows_all_categories(self) -> None:
-        """build_category_scores shows all scoring categories."""
-        from src.notifier.detail_command import build_category_scores
-
-        score = {
-            "trend_score": -30.5,
-            "momentum_score": 38.6,
-            "volume_score": 5.0,
-            "volatility_score": -3.0,
-            "candlestick_score": 2.0,
-            "structural_score": -1.0,
-            "sentiment_score": 0.0,
-            "fundamental_score": 5.0,
-            "macro_score": -2.0,
+class TestBuildDeterministicConfidence:
+    def _make_score(
+        self,
+        signal: str = "BULLISH",
+        final_score: float = 35.0,
+        calibrated_score: float = None,
+    ) -> dict:
+        """Return a daily score dict for confidence tests."""
+        return {
+            "signal": signal,
+            "final_score": final_score,
+            "calibrated_score": calibrated_score,
+            "daily_score": 30.0,
+            "weekly_score": 40.0,
+            "monthly_score": 25.0,
+            "confidence": 70.0,
+            "trend_score": 30.0,
+            "momentum_score": 25.0,
+            "volume_score": 15.0,
+            "volatility_score": -5.0,
+            "candlestick_score": 12.0,
+            "structural_score": 8.0,
+            "sentiment_score": 20.0,
+            "fundamental_score": 6.0,
+            "macro_score": 3.0,
         }
 
-        result = build_category_scores(score)
+    def test_build_deterministic_confidence_lists_agreeing_categories(self) -> None:
+        """build_deterministic_confidence lists categories agreeing with bullish signal."""
+        from src.notifier.detail_command import build_deterministic_confidence
 
-        assert "Trend" in result
-        assert "Momentum" in result
-        assert "-30.5" in result
+        score = self._make_score(signal="BULLISH", final_score=35.0)
+        weekly_row = {"composite_score": 20.0, "trend_score": 25.0, "momentum_score": 18.0,
+                      "volume_score": 10.0, "volatility_score": -3.0, "candlestick_score": 5.0,
+                      "structural_score": 8.0, "fundamental_score": 6.0, "macro_score": 2.0}
 
-    def test_includes_visual_bars(self) -> None:
-        """build_category_scores includes visual bar characters."""
-        from src.notifier.detail_command import build_category_scores
+        result = build_deterministic_confidence(score, weekly_row, None, SAMPLE_CONFIG)
 
-        score = {"trend_score": -30.5, "momentum_score": 38.6, "volume_score": 5.0,
-                 "volatility_score": -3.0, "candlestick_score": 2.0, "structural_score": -1.0,
-                 "sentiment_score": 0.0, "fundamental_score": 5.0, "macro_score": -2.0}
+        assert "Agreeing" in result or "agreeing" in result.lower()
 
-        result = build_category_scores(score)
+    def test_build_deterministic_confidence_lists_disagreeing_categories(self) -> None:
+        """build_deterministic_confidence lists categories that oppose the signal direction."""
+        from src.notifier.detail_command import build_deterministic_confidence
 
-        assert "▓" in result or "░" in result
+        score = self._make_score(signal="BULLISH", final_score=35.0)
+        # Give volatility a strongly negative score (opposes BULLISH)
+        score["volatility_score"] = -50.0
+
+        result = build_deterministic_confidence(score, None, None, SAMPLE_CONFIG)
+
+        assert "Disagree" in result or "disagree" in result.lower()
+
+    def test_build_deterministic_confidence_flags_calibration_sign_flip(self) -> None:
+        """build_deterministic_confidence flags ⚠️ when BULLISH signal but calibrated_score < 0."""
+        from src.notifier.detail_command import build_deterministic_confidence
+
+        score = self._make_score(signal="BULLISH", final_score=35.0, calibrated_score=-0.5)
+
+        result = build_deterministic_confidence(score, None, None, SAMPLE_CONFIG)
+
+        assert "⚠️" in result
+
+    def test_build_deterministic_confidence_does_not_flag_when_calibrated_below_min_abs(self) -> None:
+        """build_deterministic_confidence skips flag when abs(calibrated_score) < 0.3 threshold."""
+        from src.notifier.detail_command import build_deterministic_confidence
+
+        # abs(-0.2) < 0.3 → no flag
+        score = self._make_score(signal="BULLISH", final_score=35.0, calibrated_score=-0.2)
+
+        result = build_deterministic_confidence(score, None, None, SAMPLE_CONFIG)
+
+        assert "⚠️" not in result
+
+    def test_build_deterministic_confidence_handles_calibrated_score_none(self) -> None:
+        """build_deterministic_confidence handles calibrated_score=None gracefully — no crash, no flag."""
+        from src.notifier.detail_command import build_deterministic_confidence
+
+        score = self._make_score(signal="BULLISH", final_score=35.0, calibrated_score=None)
+
+        result = build_deterministic_confidence(score, None, None, SAMPLE_CONFIG)
+
+        assert isinstance(result, str)
+        # No crash, no spurious flag
+        assert "calibrated" not in result.lower() or "⚠️" not in result
+
+    def test_build_deterministic_confidence_final_score_zero_skips_sign_logic(self) -> None:
+        """build_deterministic_confidence returns neutral message when final_score == 0."""
+        from src.notifier.detail_command import build_deterministic_confidence
+
+        score = self._make_score(signal="NEUTRAL", final_score=0.0, calibrated_score=None)
+
+        result = build_deterministic_confidence(score, None, None, SAMPLE_CONFIG)
+
+        assert "NEUTRAL" in result or "neutral" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_verdict_header
+# ---------------------------------------------------------------------------
+
+class TestBuildVerdictHeader:
+    def _make_score(self, date_str: str = SCORING_DATE) -> dict:
+        """Return a minimal score dict for verdict header tests."""
+        return {
+            "ticker": "AAPL",
+            "date": date_str,
+            "signal": "BULLISH",
+            "final_score": 35.0,
+        }
+
+    def _make_earnings_row(self, earnings_date: str) -> dict:
+        """Return a minimal earnings row dict."""
+        return {"earnings_date": earnings_date, "estimated_eps": 2.35}
+
+    def test_build_verdict_header_prepends_earnings_warning_within_window(self) -> None:
+        """build_verdict_header prepends ⚠️ earnings warning when earnings is 3 days away (threshold 7)."""
+        from src.notifier.detail_command import build_verdict_header
+
+        score = self._make_score(date_str="2026-04-20")
+        earnings_row = self._make_earnings_row(earnings_date="2026-04-23")  # 3 days away
+
+        result = build_verdict_header(score, earnings_row, SAMPLE_CONFIG)
+
+        assert "⚠️" in result
+
+    def test_build_verdict_header_no_earnings_warning_outside_window(self) -> None:
+        """build_verdict_header omits ⚠️ warning when earnings is 14 days away (threshold 7)."""
+        from src.notifier.detail_command import build_verdict_header
+
+        score = self._make_score(date_str="2026-04-20")
+        earnings_row = self._make_earnings_row(earnings_date="2026-05-04")  # 14 days away
+
+        result = build_verdict_header(score, earnings_row, SAMPLE_CONFIG)
+
+        assert "⚠️" not in result
+
+    def test_build_verdict_header_earnings_at_exact_boundary(self) -> None:
+        """build_verdict_header prepends ⚠️ warning when earnings is exactly 7 days away (inclusive)."""
+        from src.notifier.detail_command import build_verdict_header
+
+        score = self._make_score(date_str="2026-04-20")
+        earnings_row = self._make_earnings_row(earnings_date="2026-04-27")  # exactly 7 days away
+
+        result = build_verdict_header(score, earnings_row, SAMPLE_CONFIG)
+
+        assert "⚠️" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: parse_ai_response
+# ---------------------------------------------------------------------------
+
+class TestParseAiResponse:
+    def test_parse_ai_response_extracts_three_sections(self) -> None:
+        """parse_ai_response extracts verdict, timeframe_note, and reasoning from XML-tagged text."""
+        from src.notifier.detail_command import parse_ai_response
+
+        raw = "BUY at $185</verdict><timeframe_note>All timeframes bullish</timeframe_note><reasoning>MACD rising, EMA stack intact.</reasoning>"
+        result = parse_ai_response(raw, prefill="<verdict>")
+
+        assert result["verdict"] == "BUY at $185"
+        assert result["timeframe_note"] == "All timeframes bullish"
+        assert result["reasoning"] == "MACD rising, EMA stack intact."
+
+    def test_parse_ai_response_falls_back_to_raw_on_malformed(self) -> None:
+        """parse_ai_response returns raw text in verdict slot when XML is malformed."""
+        from src.notifier.detail_command import parse_ai_response
+
+        raw = "This is just free-form text with no XML tags."
+        result = parse_ai_response(raw, prefill="<verdict>")
+
+        assert result["verdict"] == raw
+        assert result["timeframe_note"] == ""
+        assert result["reasoning"] == ""
+
+    def test_parse_ai_response_handles_truncated_response(self) -> None:
+        """parse_ai_response falls back gracefully when response is cut off mid-tag."""
+        from src.notifier.detail_command import parse_ai_response
+
+        raw = "BUY at $185</verdict><timeframe_note>Bullish"  # missing closing tags
+        result = parse_ai_response(raw, prefill="<verdict>")
+
+        # Should fall back — not crash
+        assert isinstance(result, dict)
+        assert "verdict" in result
+
+    def test_parse_ai_response_handles_empty_reasoning_section(self) -> None:
+        """parse_ai_response returns empty string (not None) when reasoning section is empty."""
+        from src.notifier.detail_command import parse_ai_response
+
+        raw = "BUY</verdict><timeframe_note>Bullish</timeframe_note><reasoning></reasoning>"
+        result = parse_ai_response(raw, prefill="<verdict>")
+
+        assert result["reasoning"] == ""
+        assert result["reasoning"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests: _split_message_at_section_markers
+# ---------------------------------------------------------------------------
+
+class TestSplitMessageAtSectionMarkers:
+    def test_split_returns_single_element_when_under_max_len(self) -> None:
+        """_split_message_at_section_markers returns [input] when text fits in one message."""
+        from src.notifier.detail_command import _split_message_at_section_markers
+
+        text = "Short text under limit."
+        result = _split_message_at_section_markers(text, max_len=4096)
+
+        assert result == [text]
+
+    def test_message2_overflow_splits_on_section_markers(self) -> None:
+        """_split_message_at_section_markers splits at section headers when text overflows."""
+        from src.notifier.detail_command import _split_message_at_section_markers
+
+        # Build a text that exceeds max_len with two section headers.
+        # max_len=100; section1 = "📍 VERDICT\n" + 80 A's = ~91 chars.
+        # When the splitter sees "📊 CONFIDENCE" (a marker), current_len=92 > 100-13=87,
+        # so 92+13 = 105 > 100 → triggers split.
+        section1 = "📍 VERDICT\n" + "A" * 80
+        section2 = "📊 CONFIDENCE\n" + "B" * 80
+        text = section1 + "\n" + section2
+
+        result = _split_message_at_section_markers(text, max_len=100)
+
+        assert len(result) >= 2
+
+    def test_message2_splitter_does_not_split_on_verdict_header_emoji(self) -> None:
+        """_split_message_at_section_markers does not split on '📊 AAPL — Detail Analysis' header."""
+        from src.notifier.detail_command import _split_message_at_section_markers
+
+        header_line = "📊 AAPL — Detail Analysis (2026-04-27)"
+        confidence_line = "📊 CONFIDENCE"
+        text = header_line + "\n" + "A" * 10 + "\n" + confidence_line + "\n" + "B" * 10
+
+        # With a very small max_len, splitting should only happen at "📊 CONFIDENCE", not the header
+        result = _split_message_at_section_markers(text, max_len=50)
+
+        # The first chunk should contain the header line intact
+        full_text = "\n".join(result)
+        assert header_line in full_text
+
+
+# ---------------------------------------------------------------------------
+# Tests: escape_markdown_v2
+# ---------------------------------------------------------------------------
+
+class TestEscapeMarkdownV2:
+    def test_escape_markdown_v2_escapes_dot_minus_paren_plus_etc(self) -> None:
+        """escape_markdown_v2 escapes MarkdownV2 special characters."""
+        from src.notifier.detail_command import escape_markdown_v2
+
+        text = "Price is $185.50 (up +2.3%) today!"
+        result = escape_markdown_v2(text)
+
+        assert r"\." in result
+        assert r"\(" in result
+        assert r"\+" in result
+        assert r"\!" in result
+
+    def test_escape_markdown_v2_does_not_escape_inside_code_block(self) -> None:
+        """escape_markdown_v2 passes triple-backtick code block contents through unchanged."""
+        from src.notifier.detail_command import escape_markdown_v2
+
+        code_content = "Daily  +30.0  ▲"
+        text = f"Before\n```\n{code_content}\n```\nAfter."
+
+        result = escape_markdown_v2(text)
+
+        # The code block content must be unchanged
+        assert code_content in result
+        # Text outside code block should be escaped
+        assert r"\." in result
 
 
 # ---------------------------------------------------------------------------
@@ -789,7 +1196,7 @@ class TestBuildCategoryScores:
 
 class TestBuildFullBreakdown:
     def test_all_sections_present(self, db_connection: sqlite3.Connection) -> None:
-        """build_full_breakdown assembles all expected sections."""
+        """build_full_breakdown assembles expected sections (no SCORING CHAIN or CATEGORY SCORES)."""
         from src.notifier.detail_command import build_full_breakdown
 
         _insert_score(db_connection, "AAPL")
@@ -819,10 +1226,11 @@ class TestBuildFullBreakdown:
             "key_signals": json.dumps([]),
         }
 
-        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG, SAMPLE_SCORER_CFG)
+        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG)
 
-        assert "SCORING CHAIN" in result
-        assert "CATEGORY SCORES" in result
+        # SCORING CHAIN and CATEGORY SCORES are removed in Plan B
+        assert "SCORING CHAIN" not in result
+        assert "CATEGORY SCORES" not in result
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -853,7 +1261,7 @@ class TestBuildFullBreakdown:
             "key_signals": json.dumps([]),
         }
 
-        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG, SAMPLE_SCORER_CFG)
+        result = build_full_breakdown(db_connection, "AAPL", score, SAMPLE_CONFIG)
 
         assert "None" not in result
 
@@ -864,7 +1272,7 @@ class TestBuildFullBreakdown:
 
 class TestHandleDetailCommand:
     def test_end_to_end_sends_3_messages(self, db_connection: sqlite3.Connection) -> None:
-        """handle_detail_command sends photo + AI analysis + raw breakdown."""
+        """handle_detail_command sends photo + structured AI analysis + raw breakdown."""
         from src.notifier.detail_command import handle_detail_command
 
         _insert_score(db_connection, "AAPL")
@@ -874,10 +1282,17 @@ class TestHandleDetailCommand:
             "fibonacci": {"levels": [0.236, 0.382, 0.5, 0.618, 0.786], "proximity_pct": 1.0, "min_range_pct": 5.0}
         }
 
+        # Mock returns XML response body (prefill "<verdict>" is prepended by parse_ai_response)
+        ai_mock_return = (
+            "BUY pullback to $185</verdict>"
+            "<timeframe_note>All timeframes bullish</timeframe_note>"
+            "<reasoning>MACD rising, EMA stack intact, momentum building.</reasoning>"
+        )
+
         with patch("src.notifier.detail_command.generate_chart", return_value="/tmp/fake_chart.png"):
             with patch("src.notifier.detail_command.cleanup_chart") as mock_cleanup:
                 with patch("src.notifier.detail_command.send_photo_to_chat", return_value=True) as mock_photo:
-                    with patch("src.notifier.detail_command._call_claude_for_analysis", return_value="Claude analysis text."):
+                    with patch("src.notifier.detail_command._call_claude_for_analysis", return_value=ai_mock_return):
                         with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
                             with patch("src.notifier.detail_command.edit_telegram_message", return_value=True):
                                 handle_detail_command(
@@ -891,8 +1306,138 @@ class TestHandleDetailCommand:
                                 )
 
         mock_photo.assert_called_once()
-        assert mock_send.call_count >= 2  # placeholder + breakdown (at minimum)
+        assert mock_send.call_count >= 2  # placeholder + at least one message body
         mock_cleanup.assert_called_once_with("/tmp/fake_chart.png")
+
+        # Inspect all message bodies sent
+        all_sent_texts = " ".join(
+            str(c.args[2]) if len(c.args) >= 3 else str(c)
+            for c in mock_send.call_args_list
+        )
+
+        # The structured AI message must contain all 5 section headers
+        assert "📍 VERDICT" in all_sent_texts
+        assert "⏱️ TIMEFRAME SUMMARY" in all_sent_texts
+        assert "📊 CONFIDENCE" in all_sent_texts
+        assert "🎯 LEVELS & TRIGGERS" in all_sent_texts
+
+    def test_handle_detail_command_passes_parse_mode_markdownv2_for_message_2(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """handle_detail_command sends the AI analysis message with parse_mode='MarkdownV2'."""
+        from src.notifier.detail_command import handle_detail_command
+
+        _insert_score(db_connection, "AAPL")
+        _insert_indicators(db_connection, "AAPL")
+
+        calc_config = {
+            "fibonacci": {"levels": [0.236, 0.382, 0.5, 0.618, 0.786], "proximity_pct": 1.0, "min_range_pct": 5.0}
+        }
+
+        ai_mock_return = (
+            "BUY</verdict>"
+            "<timeframe_note>Bullish</timeframe_note>"
+            "<reasoning>Strong setup.</reasoning>"
+        )
+
+        with patch("src.notifier.detail_command.generate_chart", return_value="/tmp/fake_chart.png"):
+            with patch("src.notifier.detail_command.cleanup_chart"):
+                with patch("src.notifier.detail_command.send_photo_to_chat", return_value=True):
+                    with patch("src.notifier.detail_command._call_claude_for_analysis", return_value=ai_mock_return):
+                        with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
+                            with patch("src.notifier.detail_command.edit_telegram_message", return_value=True):
+                                handle_detail_command(
+                                    db_connection,
+                                    "chat123",
+                                    "/detail AAPL",
+                                    "bot_token",
+                                    SAMPLE_CONFIG,
+                                    ACTIVE_TICKERS,
+                                    calc_config,
+                                )
+
+        # At least one call should have parse_mode="MarkdownV2"
+        parse_modes = [
+            c.kwargs.get("parse_mode") or (c.args[3] if len(c.args) > 3 else None)
+            for c in mock_send.call_args_list
+        ]
+        assert "MarkdownV2" in parse_modes, (
+            f"Expected at least one send_telegram_message call with parse_mode='MarkdownV2', "
+            f"got call_args_list: {mock_send.call_args_list}"
+        )
+
+    def test_message_2_has_no_unescaped_markdownv2_specials_outside_code_blocks(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        msg #2 sent under parse_mode='MarkdownV2' must escape every MarkdownV2 special
+        character outside triple-backtick code blocks. An unescaped '(' or '.' makes
+        Telegram return 400 Bad Request, causing msg #2 to silently fail to send.
+
+        This test asserts the deterministic confidence section, key_levels_text, and
+        signal_triggers_text are all properly escaped before send — they contain
+        prices, percentages, and parentheses that would otherwise break the parser.
+        """
+        from src.notifier.detail_command import handle_detail_command
+
+        _insert_score(db_connection, "AAPL")
+        _insert_indicators(db_connection, "AAPL")
+
+        calc_config = {
+            "fibonacci": {"levels": [0.236, 0.382, 0.5, 0.618, 0.786], "proximity_pct": 1.0, "min_range_pct": 5.0}
+        }
+
+        ai_mock_return = (
+            "BUY pullback to $185</verdict>"
+            "<timeframe_note>All timeframes bullish</timeframe_note>"
+            "<reasoning>MACD rising.</reasoning>"
+        )
+
+        with patch("src.notifier.detail_command.generate_chart", return_value="/tmp/fake_chart.png"):
+            with patch("src.notifier.detail_command.cleanup_chart"):
+                with patch("src.notifier.detail_command.send_photo_to_chat", return_value=True):
+                    with patch("src.notifier.detail_command._call_claude_for_analysis", return_value=ai_mock_return):
+                        with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
+                            with patch("src.notifier.detail_command.edit_telegram_message", return_value=True):
+                                handle_detail_command(
+                                    db_connection,
+                                    "chat123",
+                                    "/detail AAPL",
+                                    "bot_token",
+                                    SAMPLE_CONFIG,
+                                    ACTIVE_TICKERS,
+                                    calc_config,
+                                )
+
+        # Find every send_telegram_message call that used parse_mode='MarkdownV2'
+        markdownv2_chunks: list[str] = []
+        for call in mock_send.call_args_list:
+            parse_mode = call.kwargs.get("parse_mode") or (call.args[3] if len(call.args) > 3 else None)
+            if parse_mode == "MarkdownV2":
+                # text is the 3rd positional arg
+                text = call.args[2] if len(call.args) >= 3 else call.kwargs.get("text", "")
+                markdownv2_chunks.append(text)
+
+        assert markdownv2_chunks, "Expected at least one MarkdownV2 chunk to be sent"
+
+        # MarkdownV2 special characters per Telegram Bot API spec
+        specials = "_*[]()~`>#+-=|{}.!"
+
+        for chunk in markdownv2_chunks:
+            # Strip triple-backtick code blocks — their contents are exempt from escaping
+            parts = chunk.split("```")
+            non_code_segments = parts[::2]  # even-indexed segments are outside code blocks
+
+            for segment in non_code_segments:
+                for idx, ch in enumerate(segment):
+                    if ch in specials:
+                        # The character must be preceded by a backslash (escape)
+                        preceded_by_backslash = idx > 0 and segment[idx - 1] == "\\"
+                        assert preceded_by_backslash, (
+                            f"Unescaped MarkdownV2 special character {ch!r} at index {idx} "
+                            f"in non-code-block portion of msg #2 chunk:\n"
+                            f"{segment[max(0, idx - 30):idx + 30]!r}"
+                        )
 
     def test_unknown_ticker_sends_error(self, db_connection: sqlite3.Connection) -> None:
         """handle_detail_command sends error for unknown ticker."""

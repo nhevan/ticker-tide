@@ -281,7 +281,7 @@ def send_telegram_message(
         bot_token: Telegram Bot API token.
         chat_id: Target chat or channel ID.
         text: Message text to send.
-        parse_mode: Optional parse mode ("Markdown" or "HTML").
+        parse_mode: Optional parse mode ("Markdown", "MarkdownV2", or "HTML").
 
     Returns:
         The message_id integer from the API response, or None on failure.

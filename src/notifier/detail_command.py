@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 from datetime import date, timedelta
 from typing import Optional
@@ -35,6 +36,45 @@ from src.notifier.chart_generator import cleanup_chart, generate_chart
 logger = logging.getLogger(__name__)
 
 _MAX_TELEGRAM_LENGTH = 4096
+
+# Characters that must be escaped in MarkdownV2 (outside code blocks)
+_MARKDOWN_V2_SPECIAL = r'_*[]()~`>#+-=|{}.!'
+
+# Section markers for _split_message_at_section_markers — exact prefix matches only
+_MSG2_SECTION_MARKERS = (
+    "📍 VERDICT",
+    "⏱️ TIMEFRAME SUMMARY",
+    "🧠 REASONING",
+    "📊 CONFIDENCE",
+    "🎯 LEVELS & TRIGGERS",
+)
+
+
+# ---------------------------------------------------------------------------
+# MarkdownV2 escaping
+# ---------------------------------------------------------------------------
+
+def escape_markdown_v2(text: str) -> str:
+    """
+    Escape Telegram MarkdownV2 special characters in text.
+
+    Triple-backtick code blocks are passed through unchanged — their
+    contents are not re-escaped.
+
+    Parameters:
+        text: Source text, possibly containing code blocks.
+
+    Returns:
+        Text with all required MarkdownV2 special characters escaped
+        outside of code blocks.
+    """
+    # split on code-block delimiters; even-indexed segments are outside,
+    # odd-indexed are inside code blocks (passed through verbatim)
+    parts = text.split("```")
+    for idx in range(0, len(parts), 2):
+        for ch in _MARKDOWN_V2_SPECIAL:
+            parts[idx] = parts[idx].replace(ch, f"\\{ch}")
+    return "```".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -88,115 +128,291 @@ def parse_detail_command(
 
 
 # ---------------------------------------------------------------------------
-# Section builders
+# Weekly / monthly score fetchers
 # ---------------------------------------------------------------------------
 
-def build_scoring_chain(score: dict, scorer_cfg: dict) -> str:
+def fetch_weekly_score(db_conn: sqlite3.Connection, ticker: str) -> dict | None:
     """
-    Format the scoring chain section showing how the final score was computed.
-
-    Uses regime-adaptive 3-way weights from scorer_cfg["timeframe_weights"].
-    Falls back to "trending" weights if regime is missing or unknown, logging
-    a WARNING only when the regime value is present but not recognised.
+    Fetch the latest scores_weekly row for a ticker.
 
     Parameters:
-        score: Score dict from scores_daily (must contain daily_score,
-            weekly_score, monthly_score, final_score, signal, confidence,
-            regime).
-        scorer_cfg: Full scorer config dict containing "timeframe_weights"
-            nested by regime name.
+        db_conn: Open SQLite connection.
+        ticker: Ticker symbol.
 
     Returns:
-        Formatted string section starting with '═══ SCORING CHAIN ═══'.
+        Dict of all columns for the latest week_start, or None if no row exists.
     """
-    daily = score.get("daily_score") or 0.0
-    weekly = score.get("weekly_score") or 0.0
-    monthly = score.get("monthly_score") or 0.0
-    final = score.get("final_score") or 0.0
-    signal = score.get("signal", "NEUTRAL")
-    confidence = score.get("confidence") or 0.0
-    raw_regime = score.get("regime")
-    regime = raw_regime or "trending"
+    row = db_conn.execute(
+        "SELECT * FROM scores_weekly WHERE ticker = ? ORDER BY week_start DESC LIMIT 1",
+        (ticker,),
+    ).fetchone()
+    return dict(row) if row else None
 
-    timeframe_weights = scorer_cfg.get("timeframe_weights", {})
-    if regime not in timeframe_weights:
-        if raw_regime is not None:
-            logger.warning(
-                "phase=detail_command unknown regime %r in scoring chain; "
-                "falling back to 'trending'",
-                raw_regime,
-            )
-        regime = "trending"
 
-    weights = timeframe_weights.get(regime, {})
-    w_daily: float = weights.get("daily", 0.0)
-    w_weekly: float = weights.get("weekly", 0.0)
-    w_monthly: float = weights.get("monthly", 0.0)
+def fetch_monthly_score(db_conn: sqlite3.Connection, ticker: str) -> dict | None:
+    """
+    Fetch the latest scores_monthly row for a ticker.
 
-    merged = w_daily * daily + w_weekly * weekly + w_monthly * monthly
+    Parameters:
+        db_conn: Open SQLite connection.
+        ticker: Ticker symbol.
 
-    lines = [
-        "═══ SCORING CHAIN ═══",
-        f"  Daily raw:    {daily:+.1f}",
-        f"  Weekly:       {weekly:+.1f}",
-        f"  Monthly:      {monthly:+.1f}",
-        f"  Merged ({regime}): "
-        f"{w_daily}×{daily:+.1f} + {w_weekly}×{weekly:+.1f} + {w_monthly}×{monthly:+.1f} = {merged:+.1f}",
-        f"  Final score:  {final:+.1f}",
-        f"  Signal:       {signal}",
-        f"  Confidence:   {confidence:.0f}%",
-        f"  Regime:       {regime}",
-    ]
+    Returns:
+        Dict of all columns for the latest month_start, or None if no row exists.
+    """
+    row = db_conn.execute(
+        "SELECT * FROM scores_monthly WHERE ticker = ? ORDER BY month_start DESC LIMIT 1",
+        (ticker,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Msg #2 deterministic builders
+# ---------------------------------------------------------------------------
+
+def build_verdict_header(score: dict, earnings_row: dict | None, config: dict) -> str:
+    """
+    Build the verdict header line for msg #2.
+
+    Prepends an earnings ⚠️ warning line when the next earnings date is within
+    the configured window (inclusive boundary).
+
+    Parameters:
+        score: Score dict from scores_daily (must have 'ticker' and 'date').
+        earnings_row: Upcoming earnings row dict (with 'earnings_date'), or None.
+        config: Notifier config dict containing config["detail_command"].
+
+    Returns:
+        One or two lines: optional ⚠️ warning, then the header.
+    """
+    detail_cfg = config.get("detail_command", {})
+    earnings_warning_days: int = detail_cfg.get("earnings_warning_days", 7)
+
+    ticker = score.get("ticker", "")
+    scoring_date = score.get("date", date.today().isoformat())
+
+    lines = []
+    if earnings_row is not None:
+        earnings_dt = date.fromisoformat(earnings_row["earnings_date"])
+        scoring_dt = date.fromisoformat(scoring_date)
+        days_away = (earnings_dt - scoring_dt).days
+        if days_away <= earnings_warning_days:
+            lines.append(f"⚠️ Earnings in {days_away} days ({earnings_row['earnings_date']})")
+
+    lines.append(f"📊 {ticker} — Detail Analysis ({scoring_date})")
     return "\n".join(lines)
 
 
-def build_category_scores(score: dict) -> str:
+def _direction_symbol(score_val: float, threshold: float) -> str:
     """
-    Format category scores with 15-char visual bars.
+    Return ▲, ▼, or ▬ based on score vs threshold.
 
-    Each bar is centered: ▓ characters fill from the center outward toward
-    the negative side (left) or positive side (right), with ░ as the neutral fill.
+    Parameters:
+        score_val: The numeric score to evaluate.
+        threshold: The direction threshold from config.
+
+    Returns:
+        '▲' if score_val > threshold, '▼' if score_val < -threshold, '▬' otherwise.
+    """
+    if score_val > threshold:
+        return "▲"
+    if score_val < -threshold:
+        return "▼"
+    return "▬"
+
+
+def build_timeframe_table(
+    daily_row: dict,
+    weekly_row: dict | None,
+    monthly_row: dict | None,
+    config: dict,
+) -> str:
+    """
+    Build the timeframe summary table for msg #2, wrapped in a triple-backtick code block.
+
+    Columns: Timeframe, Score, Trend, Momentum, Direction.
+    Rows: Daily, Weekly, Monthly (N/A for missing weekly/monthly rows).
+    Does not read sentiment_score from weekly/monthly rows (they don't have it).
+
+    Parameters:
+        daily_row: Score dict from scores_daily.
+        weekly_row: Latest scores_weekly row dict, or None.
+        monthly_row: Latest scores_monthly row dict, or None.
+        config: Notifier config dict containing config["detail_command"].
+
+    Returns:
+        Triple-backtick-wrapped table string.
+    """
+    detail_cfg = config.get("detail_command", {})
+    threshold: float = detail_cfg.get("timeframe_direction_threshold", 15.0)
+
+    header = f"{'':8} {'Score':>7}  {'Trend':>7}  {'Mom':>7}  Dir"
+    separator = "-" * len(header)
+
+    rows_data = [
+        (
+            "Daily",
+            daily_row.get("final_score") or 0.0,
+            daily_row.get("trend_score") or 0.0,
+            daily_row.get("momentum_score") or 0.0,
+        ),
+    ]
+
+    if weekly_row is not None:
+        rows_data.append((
+            "Weekly",
+            weekly_row.get("composite_score") or 0.0,
+            weekly_row.get("trend_score") or 0.0,
+            weekly_row.get("momentum_score") or 0.0,
+        ))
+    else:
+        rows_data.append(("Weekly", None, None, None))
+
+    if monthly_row is not None:
+        rows_data.append((
+            "Monthly",
+            monthly_row.get("composite_score") or 0.0,
+            monthly_row.get("trend_score") or 0.0,
+            monthly_row.get("momentum_score") or 0.0,
+        ))
+    else:
+        rows_data.append(("Monthly", None, None, None))
+
+    lines = [header, separator]
+    for label, comp, trend, mom in rows_data:
+        if comp is None:
+            lines.append(f"{label:<8}  N/A")
+        else:
+            direction = _direction_symbol(comp, threshold)
+            lines.append(
+                f"{label:<8} {comp:>+7.1f}  {trend:>+7.1f}  {mom:>+7.1f}  {direction}"
+            )
+
+    table = "\n".join(lines)
+    return f"```\n{table}\n```"
+
+
+def build_deterministic_confidence(
+    score: dict,
+    weekly_row: dict | None,
+    monthly_row: dict | None,
+    config: dict,
+) -> str:
+    """
+    Build the deterministic confidence section for msg #2.
+
+    Shows agreeing/disagreeing categories across daily/weekly/monthly timeframes
+    and flags raw-vs-calibrated sign contradictions when applicable.
+    When final_score == 0, returns a single neutral line and skips directional logic.
 
     Parameters:
         score: Score dict from scores_daily.
+        weekly_row: Latest scores_weekly row dict, or None.
+        monthly_row: Latest scores_monthly row dict, or None.
+        config: Notifier config dict containing config["detail_command"].
 
     Returns:
-        Formatted string section starting with '═══ CATEGORY SCORES ═══'.
+        Formatted confidence section string.
     """
-    categories = [
-        ("Trend", "trend_score"),
-        ("Momentum", "momentum_score"),
-        ("Volume", "volume_score"),
-        ("Volatility", "volatility_score"),
-        ("Candlestick", "candlestick_score"),
-        ("Structural", "structural_score"),
-        ("Sentiment", "sentiment_score"),
-        ("Fundamental", "fundamental_score"),
-        ("Macro", "macro_score"),
+    detail_cfg = config.get("detail_command", {})
+    min_score: float = detail_cfg.get("category_agreement_min_score", 10.0)
+    min_abs_calib: float = detail_cfg.get("calibration_divergence_min_abs", 0.3)
+
+    signal = score.get("signal", "NEUTRAL")
+    final_score = score.get("final_score") or 0.0
+    daily_score = score.get("daily_score") or 0.0
+    weekly_score = score.get("weekly_score") or 0.0
+    monthly_score = score.get("monthly_score") or 0.0
+    confidence = score.get("confidence") or 0.0
+    calibrated_score = score.get("calibrated_score")
+
+    lines = []
+    lines.append(f"  Daily:    {daily_score:+.1f} | Weekly:  {weekly_score:+.1f} | Monthly: {monthly_score:+.1f}")
+    lines.append(f"  Final score: {final_score:+.1f}  |  Confidence: {confidence:.0f}%")
+    if calibrated_score is not None:
+        lines.append(f"  Calibrated score: {calibrated_score:+.2f}")
+
+    if final_score == 0.0:
+        lines.append("  Signal NEUTRAL: no directional sign analysis.")
+        return "\n".join(lines)
+
+    direction = 1 if final_score > 0 else -1
+
+    # Daily categories (9 — includes sentiment)
+    daily_categories = [
+        ("trend (D)", score.get("trend_score") or 0.0),
+        ("momentum (D)", score.get("momentum_score") or 0.0),
+        ("volume (D)", score.get("volume_score") or 0.0),
+        ("volatility (D)", score.get("volatility_score") or 0.0),
+        ("candlestick (D)", score.get("candlestick_score") or 0.0),
+        ("structural (D)", score.get("structural_score") or 0.0),
+        ("sentiment (D)", score.get("sentiment_score") or 0.0),
+        ("fundamental (D)", score.get("fundamental_score") or 0.0),
+        ("macro (D)", score.get("macro_score") or 0.0),
     ]
 
-    lines = ["═══ CATEGORY SCORES ═══"]
-    bar_width = 15
+    # Weekly categories (8 — no sentiment)
+    weekly_cats: list[tuple[str, float]] = []
+    if weekly_row is not None:
+        weekly_cats = [
+            ("trend (W)", weekly_row.get("trend_score") or 0.0),
+            ("momentum (W)", weekly_row.get("momentum_score") or 0.0),
+            ("volume (W)", weekly_row.get("volume_score") or 0.0),
+            ("volatility (W)", weekly_row.get("volatility_score") or 0.0),
+            ("candlestick (W)", weekly_row.get("candlestick_score") or 0.0),
+            ("structural (W)", weekly_row.get("structural_score") or 0.0),
+            ("fundamental (W)", weekly_row.get("fundamental_score") or 0.0),
+            ("macro (W)", weekly_row.get("macro_score") or 0.0),
+        ]
 
-    for label, key in categories:
-        value = score.get(key, 0.0) or 0.0
-        # Clamp to [-100, 100] for bar display
-        clamped = max(-100.0, min(100.0, value))
-        filled = int(abs(clamped) / 100.0 * (bar_width // 2))
-        center = bar_width // 2
+    # Monthly categories (8 — no sentiment)
+    monthly_cats: list[tuple[str, float]] = []
+    if monthly_row is not None:
+        monthly_cats = [
+            ("trend (M)", monthly_row.get("trend_score") or 0.0),
+            ("momentum (M)", monthly_row.get("momentum_score") or 0.0),
+            ("volume (M)", monthly_row.get("volume_score") or 0.0),
+            ("volatility (M)", monthly_row.get("volatility_score") or 0.0),
+            ("candlestick (M)", monthly_row.get("candlestick_score") or 0.0),
+            ("structural (M)", monthly_row.get("structural_score") or 0.0),
+            ("fundamental (M)", monthly_row.get("fundamental_score") or 0.0),
+            ("macro (M)", monthly_row.get("macro_score") or 0.0),
+        ]
 
-        bar = ["░"] * bar_width
-        if clamped < 0:
-            for idx in range(max(0, center - filled), center):
-                bar[idx] = "▓"
-        else:
-            for idx in range(center, min(bar_width, center + filled)):
-                bar[idx] = "▓"
+    all_cats = daily_categories + weekly_cats + monthly_cats
 
-        bar_str = "".join(bar)
-        lines.append(f"  {label:<12} {value:+6.1f}  {bar_str}")
+    agreeing = [label for label, val in all_cats if abs(val) >= min_score and (1 if val > 0 else -1) == direction]
+    disagreeing = [label for label, val in all_cats if abs(val) >= min_score and (1 if val > 0 else -1) != direction]
+
+    if agreeing:
+        lines.append(f"  Agreeing:   {', '.join(agreeing)}")
+    else:
+        lines.append("  Agreeing:   none above threshold")
+
+    if disagreeing:
+        lines.append(f"  Disagreeing: {', '.join(disagreeing)}")
+    else:
+        lines.append("  Disagreeing: none above threshold")
+
+    # Calibration sign-flip check
+    if calibrated_score is not None and abs(calibrated_score) >= min_abs_calib:
+        sign_flip = (
+            (signal == "BULLISH" and calibrated_score < 0)
+            or (signal == "BEARISH" and calibrated_score > 0)
+        )
+        if sign_flip:
+            lines.append(
+                f"  ⚠️ Calibrated score ({calibrated_score:+.2f}) contradicts {signal} signal "
+                f"(final_score {final_score:+.1f}) — model expects opposite direction"
+            )
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Section builders
+# ---------------------------------------------------------------------------
 
 
 def build_indicators_section(indicators: dict) -> str:
@@ -852,46 +1068,96 @@ def build_confidence_modifiers_section(score: dict) -> str:
 
 
 def build_analyst_prompt(
-    ticker_context: str,
+    ticker: str,
+    score: dict,
+    weekly_row: dict | None,
+    monthly_row: dict | None,
     market_context: str,
     key_levels: str,
     signal_triggers: str,
     signal_history: str,
     earnings_info: str,
     sector_peers: str,
-) -> str:
+    calibration_divergence_note: str,
+) -> tuple[str, str]:
     """
-    Build the Claude prompt for deep technical analysis of a single ticker.
+    Build the (system_prompt, user_prompt) pair for /detail msg #2 AI analysis.
 
-    This prompt is distinct from the daily report prompt — it asks for a
-    longer, more specific research-note style analysis.
+    The assistant turn is prefilled with '<verdict>' separately to guarantee
+    well-formed XML output. The system prompt instructs Claude to emit exactly
+    three XML-tagged sections: <verdict>, <timeframe_note>, <reasoning>.
 
     Parameters:
-        ticker_context: Formatted ticker scoring and indicator context.
-        market_context: Market and macro context.
+        ticker: Ticker symbol.
+        score: Score dict from scores_daily.
+        weekly_row: Latest scores_weekly row dict, or None.
+        monthly_row: Latest scores_monthly row dict, or None.
+        market_context: Formatted macro/market context string.
         key_levels: Formatted key levels section.
         signal_triggers: Formatted signal change triggers section.
         signal_history: Formatted signal history section.
         earnings_info: Formatted earnings warning section (may be empty).
         sector_peers: Formatted sector peers section.
+        calibration_divergence_note: Non-empty string when raw/calibrated scores diverge.
 
     Returns:
-        Complete prompt string to send to Claude.
+        Tuple of (system_prompt, user_prompt).
     """
-    sections = [
-        "You are a senior technical analyst writing an internal research note.",
-        "Provide a detailed 3-4 paragraph analysis covering:\n",
-        "Paragraph 1: The current technical setup — what the indicators and patterns",
-        "are telling you. Use specific numbers and price levels.\n",
-        "Paragraph 2: The key conflict or thesis — what's the main question for",
-        "this stock right now? Is this a buyable dip or a bear trap? Is the trend",
-        "exhausting or accelerating?\n",
-        "Paragraph 3: Actionable conclusion — what specific levels to watch,",
-        "what would confirm a directional move, and what the risk/reward looks like.\n",
-        "Write with conviction. Be specific about prices, percentages, and",
-        "indicator values. Don't hedge every sentence.\n",
+    calib_instruction = ""
+    if calibration_divergence_note:
+        calib_instruction = (
+            "\n\nImportant: The calibrated model score contradicts the raw signal direction. "
+            "Explain this divergence inside <reasoning> — discuss whether the raw score or "
+            "calibrated score is more trustworthy given current conditions."
+        )
+
+    system_prompt = (
+        "You are a senior technical analyst writing a structured internal research note. "
+        "Emit exactly three XML-tagged sections in order:\n\n"
+        "<verdict> — max 3 lines. First line: BUY / SELL / HOLD-WAIT. "
+        "Next 2 lines: concrete justification with prices and levels.\n\n"
+        "<timeframe_note> — 1 line. Do daily/weekly/monthly timeframes agree? "
+        "Is momentum building or fading?\n\n"
+        "<reasoning> — 1 paragraph. Explain the call with specific indicator values, "
+        "price levels, and the key risk to the thesis. Write with conviction."
+        + calib_instruction
+    )
+
+    signal = score.get("signal", "NEUTRAL")
+    final_score = score.get("final_score") or 0.0
+    confidence = score.get("confidence") or 0.0
+    regime = score.get("regime", "unknown")
+    daily_score = score.get("daily_score") or 0.0
+    weekly_score = score.get("weekly_score") or 0.0
+    monthly_score = score.get("monthly_score") or 0.0
+
+    weekly_summary = "N/A"
+    if weekly_row is not None:
+        wc = weekly_row.get("composite_score") or 0.0
+        wt = weekly_row.get("trend_score") or 0.0
+        wm = weekly_row.get("momentum_score") or 0.0
+        weekly_summary = f"composite={wc:+.1f}, trend={wt:+.1f}, momentum={wm:+.1f}"
+
+    monthly_summary = "N/A"
+    if monthly_row is not None:
+        mc = monthly_row.get("composite_score") or 0.0
+        mt = monthly_row.get("trend_score") or 0.0
+        mm = monthly_row.get("momentum_score") or 0.0
+        monthly_summary = f"composite={mc:+.1f}, trend={mt:+.1f}, momentum={mm:+.1f}"
+
+    user_sections = [
         "--- TICKER CONTEXT ---",
-        ticker_context,
+        f"Ticker: {ticker}",
+        f"Signal: {signal} | Final score: {final_score:+.1f} | Confidence: {confidence:.0f}% | Regime: {regime}",
+        f"Daily score: {daily_score:+.1f} | Weekly score: {weekly_score:+.1f} | Monthly score: {monthly_score:+.1f}",
+        f"Weekly breakdown: {weekly_summary}",
+        f"Monthly breakdown: {monthly_summary}",
+    ]
+
+    if calibration_divergence_note:
+        user_sections += ["--- CALIBRATION NOTE ---", calibration_divergence_note]
+
+    user_sections += [
         "--- MARKET CONTEXT ---",
         market_context,
         "--- KEY LEVELS ---",
@@ -903,12 +1169,13 @@ def build_analyst_prompt(
     ]
 
     if earnings_info:
-        sections += ["--- EARNINGS ---", earnings_info]
+        user_sections += ["--- EARNINGS ---", earnings_info]
 
     if sector_peers:
-        sections += ["--- SECTOR PEERS ---", sector_peers]
+        user_sections += ["--- SECTOR PEERS ---", sector_peers]
 
-    return "\n".join(sections)
+    user_prompt = "\n".join(user_sections)
+    return system_prompt, user_prompt
 
 
 def build_full_breakdown(
@@ -916,20 +1183,23 @@ def build_full_breakdown(
     ticker: str,
     score: dict,
     config: dict,
-    scorer_cfg: dict,
     indicators: dict | None = None,
     current_price: float | None = None,
     sr_levels: list[dict] | None = None,
     active_tickers: list[dict] | None = None,
 ) -> str:
     """
-    Assemble all breakdown sections into the complete raw data message.
+    Assemble all breakdown sections into the complete raw data message (msg #3).
 
     Sections are included in this order:
-      Scoring chain, Category scores, Indicators, Patterns, Divergences,
-      Crossovers, Fibonacci, Sentiment, Fundamentals, Macro, Key levels,
-      Signal change triggers, Signal history, Earnings warning, Sector peers,
-      Confidence modifiers.
+      Indicators, Patterns, Divergences, Crossovers, Fibonacci, Sentinel header,
+      Sentiment, Fundamentals, Macro, Key levels, Signal change triggers,
+      Signal history, Earnings warning, Sector peers, Confidence modifiers.
+
+    Note: Scoring chain and category scores were removed in Plan B — they are
+    now presented exclusively via the deterministic confidence and AI sections
+    in msg #2. The underlying build_scoring_chain and build_category_scores
+    functions have been deleted.
 
     Empty sections are omitted silently.
 
@@ -938,8 +1208,6 @@ def build_full_breakdown(
         ticker: Ticker symbol.
         score: Score dict from scores_daily.
         config: Notifier config dict.
-        scorer_cfg: Full scorer config dict containing "timeframe_weights"
-            nested by regime, used to display the correct merge formula.
         indicators: Pre-fetched indicator dict (avoids duplicate query if provided).
         current_price: Pre-fetched current close price (avoids duplicate query if provided).
         sr_levels: Pre-fetched S/R levels list (avoids duplicate query if provided).
@@ -979,8 +1247,6 @@ def build_full_breakdown(
         )
 
     sections = [
-        build_scoring_chain(score, scorer_cfg),
-        build_category_scores(score),
         build_indicators_section(indicators),
         build_patterns_section(db_conn, ticker),
         build_divergences_section(db_conn, ticker),
@@ -1035,16 +1301,29 @@ def build_sentinel_section_header(ticker: str, scoring_date: str) -> str:
     wait=wait_exponential(multiplier=1, min=2, max=10),
     reraise=True,
 )
-def _call_claude_for_analysis(prompt: str, config: dict) -> str:
+def _call_claude_for_analysis(
+    user_prompt: str,
+    system_prompt: str,
+    prefill: str,
+    config: dict,
+) -> str:
     """
-    Call the Claude API for deep technical analysis.
+    Call the Claude API for structured technical analysis.
+
+    Uses the system prompt for persona and format instructions, and optionally
+    prefills the assistant turn to guarantee well-formed XML output.
+    Prefilling requires Claude 3+ models.
 
     Parameters:
-        prompt: Complete analyst prompt string.
+        user_prompt: User message containing ticker context and data.
+        system_prompt: System prompt with persona and XML format instructions.
+        prefill: String to prefill the assistant turn (e.g. '<verdict>').
+            When non-empty, this content is prepended by parse_ai_response
+            before parsing — it is NOT included in the API response text.
         config: Notifier config dict containing config["ai_reasoner"].
 
     Returns:
-        Claude's analysis text, or a fallback string on failure.
+        Claude's raw response text (NOT including the prefill content).
     """
     import anthropic as _anthropic  # lazy import — not available in all environments
 
@@ -1056,13 +1335,63 @@ def _call_claude_for_analysis(prompt: str, config: dict) -> str:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     client = _anthropic.Anthropic(api_key=api_key)
 
+    messages: list[dict] = [{"role": "user", "content": user_prompt}]
+    if prefill:
+        messages.append({"role": "assistant", "content": prefill})
+
     message = client.messages.create(
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
-        messages=[{"role": "user", "content": prompt}],
+        system=system_prompt,
+        messages=messages,
     )
     return message.content[0].text
+
+
+def parse_ai_response(text: str, prefill: str) -> dict:
+    """
+    Parse Claude's XML-tagged response into verdict/timeframe_note/reasoning.
+
+    The prefill is prepended to text before parsing because prefilled content
+    is not included in the API response.
+
+    On parse failure (any tag missing or malformed), returns the raw text in
+    the verdict slot and empty strings for the others, logging WARNING with
+    which tag was missing.
+
+    Empty <reasoning></reasoning> returns "" (NOT None) for that key.
+
+    Parameters:
+        text: Raw text from _call_claude_for_analysis.
+        prefill: The prefill string (typically "<verdict>").
+
+    Returns:
+        {"verdict": str, "timeframe_note": str, "reasoning": str}
+    """
+    full_text = (prefill or "") + text
+
+    verdict_match = re.search(r"<verdict>(.*?)</verdict>", full_text, re.DOTALL)
+    timeframe_match = re.search(r"<timeframe_note>(.*?)</timeframe_note>", full_text, re.DOTALL)
+    reasoning_match = re.search(r"<reasoning>(.*?)</reasoning>", full_text, re.DOTALL)
+
+    if not verdict_match:
+        logger.warning("phase=detail_command parse_ai_response missing <verdict> tag in response")
+        return {"verdict": text, "timeframe_note": "", "reasoning": ""}
+
+    if not timeframe_match:
+        logger.warning("phase=detail_command parse_ai_response missing <timeframe_note> tag in response")
+        return {"verdict": text, "timeframe_note": "", "reasoning": ""}
+
+    if not reasoning_match:
+        logger.warning("phase=detail_command parse_ai_response missing <reasoning> tag in response")
+        return {"verdict": text, "timeframe_note": "", "reasoning": ""}
+
+    return {
+        "verdict": verdict_match.group(1).strip(),
+        "timeframe_note": timeframe_match.group(1).strip(),
+        "reasoning": reasoning_match.group(1).strip(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1146,6 +1475,48 @@ def _split_breakdown_at_sections(text: str, max_len: int = _MAX_TELEGRAM_LENGTH)
     return chunks
 
 
+def _split_message_at_section_markers(text: str, max_len: int = _MAX_TELEGRAM_LENGTH) -> list[str]:
+    """
+    Split msg #2 text into chunks at section marker boundaries.
+
+    Splits ONLY on lines that start with one of the five msg #2 section markers:
+      📍 VERDICT, ⏱️ TIMEFRAME SUMMARY, 🧠 REASONING, 📊 CONFIDENCE, 🎯 LEVELS & TRIGGERS
+
+    The verdict header '📊 {ticker} — Detail Analysis' does NOT match '📊 CONFIDENCE'
+    so it is never a split point.
+
+    Parameters:
+        text: Complete msg #2 text.
+        max_len: Maximum characters per chunk.
+
+    Returns:
+        List of text chunks, each ≤ max_len characters.
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    lines = text.split("\n")
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for line in lines:
+        line_len = len(line) + 1  # +1 for newline
+        is_marker = any(line.startswith(marker) for marker in _MSG2_SECTION_MARKERS)
+        if current and is_marker and current_len + line_len > max_len:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = line_len
+        else:
+            current.append(line)
+            current_len += line_len
+
+    if current:
+        chunks.append("\n".join(current))
+
+    return chunks
+
+
 # ---------------------------------------------------------------------------
 # Main command handler
 # ---------------------------------------------------------------------------
@@ -1184,8 +1555,6 @@ def handle_detail_command(
     Returns:
         None
     """
-    scorer_cfg = load_config("scorer")  # loaded once; passed to build_full_breakdown for regime-adaptive weights
-
     parse_result = parse_detail_command(message_text, active_tickers, config)
     if "error" in parse_result:
         send_telegram_message(bot_token, chat_id, parse_result["error"])
@@ -1226,7 +1595,19 @@ def handle_detail_command(
                 caption=f"{ticker} — {days}-Day Technical Chart",
             )
 
-        # Step 2: AI analysis — fetch shared data once for both AI prompt and breakdown
+        # Step 2: Fetch weekly/monthly scores
+        weekly_row = fetch_weekly_score(db_conn, ticker)
+        monthly_row = fetch_monthly_score(db_conn, ticker)
+
+        # Step 3: Fetch upcoming earnings row for verdict header
+        earnings_calendar_row = db_conn.execute(
+            "SELECT earnings_date, estimated_eps FROM earnings_calendar "
+            "WHERE ticker = ? AND earnings_date >= ? ORDER BY earnings_date ASC LIMIT 1",
+            (ticker, scoring_date),
+        ).fetchone()
+        upcoming_earnings_row = dict(earnings_calendar_row) if earnings_calendar_row else None
+
+        # Step 4: Pre-fetch shared data once for both AI prompt and breakdown
         indicators_row = db_conn.execute(
             "SELECT * FROM indicators_daily WHERE ticker = ? AND date <= ? ORDER BY date DESC LIMIT 1",
             (ticker, scoring_date),
@@ -1265,34 +1646,106 @@ def handle_detail_command(
         )
         macro_text = build_macro_section(db_conn, scoring_date)
 
-        ticker_summary = (
-            f"{ticker} | Signal: {score.get('signal')} | "
-            f"Score: {score.get('final_score', 0.0):+.1f} | "
-            f"Confidence: {score.get('confidence', 0.0):.0f}% | "
-            f"Regime: {score.get('regime', 'unknown')}"
-        )
+        # Step 5: Compute calibration divergence note (shared by AI prompt and confidence section)
+        detail_cfg = config.get("detail_command", {})
+        min_abs_calib: float = detail_cfg.get("calibration_divergence_min_abs", 0.3)
+        calibrated_score = score.get("calibrated_score")
+        signal_val = score.get("signal", "NEUTRAL")
+        final_score_val = score.get("final_score") or 0.0
+        calibration_divergence_note = ""
+        if (
+            calibrated_score is not None
+            and abs(calibrated_score) >= min_abs_calib
+            and final_score_val != 0
+        ):
+            sign_flip = (
+                (signal_val == "BULLISH" and calibrated_score < 0)
+                or (signal_val == "BEARISH" and calibrated_score > 0)
+            )
+            if sign_flip:
+                calibration_divergence_note = (
+                    f"⚠️ Calibrated score ({calibrated_score:+.2f}) contradicts {signal_val} "
+                    f"raw signal ({final_score_val:+.1f})"
+                )
 
-        prompt = build_analyst_prompt(
-            ticker_context=ticker_summary,
+        # Step 6: Build deterministic msg #2 sections
+        verdict_header = build_verdict_header(score, upcoming_earnings_row, config)
+        timeframe_table = build_timeframe_table(score, weekly_row, monthly_row, config)
+        confidence_section = build_deterministic_confidence(score, weekly_row, monthly_row, config)
+
+        # Step 7: Build AI prompt and call Claude
+        system_prompt, user_prompt = build_analyst_prompt(
+            ticker=ticker,
+            score=score,
+            weekly_row=weekly_row,
+            monthly_row=monthly_row,
             market_context=macro_text,
             key_levels=key_levels_text,
             signal_triggers=signal_triggers_text,
             signal_history=signal_history_text,
             earnings_info=earnings_text,
             sector_peers=peers_text,
+            calibration_divergence_note=calibration_divergence_note,
         )
 
         try:
-            ai_text = _call_claude_for_analysis(prompt, config)
+            ai_raw = _call_claude_for_analysis(user_prompt, system_prompt, prefill="<verdict>", config=config)
         except Exception as exc:
             logger.warning("ticker=%s phase=detail_command Claude call failed: %s", ticker, exc)
-            ai_text = "AI analysis unavailable — see raw data below."
+            ai_raw = "BUY / SELL / HOLD-WAIT — AI unavailable</verdict><timeframe_note>N/A</timeframe_note><reasoning></reasoning>"
 
-        send_telegram_message(bot_token, chat_id, f"🤖 AI Analysis — {ticker}\n\n{ai_text}")
+        # Step 8: Parse Claude response
+        parsed = parse_ai_response(ai_raw, prefill="<verdict>")
 
-        # Step 3: Raw breakdown — reuse pre-fetched data to avoid duplicate queries
+        # Step 9: Apply MarkdownV2 escaping to all non-code-block sections.
+        # The timeframe_table is wrapped in a triple-backtick code block, so
+        # escape_markdown_v2 passes its content through unchanged. All other
+        # sections (verdict header, AI free-text, deterministic confidence,
+        # existing key_levels and signal_triggers builders) contain MarkdownV2
+        # special characters (parens, dots, dashes, plus signs, pipes) that
+        # must be escaped or Telegram's parser returns 400 Bad Request.
+        verdict_header_esc = escape_markdown_v2(verdict_header)
+        ai_verdict_esc = escape_markdown_v2(parsed["verdict"])
+        ai_timeframe_note_esc = escape_markdown_v2(parsed["timeframe_note"])
+        ai_reasoning_esc = escape_markdown_v2(parsed["reasoning"])
+        confidence_section_esc = escape_markdown_v2(confidence_section)
+        key_levels_text_esc = escape_markdown_v2(key_levels_text)
+        signal_triggers_text_esc = escape_markdown_v2(signal_triggers_text)
+
+        # Step 10: Assemble msg #2
+        msg2_parts = [
+            verdict_header_esc,
+            "📍 VERDICT",
+            ai_verdict_esc,
+            "⏱️ TIMEFRAME SUMMARY",
+            timeframe_table,  # code block — escape passes content through unchanged
+            ai_timeframe_note_esc,
+        ]
+        if parsed["reasoning"].strip():
+            msg2_parts += ["🧠 REASONING", ai_reasoning_esc]
+        msg2_parts += [
+            "📊 CONFIDENCE",
+            confidence_section_esc,
+            "🎯 LEVELS & TRIGGERS",
+            key_levels_text_esc,
+            signal_triggers_text_esc,
+        ]
+        msg2 = "\n".join(msg2_parts)
+
+        # Step 11: Split and send msg #2 with MarkdownV2
+        msg2_chunks = _split_message_at_section_markers(msg2, _MAX_TELEGRAM_LENGTH)
+        for chunk in msg2_chunks:
+            result_id = send_telegram_message(bot_token, chat_id, chunk, parse_mode="MarkdownV2")
+            if result_id is None:
+                logger.error(
+                    "ticker=%s phase=detail_command send_telegram_message returned None for msg #2 chunk "
+                    "(MarkdownV2 escaping may have failed — check for unescaped special characters)",
+                    ticker,
+                )
+
+        # Step 12: Raw breakdown — reuse pre-fetched data to avoid duplicate queries
         breakdown = build_full_breakdown(
-            db_conn, ticker, score, config, scorer_cfg,
+            db_conn, ticker, score, config,
             indicators=indicators,
             current_price=current_price,
             sr_levels=sr_levels,

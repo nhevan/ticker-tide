@@ -454,6 +454,22 @@ in this block does, however, require a redeploy because
 | `telegram.display_timezone` | string | `"Europe/Amsterdam"` | Timezone for timestamps shown in Telegram messages |
 | `telegram.max_message_chars` | int | `4000` | Maximum characters per Telegram message before splitting. Messages that exceed this limit are split at line boundaries and annotated with `(N/M)` page indicators in the header and footer. Keep below Telegram's hard limit of 4096. |
 
+**`detail_command` keys** (used by the `/detail` bot command):
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `detail_command.default_chart_days` | int | `30` | Default lookback days for the chart image |
+| `detail_command.max_chart_days` | int | `180` | Maximum allowed chart days; larger values are clamped |
+| `detail_command.chart_style` | string | `"nightclouds"` | mplfinance chart style name |
+| `detail_command.chart_figsize` | array | `[14, 10]` | Chart figure size `[width, height]` in inches |
+| `detail_command.sr_levels_to_show` | int | `3` | Maximum S/R levels shown per direction (resistance / support) |
+| `detail_command.signal_history_days` | int | `30` | Days of signal history to include in msg #3 breakdown |
+| `detail_command.peer_count` | int | `5` | Maximum sector peers to show |
+| `detail_command.category_agreement_min_score` | float | `10.0` | A category is counted as "agreeing" or "disagreeing" with the signal direction when `abs(category_score) ≥` this threshold. Lower values include weaker signals; higher values surface only strong category alignment. Display-only — no pipeline re-run needed. |
+| `detail_command.calibration_divergence_min_abs` | float | `0.3` | Minimum `abs(calibrated_score)` required before the raw-vs-calibrated sign-flip check is applied. Suppresses the ⚠️ flag when calibrated_score is near-zero (directionally meaningless). Display-only — no pipeline re-run needed. |
+| `detail_command.earnings_warning_days` | int | `7` | Prepend an earnings ⚠️ warning line to the verdict header when the next earnings date is within this many calendar days (inclusive boundary). Display-only — no pipeline re-run needed. |
+| `detail_command.timeframe_direction_threshold` | float | `15.0` | Score > +threshold renders ▲ (bullish); score < -threshold renders ▼ (bearish); otherwise ▬ (neutral) in the timeframe summary table. Display-only — no pipeline re-run needed. |
+
 **`scatter_command` keys** (used by the `/scatter` bot command):
 
 | Key | Type | Default | Description |

@@ -1308,6 +1308,46 @@ All patterns within the chart's date window are shown. Trendlines require the en
 Chart config (`chart_figsize`, `sr_levels_to_show`) comes from
 `config/notifier.json → detail_command`.
 
+#### AI vs deterministic content boundary in /detail message #2
+
+The `/detail` command sends three messages. Message #2 is a structured analysis that combines
+AI-generated interpretation with deterministic data pulled from the DB.
+
+**Content boundary:**
+
+| Section | Source | Notes |
+|---|---|---|
+| Verdict header (`📊 AAPL — Detail Analysis (date)`) | Deterministic | Includes optional ⚠️ earnings warning |
+| `📍 VERDICT` content | Claude (AI) | BUY / SELL / HOLD-WAIT + 2-line justification |
+| `⏱️ TIMEFRAME SUMMARY` table | Deterministic | Triple-backtick code block; daily/weekly/monthly scores from DB |
+| `⏱️ TIMEFRAME SUMMARY` 1-line note | Claude (AI) | Timeframe agreement interpretation |
+| `🧠 REASONING` | Claude (AI) | 1 paragraph; omitted when empty |
+| `📊 CONFIDENCE` | Deterministic | Agreeing/disagreeing categories + calibration flag |
+| `🎯 LEVELS & TRIGGERS` | Deterministic | From existing `build_key_levels` + `build_signal_change_triggers` |
+
+**Prefilling strategy:** The assistant turn is prefilled with `<verdict>` before calling the Claude API
+(`messages=[{"role":"user", ...}, {"role":"assistant","content":"<verdict>"}]`). This guarantees the
+response begins with a valid XML open tag and prevents Claude from generating preamble text. Prefilling
+requires Claude 3+ models. The prefill content is NOT returned in the API response — `parse_ai_response`
+prepends it before regex extraction.
+
+**Parse fallback:** If any of the three XML tags (`<verdict>`, `<timeframe_note>`, `<reasoning>`) is
+missing or malformed, `parse_ai_response` logs a WARNING and returns the raw response text in the
+`verdict` slot, with empty strings for the others. The command always sends a message — it never crashes
+on parse failure.
+
+**Scoring chain and category scores removed from msg #3:** In Plan B, `build_scoring_chain` and
+`build_category_scores` were removed from `build_full_breakdown` (msg #3). These views were redundant
+with the new `📊 CONFIDENCE` deterministic section in msg #2. The underlying functions were deleted.
+`build_confidence_modifiers_section` (a simpler view) remains in msg #3.
+
+**MarkdownV2 escaping:** AI-generated free text (verdict, timeframe_note, reasoning) and the verdict
+header are escaped via `escape_markdown_v2()` before inclusion in msg #2. The timeframe table is
+rendered inside a triple-backtick code block, which passes through the escaper unchanged.
+The `send_telegram_message` call for each msg #2 chunk passes `parse_mode="MarkdownV2"`.
+If `send_telegram_message` returns `None` (API rejection), the handler logs an ERROR with context
+and a hint that MarkdownV2 escaping may have failed.
+
 ### 13.6 Daily Pipeline Script (`scripts/run_daily.py`)
 
 The main cron entry point. Runs all 4 phases in sequence with the following error policy:

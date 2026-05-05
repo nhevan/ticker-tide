@@ -31,7 +31,11 @@
     "chart_figsize": [14, 10],
     "sr_levels_to_show": 3,
     "signal_history_days": 30,
-    "peer_count": 5
+    "peer_count": 5,
+    "category_agreement_min_score": 10.0,
+    "calibration_divergence_min_abs": 0.3,
+    "earnings_warning_days": 7,
+    "timeframe_direction_threshold": 15.0
   },
   "scatter_command": {
     "default_n_days": 5,
