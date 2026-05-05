@@ -1349,6 +1349,14 @@ def _call_claude_for_analysis(
     return message.content[0].text
 
 
+_STRAY_TAG_PATTERN = re.compile(r"</?(?:verdict|timeframe_note|reasoning)\s*/?>", re.IGNORECASE)
+
+
+def _strip_stray_tags(text: str) -> str:
+    """Remove any stray <verdict>/<timeframe_note>/<reasoning> tags from extracted content."""
+    return _STRAY_TAG_PATTERN.sub("", text).strip()
+
+
 def parse_ai_response(text: str, prefill: str) -> dict:
     """
     Parse Claude's XML-tagged response into verdict/timeframe_note/reasoning.
@@ -1356,11 +1364,15 @@ def parse_ai_response(text: str, prefill: str) -> dict:
     The prefill is prepended to text before parsing because prefilled content
     is not included in the API response.
 
-    On parse failure (any tag missing or malformed), returns the raw text in
-    the verdict slot and empty strings for the others, logging WARNING with
-    which tag was missing.
+    Each tag is extracted independently — missing tags yield empty strings for
+    that section instead of dumping the raw response into verdict. As a safety
+    net, any stray `<verdict>`, `<timeframe_note>`, or `<reasoning>` tags in
+    extracted content (e.g. nested or duplicated) are stripped so they never
+    appear in the rendered Telegram message.
 
-    Empty <reasoning></reasoning> returns "" (NOT None) for that key.
+    Only when ALL three tags are missing does the function fall back to the
+    raw text in the verdict slot — logging WARNING. This protects users from
+    seeing tag artifacts when Claude deviates from the format on a single tag.
 
     Parameters:
         text: Raw text from _call_claude_for_analysis.
@@ -1375,22 +1387,29 @@ def parse_ai_response(text: str, prefill: str) -> dict:
     timeframe_match = re.search(r"<timeframe_note>(.*?)</timeframe_note>", full_text, re.DOTALL)
     reasoning_match = re.search(r"<reasoning>(.*?)</reasoning>", full_text, re.DOTALL)
 
-    if not verdict_match:
-        logger.warning("phase=detail_command parse_ai_response missing <verdict> tag in response")
-        return {"verdict": text, "timeframe_note": "", "reasoning": ""}
+    missing_tags = [
+        name for name, match in [
+            ("verdict", verdict_match),
+            ("timeframe_note", timeframe_match),
+            ("reasoning", reasoning_match),
+        ]
+        if match is None
+    ]
+    if missing_tags:
+        logger.warning(
+            "phase=detail_command parse_ai_response missing tags %s in response",
+            missing_tags,
+        )
 
-    if not timeframe_match:
-        logger.warning("phase=detail_command parse_ai_response missing <timeframe_note> tag in response")
-        return {"verdict": text, "timeframe_note": "", "reasoning": ""}
-
-    if not reasoning_match:
-        logger.warning("phase=detail_command parse_ai_response missing <reasoning> tag in response")
-        return {"verdict": text, "timeframe_note": "", "reasoning": ""}
+    # Last-resort fallback: NO tags found at all → put raw text into verdict slot
+    # (with stray tags stripped so users never see <...> artifacts).
+    if not verdict_match and not timeframe_match and not reasoning_match:
+        return {"verdict": _strip_stray_tags(text), "timeframe_note": "", "reasoning": ""}
 
     return {
-        "verdict": verdict_match.group(1).strip(),
-        "timeframe_note": timeframe_match.group(1).strip(),
-        "reasoning": reasoning_match.group(1).strip(),
+        "verdict": _strip_stray_tags(verdict_match.group(1)) if verdict_match else "",
+        "timeframe_note": _strip_stray_tags(timeframe_match.group(1)) if timeframe_match else "",
+        "reasoning": _strip_stray_tags(reasoning_match.group(1)) if reasoning_match else "",
     }
 
 

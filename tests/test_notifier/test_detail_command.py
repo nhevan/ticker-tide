@@ -1111,6 +1111,72 @@ class TestParseAiResponse:
         assert result["reasoning"] == ""
         assert result["reasoning"] is not None
 
+    def test_parse_ai_response_extracts_partial_tags_independently(self) -> None:
+        """When only some tags are present, extract them; missing ones are empty (no raw dump)."""
+        from src.notifier.detail_command import parse_ai_response
+
+        # Verdict and timeframe_note present; reasoning missing entirely
+        raw = "BUY at $185</verdict><timeframe_note>Bullish</timeframe_note>"
+        result = parse_ai_response(raw, prefill="<verdict>")
+
+        assert result["verdict"] == "BUY at $185"
+        assert result["timeframe_note"] == "Bullish"
+        assert result["reasoning"] == ""
+        # Critical: raw text with stray tags must NOT appear in any field
+        assert "</verdict>" not in result["verdict"]
+        assert "<timeframe_note>" not in result["verdict"]
+
+    def test_parse_ai_response_strips_stray_tags_from_extracted_content(self) -> None:
+        """Stray <tag>/</tag> patterns inside extracted content are stripped (safety net)."""
+        from src.notifier.detail_command import parse_ai_response
+
+        # Claude duplicates a closing tag inside the timeframe_note content
+        raw = (
+            "BUY</verdict>"
+            "<timeframe_note>All bullish</timeframe_note></timeframe_note>"
+            "<reasoning>Solid setup.</reasoning>"
+        )
+        result = parse_ai_response(raw, prefill="<verdict>")
+
+        assert result["timeframe_note"] == "All bullish"
+        assert "</timeframe_note>" not in result["timeframe_note"]
+        assert "<" not in result["timeframe_note"]
+        assert "<" not in result["reasoning"]
+
+    def test_parse_ai_response_user_reported_scenario_no_tags_in_output(self) -> None:
+        """
+        Regression test for user-reported bug: when one tag goes missing, the previous
+        implementation dumped the entire raw response (including all XML tags) into the
+        verdict slot, so the user saw '<timeframe_note>...</timeframe_note>' rendered
+        in their Telegram message.
+
+        After fix: missing reasoning tag yields empty reasoning; verdict and timeframe_note
+        are still extracted cleanly. No < or > characters from XML tags should remain.
+        """
+        from src.notifier.detail_command import parse_ai_response
+
+        raw = (
+            "BUY pullback to $180</verdict>\n"
+            "<timeframe_note>\n"
+            "All timeframes aligned bullish: daily +61.7, weekly +62.6, monthly +83.0. "
+            "Momentum building with strengthening monthly trend leadership.\n"
+            "</timeframe_note>\n"
+            # Reasoning tag completely missing — the bug scenario
+        )
+        result = parse_ai_response(raw, prefill="<verdict>")
+
+        assert result["verdict"] == "BUY pullback to $180"
+        assert "All timeframes aligned bullish" in result["timeframe_note"]
+        assert result["reasoning"] == ""
+        # The critical assertion: NO XML tag artifacts in any rendered section
+        for key, value in result.items():
+            assert "<verdict>" not in value, f"<verdict> leaked into {key}: {value!r}"
+            assert "</verdict>" not in value, f"</verdict> leaked into {key}: {value!r}"
+            assert "<timeframe_note>" not in value, f"<timeframe_note> leaked into {key}: {value!r}"
+            assert "</timeframe_note>" not in value, f"</timeframe_note> leaked into {key}: {value!r}"
+            assert "<reasoning>" not in value, f"<reasoning> leaked into {key}: {value!r}"
+            assert "</reasoning>" not in value, f"</reasoning> leaked into {key}: {value!r}"
+
 
 # ---------------------------------------------------------------------------
 # Tests: _split_message_at_section_markers
