@@ -125,6 +125,8 @@ REQUIRED_KEYS=(
     "ANTHROPIC_API_KEY"
     "TELEGRAM_BOT_TOKEN"
     "TELEGRAM_ADMIN_CHAT_ID"
+    "WEB_PASSWORD"
+    "WEB_SECRET_KEY"
 )
 
 if [[ ! -f "${PROJECT_DIR}/.env" ]]; then
@@ -260,7 +262,30 @@ else
     echo "  • tail -f ${PROJECT_DIR}/logs/bot.log"
 fi
 
-# ─── Step 12: Print summary ────────────────────────────────────────────────────
+# ─── Step 12: Set up web systemd service ───────────────────────────────────────
+echo ""
+echo -e "${BOLD}🌐 Setting up web systemd service...${RESET}"
+
+WEB_SERVICE_SRC="${PROJECT_DIR}/deploy/ticker-tide-web.service"
+WEB_SERVICE_DEST="/etc/systemd/system/ticker-tide-web.service"
+
+if [[ ! -f "$WEB_SERVICE_SRC" ]]; then
+    echo -e "${YELLOW}⚠️  deploy/ticker-tide-web.service not found — skipping web service setup${RESET}"
+elif ! command -v systemctl &>/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  systemctl not available — skipping web service setup (not a systemd system)${RESET}"
+else
+    sudo sed "s|PROJECT_DIR|${PROJECT_DIR}|g" "${WEB_SERVICE_SRC}" \
+        | sudo tee "${WEB_SERVICE_DEST}" > /dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable ticker-tide-web
+    sudo systemctl restart ticker-tide-web
+    echo -e "${GREEN}✅ Web service installed and started (ticker-tide-web)${RESET}"
+    echo "  • sudo systemctl status ticker-tide-web"
+    echo "  • sudo systemctl stop/start/restart ticker-tide-web"
+    echo "  • tail -f ${PROJECT_DIR}/logs/web.log"
+fi
+
+# ─── Step 13: Print summary ────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════╗${RESET}"
 echo -e "${BOLD}║         🚀 Deployment Complete!              ║${RESET}"
@@ -272,6 +297,7 @@ printf "${BOLD}║  Database: %-34s║${RESET}\n" "see config/database.json"
 printf "${BOLD}║  Tests:    %-34s║${RESET}\n" "${TEST_COUNT} passed"
 printf "${BOLD}║  Cron:     %-34s║${RESET}\n" "3 jobs installed"
 printf "${BOLD}║  Bot:      %-34s║${RESET}\n" "systemd ticker-tide-bot"
+printf "${BOLD}║  Web:      %-34s║${RESET}\n" "systemd ticker-tide-web"
 echo -e "${BOLD}╚══════════════════════════════════════════════╝${RESET}"
 
 # ─── Telegram deploy notification ──────────────────────────────────────────────

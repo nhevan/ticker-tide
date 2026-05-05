@@ -15,6 +15,8 @@ All config files live in `config/`. All thresholds, periods, and URLs are read f
 | `TELEGRAM_ADMIN_CHAT_ID` | Yes | Admin chat ID — receives heartbeats, error alerts, and progress updates. Send a message to your bot, then call `https://api.telegram.org/bot<TOKEN>/getUpdates` and read `message.chat.id` |
 | `TELEGRAM_SUBSCRIBER_CHAT_IDS` | No | Comma-separated list of chat IDs that receive the daily signal report and market-closed notifications (e.g. `"111,222,333"`). If omitted, only the admin receives the signal report. |
 | `TELEGRAM_SUBSCRIBER_TICKERS` | No | Per-subscriber ticker watchlist. Format: `chat_id1:AAPL,MSFT;chat_id2:NVDA,AMD`. Subscribers listed here receive a daily report filtered to their watched tickers only. Subscribers absent from this variable receive the full report. Ticker symbols are case-insensitive. The `/detail TICKER` command is unaffected — subscribers can still look up any ticker. |
+| `WEB_PASSWORD` | Yes (web UI) | Shared password for the web UI login form. Must be set before starting `ticker-tide-web`. |
+| `WEB_SECRET_KEY` | Yes (web UI) | Secret key for Starlette `SessionMiddleware` (signs the session cookie). Use a cryptographically random string of at least 32 characters. Generate with: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 
 **Backward compatibility:** `TELEGRAM_CHAT_ID` is still accepted as a fallback for `TELEGRAM_ADMIN_CHAT_ID`. Existing `.env` files without the new variables continue to work — the admin becomes the only subscriber.
 
@@ -526,6 +528,34 @@ Thresholds for `scripts/verify_pipeline.py`. All keys are optional — the scrip
 
 The `_*_warn_zero_*` keys are diagnostic ("nobody is producing data") and only ever produce warnings — never failures. The score-range and category-math checks fail on out-of-bound composites and warn on math drift.
 
+## config/web.json
+
+Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `port` | int | `8765` | Uvicorn listen port (binds to `127.0.0.1:port` — local Caddy proxy only) |
+| `session_ttl_hours` | int | `168` | Session cookie lifetime in hours (168 = 7 days). Applies to `SessionMiddleware.max_age`. |
+| `login_rate_limit.max_attempts` | int | `5` | Maximum login attempts allowed per IP within `window_seconds` before returning 429 |
+| `login_rate_limit.window_seconds` | int | `60` | Sliding window duration in seconds for login rate limit |
+| `llm_rate_limit.window_seconds` | int | `60` | In-memory per-(session, ticker, date, timeframe) debounce window in seconds for `/api/llm` |
+| `sparkline.daily_days` | int | `15` | Number of trading-day OHLCV rows to include in the daily sparkline (bounded by `<= picked_date`) |
+| `sparkline.weekly_weeks` | int | `6` | Number of weekly candle rows to include in the weekly sparkline |
+| `sparkline.monthly_months` | int | `6` | Number of monthly candle rows to include in the monthly sparkline |
+| `ai_reasoner.model` | string | `claude-sonnet-4-20250514` | Anthropic model to use for web LLM analysis |
+| `ai_reasoner.max_tokens` | int | `800` | Maximum tokens in Claude's response |
+| `ai_reasoner.temperature` | float | `0.3` | Sampling temperature for Claude |
+| `ai_reasoner.target_words` | int | `150` | Target word count in the prompt instruction to Claude |
+| `why_bullets.limit` | int | `3` | Maximum number of key_signals items to show in the "Why" section of the daily card. Items come from `scores_daily.key_signals` (JSON list, 7 items in production). |
+| `signal_flip_lookback_days` | int | `14` | Number of calendar days to look back from the picked date when searching for a recent signal flip. The badge is shown only when a flip exists within this window. |
+
+**Re-run required after change:**
+- `login_rate_limit.*`, `llm_rate_limit.*`, `sparkline.*`, `ai_reasoner.*` — None; applies on next web UI request.
+- `why_bullets.*`, `signal_flip_lookback_days` — None; web-only read layer, applies on next snapshot load. No pipeline phase re-run needed.
+- `port` — `sudo systemctl restart ticker-tide-web`
+
+---
+
 ## Config Changes Requiring Re-runs
 
 | Config change | Required action |
@@ -556,3 +586,10 @@ The `_*_warn_zero_*` keys are diagnostic ("nobody is producing data") and only e
 | `telegram.*` | None — applies on next run |
 | Adding ticker to `tickers.json` | See OPERATIONS.md → Adding a Ticker |
 | Setting `active: false` | None — ticker skipped on next run |
+| `web.json port` | `sudo systemctl restart ticker-tide-web` |
+| `web.json login_rate_limit.*` | None — applies on next login attempt |
+| `web.json llm_rate_limit.*` | None — applies on next LLM request |
+| `web.json sparkline.*` | None — applies on next snapshot load |
+| `web.json ai_reasoner.*` | None — applies on next LLM request |
+| `web.json why_bullets.*` | None — applies on next snapshot load |
+| `web.json signal_flip_lookback_days` | None — applies on next snapshot load |

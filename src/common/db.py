@@ -682,6 +682,15 @@ def _build_schema_statements() -> list[str]:
             received_at TEXT NOT NULL
         )""",
 
+        # ── Web UI Tables ──────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS web_login_attempts (
+            ip TEXT NOT NULL,
+            attempted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+
+        "CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time "
+        "ON web_login_attempts(ip, attempted_at)",
+
         # ── Indexes ────────────────────────────────────────────────────────────────
         "CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_date ON ohlcv_daily(ticker, date)",
         "CREATE INDEX IF NOT EXISTS idx_indicators_ticker_date ON indicators_daily(ticker, date)",

@@ -37,7 +37,7 @@ cd /home/ec2-user/ticker-tide
 `deploy.sh` creates `.venv`, installs dependencies, initialises the database, and runs all tests. If `.env` does not exist it is created from `.env.example`.
 
 ```bash
-nano .env   # set POLYGON_API_KEY, FINNHUB_API_KEY, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID
+nano .env   # set POLYGON_API_KEY, FINNHUB_API_KEY, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID, WEB_PASSWORD, WEB_SECRET_KEY
 source .venv/bin/activate
 python scripts/test_api_access.py          # verify all 5 API keys
 python scripts/run_backfill.py             # one-time: load 5 years of data (~30–60 min)
@@ -147,6 +147,23 @@ scripts/
 ├── migrate_add_monthly.py             # one-time: add monthly_candles + indicators_monthly + scores_daily.monthly_score
 ├── migrate_add_timeframe_parity.py    # one-time: add the 14 weekly/monthly parity tables (commit 1)
 └── migrate_fix_scores_completeness_type.py  # one-time: fix scores_weekly/monthly.data_completeness REAL→TEXT
+└── run_web.py                 # boot Uvicorn web UI (single worker, 127.0.0.1:8765)
+```
+
+```
+src/web/
+├── __init__.py
+├── app.py                     # FastAPI application factory (create_app)
+├── auth.py                    # password check, login rate limit, session helpers
+├── queries.py                 # read-only DB queries (snapshot, sparkline, tickers)
+├── llm.py                     # LLM context builders + prompt generators
+├── templates/
+│   ├── base.html
+│   ├── login.html
+│   └── index.html             # three-card signal browser
+└── static/
+    ├── app.css
+    └── app.js
 ```
 
 The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, and indicator profiles at all three timeframes (daily, weekly, monthly). `scores_weekly` and `scores_monthly` carry per-closed-period score breakdowns. See DESIGN.md §12b for the calibrator acceptance gate and OPERATIONS.md "Flipping weekly_score_method" for the v1↔v2 procedure.
@@ -166,6 +183,11 @@ The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, 
 | `anthropic` | Claude API for signal reasoning |
 | `python-telegram-bot` | Telegram message delivery and interactive bot |
 | `mplfinance` | 4-panel technical chart generation for /detail command |
+| `fastapi` | Web UI HTTP framework |
+| `uvicorn` | ASGI server for the web UI (single worker) |
+| `jinja2` | HTML template rendering |
+| `itsdangerous` / `starlette` SessionMiddleware | Signed cookie sessions for web auth |
+| `python-multipart` | Form body parsing for login POST |
 | `sqlite3` | Database (stdlib, WAL mode) |
 | `pytest` / `pytest-mock` | Tests |
 

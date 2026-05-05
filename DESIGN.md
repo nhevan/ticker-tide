@@ -1303,3 +1303,89 @@ The main cron entry point. Runs all 4 phases in sequence with the following erro
 
 Timing stats are collected per phase and passed to `run_notifier` for the heartbeat message.
 
+---
+
+## 14. Web UI (`src/web/`)
+
+A read-only, desktop-only signal browser for the developer and up to 3-4 trusted friends. No mobile layout, no deep links, no auto-refresh in v1.
+
+### 14.1 Architecture
+
+**Stack:** FastAPI + Jinja2 + vanilla JS (no build step). Uvicorn single worker (required — in-memory LLM debounce is process-local). Bound to `127.0.0.1:port` behind Caddy (HTTPS reverse proxy). Config: `config/web.json`.
+
+**Auth:** Shared password (`WEB_PASSWORD` env var), constant-time compare via `secrets.compare_digest`. Cookie session via Starlette `SessionMiddleware` signed with `WEB_SECRET_KEY`. 7-day TTL. `HttpOnly`, `SameSite=Lax`. IP from `request.client.host` (Uvicorn `--proxy-headers` populates from trusted X-Forwarded-For). Login rate limit: 5 attempts/IP/60s via `web_login_attempts` SQLite table; prune rows older than 1 hour on each login attempt.
+
+**Routes:**
+- `GET /login`, `POST /login`, `POST /logout` — auth flow
+- `GET /` — main index page (requires auth; redirects to /login if not)
+- `GET /api/tickers` — alphabetized list of active tickers (401 if not auth)
+- `GET /api/dates?ticker=X` — `{min, max}` from `scores_daily` (401 if not auth)
+- `GET /api/snapshot?ticker=X&date=Y` — three-card snapshot dict (401 if not auth, 404 if no data)
+- `POST /api/llm` — LLM analysis for a ticker/date/timeframe (401, 429 on debounce, 503 on Claude failure)
+
+### 14.2 Snapshot Data Contract
+
+`GET /api/snapshot` returns `{ daily, weekly, monthly }`. Each section:
+
+| Field | Daily | Weekly | Monthly |
+|---|---|---|---|
+| `data_available` | exact match on `scores_daily.date` | most-recent `week_start <= date` | most-recent `month_start <= date` |
+| `categories` | 9 cats: trend,momentum,volume,volatility,candlestick,structural,sentiment,fundamental,macro | 6 cats: trend,momentum,volume,volatility,candlestick,structural | 5 cats: trend,momentum,volume,volatility,structural (candlestick permanently excluded) |
+| `signal`, `confidence`, `calibrated_score` | present | absent | absent |
+| `composite_score` | `final_score` from `scores_daily` | `composite_score` from `scores_weekly` | `composite_score` from `scores_monthly` |
+| `is_fallback` | absent | True when `resolved_period < picked_date` | True when `resolved_period < picked_date` |
+| `sparkline` | 15 trading days, `<= picked_date` bound | 6 weeks, `<= picked_date` bound | 6 months, `<= picked_date` bound |
+| `key_signals` | top-N why-bullets from `scores_daily.key_signals` (see §14.6) | absent | absent |
+| `earnings` | `{next, last_surprise}` from `earnings_calendar` (see §14.6) | absent | absent |
+| `signal_flip` | most-recent flip within lookback window from `signal_flips` (see §14.6) | absent | absent |
+
+The `categories` array is the UI rendering contract. The UI renders only bars listed in this array. The `scores` dict may contain `candlestick` for monthly (always None) — the UI ignores it because `"candlestick"` is absent from the monthly `categories` array.
+
+### 14.3 LLM Analysis
+
+`POST /api/llm { ticker, date, timeframe }` → `{ text }`.
+
+- **Daily**: reuses `build_ticker_context()` from `ai_reasoner.py` (full context including news/fundamentals/macro). Prompt targets ~150 words, `max_tokens=800`, `temperature=0.3`.
+- **Weekly/Monthly**: `build_timeframe_context()` (indicators + patterns only; no news/fundamentals/macro). Prompt prepends a one-line disclaimer. Same model/tokens/temperature.
+- **Debounce**: per-(session_id, ticker, date, timeframe) 60s in-memory window (closure dict in `create_app()`). Returns 429 if within window. Debounce is reset on Claude failure so user can retry.
+- **Claude error**: returns 503 with friendly message (never exposes a stack trace).
+- **Async dispatch**: `await asyncio.to_thread(call_claude_for_web, ...)` keeps the ASGI event loop responsive.
+
+### 14.4 New DB Table: `web_login_attempts`
+
+```sql
+CREATE TABLE IF NOT EXISTS web_login_attempts (
+    ip TEXT NOT NULL,
+    attempted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time ON web_login_attempts(ip, attempted_at);
+```
+
+Added to `create_all_tables()` in `src/common/db.py`. No migration script needed — `CREATE TABLE IF NOT EXISTS` is idempotent.
+
+### 14.5 Deployment
+
+Runs as systemd service `ticker-tide-web` (unit file: `deploy/ticker-tide-web.service`). Managed by `deploy.sh` (step 12) and the GitHub Actions deploy workflow ("Restart Web service" step). Logs to `logs/web.log`. See OPERATIONS.md §Web UI Service for management commands and Caddy restoration instructions.
+
+### 14.6 Daily Card Enrichment (daily-only)
+
+Three high-signal additions to the daily card only. Weekly and monthly cards are intentionally unchanged (adversarial review dropped the market-context banner as QQQ-only chrome and dropped news as sentiment ≈ 0 / headlines clickbait-quality).
+
+**Pick A — "Why" bullets (`key_signals`)**
+
+`_extract_key_signals(score_dict, limit)` decodes `scores_daily.key_signals` (JSON-encoded string list, 7 items in production) and returns the first `limit` items. Limit comes from `config["why_bullets"]["limit"]` (default 3). Returns `[]` on missing/None/invalid JSON/non-list. Rendered as a `<ul>` with heading "Why" above the patterns section; hidden when list is empty.
+
+**Pick B — Earnings row (`earnings`)**
+
+`_fetch_earnings(conn, ticker, picked_date)` returns `{"next": {...}|None, "last_surprise": {...}|None}`.
+
+- **next**: `earnings_date > picked_date AND actual_eps IS NULL` — strict `>` boundary excludes same-day; `actual_eps IS NULL` excludes future rows already reported (stale-null past rows are excluded by the `>` boundary).
+- **last_surprise**: `earnings_date <= picked_date AND actual_eps IS NOT NULL` — `<=` boundary allows same-day past earnings.
+
+`beat` is `eps_surprise > 0`; `None` when `eps_surprise` is NULL. Both subkeys may be `None` independently. UI section hidden when both are `None`.
+
+**Pick C — Signal flip badge (`signal_flip`)**
+
+`_fetch_signal_flip(conn, ticker, picked_date, lookback_days)` returns the most recent flip within `[picked_date - lookback_days, picked_date]` (inclusive). Query: `ORDER BY date DESC, id DESC LIMIT 1` — mandatory `id DESC` tiebreaker defends against production duplicate/contradictory rows (ASTS ×3, LLY ×2). Lookback from `config["signal_flip_lookback_days"]` (default 14). Returns `None` when no qualifying row exists. UI renders a small badge in the daily card header using a 6-transition color/glyph lookup table (green ↑ toward BULLISH, red ↓ away from BULLISH, arrows for NEUTRAL transitions).
+
+

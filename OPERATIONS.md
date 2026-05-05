@@ -80,6 +80,57 @@ Never start `run_bot.py` manually in a tmux session on EC2 — the systemd servi
 
 ---
 
+## Web UI Service
+
+The read-only web UI (`scripts/run_web.py`) runs as a systemd service on EC2, bound to `127.0.0.1:8765` behind Caddy (HTTPS reverse proxy). Single worker only — the in-memory LLM debounce assumes a single-worker process.
+
+### Status and control
+
+```bash
+# Check if the web UI is running
+sudo systemctl status ticker-tide-web
+
+# Stop / start / restart
+sudo systemctl stop ticker-tide-web
+sudo systemctl start ticker-tide-web
+sudo systemctl restart ticker-tide-web
+
+# File-based log
+tail -f /home/ec2-user/ticker-tide/logs/web.log
+```
+
+### How it is managed
+
+Every push to `main` triggers the GitHub Actions deploy workflow, which:
+1. SSHes into EC2 and runs `./deploy.sh` (installs/updates the systemd service)
+2. Runs a dedicated **"Restart Web service"** step that calls `sudo systemctl restart ticker-tide-web` — visible as its own step in the Actions UI.
+
+`deploy.sh` also handles the service on **manual deploys**: installs `deploy/ticker-tide-web.service` to `/etc/systemd/system/`, runs `systemctl enable` + `systemctl restart`. The service:
+- Auto-starts on EC2 reboot
+- Restarts automatically within 5 seconds on any crash or clean exit
+- Reads credentials from `.env` via `EnvironmentFile` (requires `WEB_PASSWORD` and `WEB_SECRET_KEY`)
+- Logs to `logs/web.log`
+
+Never start `run_web.py` manually — the systemd service handles it.
+
+### Caddy reverse proxy
+
+The Caddy configuration for the web subdomain is **not stored in this repo**. When restoring to a new EC2 instance, manually add a Caddy block for the web subdomain (e.g. `web.yourdomain.com`) that reverse-proxies to `127.0.0.1:8765`. Use `tls` with Let's Encrypt in the Caddyfile. The web UI requires HTTPS to set the `Secure` session cookie; plain HTTP will result in sessions not persisting.
+
+### New table: `web_login_attempts`
+
+`create_all_tables()` now also creates a `web_login_attempts` table used for IP-based login rate limiting. The table is automatically created on first `deploy.sh` run (via `setup_db.py`). No migration script needed — `CREATE TABLE IF NOT EXISTS` is idempotent.
+
+```sql
+CREATE TABLE IF NOT EXISTS web_login_attempts (
+    ip TEXT NOT NULL,
+    attempted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time ON web_login_attempts(ip, attempted_at);
+```
+
+---
+
 ## Manual Commands
 
 | Script | Purpose | Common flags |

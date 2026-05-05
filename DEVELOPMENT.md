@@ -112,6 +112,10 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/notifier/bot.py` | Long-polling bot; `/detail`, `/scatter`, `/tickers`, `/help` handlers; logs every incoming command to `telegram_message_log` |
 | `src/notifier/tickers_command.py` | `/tickers` Telegram bot command handler; logs invocations to `telegram_message_log` |
 | `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward excess returns (vs SPY), plots calibrated_score (predicted) vs actual excess return scatter chart with IC annotation (Spearman rank correlation via `compute_ic()`), sends PNG via Telegram |
+| `src/web/app.py` | `create_app(db_path, config)` FastAPI application factory. Sets up `SessionMiddleware`, mounts static files, registers all routes: `GET /login`, `POST /login`, `POST /logout`, `GET /`, `GET /api/tickers`, `GET /api/dates`, `GET /api/snapshot`, `POST /api/llm`. Per-(session, ticker, date, timeframe) in-memory LLM debounce stored in a closure dict (not module-level, so each `create_app()` call is isolated — important for tests). Single worker required; debounce is process-local. |
+| `src/web/auth.py` | `is_correct_password(submitted, expected)` — constant-time comparison via `secrets.compare_digest`. `record_login_attempt(conn, ip)` — writes UTC timestamp to `web_login_attempts`. `check_rate_limit(conn, ip, config)` — counts rows within window. `prune_old_login_attempts(conn)` — deletes rows older than 1 hour (called on each login attempt). |
+| `src/web/queries.py` | `fetch_active_tickers(conn)`, `fetch_date_range(conn, ticker)`, `fetch_snapshot(conn, ticker, date, config)`. `fetch_snapshot` returns a 3-key dict (`daily`, `weekly`, `monthly`) each with `data_available`, `categories` (UI contract array), `scores`, `indicators`, `patterns`, `sparkline`, and period metadata. Sparkline applies strict `<= picked_date` bound. Monthly categories array permanently excludes `"candlestick"` (decay-window mismatch). Daily section additionally includes three enrichment fields (daily-only): `key_signals` (top-N why-bullets from `scores_daily.key_signals` via `_extract_key_signals()`), `earnings` (`{next, last_surprise}` from `earnings_calendar` via `_fetch_earnings()`), and `signal_flip` (most-recent flip within lookback window from `signal_flips` via `_fetch_signal_flip()`). |
+| `src/web/llm.py` | `build_daily_context(conn, ticker, score_row, date)` — wraps `build_ticker_context()` from `ai_reasoner.py` (full context: indicators, patterns, news, fundamentals, macro). `build_timeframe_context(conn, ticker, date, timeframe)` — weekly/monthly only; reads `indicators_{weekly,monthly}` and `patterns_{weekly,monthly}` directly; does NOT include news/fundamentals/macro (daily-only scope). `analyze_daily()` / `analyze_timeframe()` — prompt builders + `call_claude()` via thin config adapter. `call_claude_for_web()` — single dispatch entry point used by `/api/llm`. |
 
 ### Module dependency graph
 
@@ -131,6 +135,7 @@ fetcher           ← api_client, yfinance_client, validators, events, progress,
 calculator        ← config, db, events, progress  (ta library for indicators)
 scorer            ← config, db, events, progress, calculator output tables
 notifier          ← config, db, events, progress, anthropic, telegram
+web               ← common/db, notifier/ai_reasoner (build_ticker_context + call_claude), fastapi, jinja2
 ```
 
 ---

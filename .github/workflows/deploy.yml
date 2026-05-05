@@ -29,3 +29,8 @@ jobs:
         run: |
           ssh "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             'sudo systemctl restart ticker-tide-bot && sudo systemctl is-active --quiet ticker-tide-bot && echo "✅ Bot is running" || (echo "❌ Bot failed to start" && exit 1)'
+
+      - name: Restart Web service
+        run: |
+          ssh "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            'sudo systemctl restart ticker-tide-web && sudo systemctl is-active --quiet ticker-tide-web && echo "✅ Web is running" || (echo "❌ Web failed to start" && exit 1)'

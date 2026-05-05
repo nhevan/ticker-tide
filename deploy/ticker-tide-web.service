@@ -1,0 +1,17 @@
+[Unit]
+Description=Ticker Tide Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=PROJECT_DIR
+ExecStart=PROJECT_DIR/.venv/bin/python scripts/run_web.py
+EnvironmentFile=PROJECT_DIR/.env
+Restart=always
+RestartSec=5
+StandardOutput=append:PROJECT_DIR/logs/web.log
+StandardError=append:PROJECT_DIR/logs/web.log
+
+[Install]
+WantedBy=multi-user.target
