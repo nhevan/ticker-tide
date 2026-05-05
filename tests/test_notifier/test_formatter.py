@@ -41,6 +41,18 @@ SAMPLE_CONFIG = {
         "max_tickers_per_section": 10,
         "include_heartbeat": True,
         "display_timezone": "Europe/Amsterdam",
+        "include_ai_reasoning": True,
+    }
+}
+
+SAMPLE_CONFIG_NO_AI = {
+    "telegram": {
+        "confidence_threshold": 70,
+        "always_include_flips": True,
+        "max_tickers_per_section": 10,
+        "include_heartbeat": True,
+        "display_timezone": "Europe/Amsterdam",
+        "include_ai_reasoning": False,
     }
 }
 
@@ -190,6 +202,15 @@ def test_format_bullish_section_empty():
     assert format_bullish_section([]) == ""
 
 
+def test_format_bullish_section_reasoning_excluded():
+    """Reasoning text is omitted when include_reasoning=False."""
+    tickers = [_make_bullish("WMT", 67.0, 41.8, "WMT reasoning.")]
+    result = format_bullish_section(tickers, include_reasoning=False)
+    assert "WMT" in result
+    assert "67%" in result
+    assert "WMT reasoning." not in result
+
+
 # ---------------------------------------------------------------------------
 # format_bearish_section
 # ---------------------------------------------------------------------------
@@ -210,6 +231,15 @@ def test_format_bearish_section():
 
 def test_format_bearish_section_empty():
     assert format_bearish_section([]) == ""
+
+
+def test_format_bearish_section_reasoning_excluded():
+    """Reasoning text is omitted when include_reasoning=False."""
+    tickers = [_make_bearish("PYPL", 46.0, -36.1, "PYPL reasoning.")]
+    result = format_bearish_section(tickers, include_reasoning=False)
+    assert "PYPL" in result
+    assert "46%" in result
+    assert "PYPL reasoning." not in result
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +265,17 @@ def test_format_flips_section():
 
 def test_format_flips_section_empty():
     assert format_flips_section([]) == ""
+
+
+def test_format_flips_section_reasoning_excluded():
+    """Reasoning text is omitted when include_reasoning=False."""
+    flips = [_make_flip("AAPL", "NEUTRAL", "BULLISH", 15.0, 72.0, "AAPL flip reasoning.")]
+    result = format_flips_section(flips, include_reasoning=False)
+    assert "AAPL" in result
+    assert "NEUTRAL" in result
+    assert "BULLISH" in result
+    assert "72%" in result
+    assert "AAPL flip reasoning." not in result
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +374,32 @@ def test_format_full_report():
     assert "Pipeline completed" in full
 
 
+def test_format_full_report_no_ai_reasoning():
+    """When include_ai_reasoning=False: no summary, no market context, no per-ticker reasoning."""
+    results = _make_results(
+        bullish=[_make_bullish("WMT", 75.0, 41.8, "WMT reasoning.")],
+        bearish=[_make_bearish("PYPL", 71.0, -36.1, "PYPL reasoning.")],
+        flips=[_make_flip("TSLA", "NEUTRAL", "BULLISH", 10.0, 72.0, "TSLA flip reasoning.")],
+        daily_summary="Markets showed mixed signals today.",
+        market_context_summary="VIX: 18.5 | SPY: trending up",
+    )
+    stats = _make_pipeline_stats()
+    messages = format_full_report(results, stats, SAMPLE_CONFIG_NO_AI)
+    full = "\n".join(messages)
+    assert "📊 Signal Report" in full
+    assert "🟢 BULLISH" in full
+    assert "🔴 BEARISH" in full
+    assert "🔄 SIGNAL FLIPS" in full
+    assert "WMT" in full
+    assert "PYPL" in full
+    assert "TSLA" in full
+    assert "📋 Daily Summary" not in full
+    assert "📉 Market Context" not in full
+    assert "WMT reasoning." not in full
+    assert "PYPL reasoning." not in full
+    assert "TSLA flip reasoning." not in full
+
+
 def test_format_full_report_respects_timezone():
     """Header time should be in CET/CEST, not UTC."""
     results = _make_results()
@@ -392,14 +459,20 @@ def test_format_full_report_under_4096_chars():
 
 
 def test_format_full_report_splits_if_too_long():
-    long_reasoning = "X" * 250
+    config_small = {
+        "telegram": {
+            "display_timezone": "Europe/Amsterdam",
+            "include_ai_reasoning": False,
+            "max_message_chars": 300,
+        }
+    }
     results = _make_results(
-        bullish=[_make_bullish(f"TK{i}", 70.0 + i, 30.0 + i, long_reasoning) for i in range(10)],
-        bearish=[_make_bearish(f"BK{i}", 70.0 + i, -30.0 - i, long_reasoning) for i in range(10)],
-        flips=[_make_flip(f"FL{i}", "NEUTRAL", "BULLISH", 10.0, 72.0 + i, long_reasoning) for i in range(5)],
+        bullish=[_make_bullish(f"TK{i}", 70.0 + i, 30.0 + i) for i in range(10)],
+        bearish=[_make_bearish(f"BK{i}", 70.0 + i, -30.0 - i) for i in range(10)],
+        flips=[_make_flip(f"FL{i}", "NEUTRAL", "BULLISH", 10.0, 72.0 + i) for i in range(5)],
     )
     stats = _make_pipeline_stats()
-    messages = format_full_report(results, stats, SAMPLE_CONFIG)
+    messages = format_full_report(results, stats, config_small)
     assert len(messages) > 1
     for msg in messages:
         assert len(msg) <= MAX_TELEGRAM_LENGTH
@@ -543,13 +616,19 @@ def test_split_sections_single_message_no_indicators():
 
 def test_format_full_report_pagination_indicators():
     """A report that spans multiple messages must have (N/M) on each."""
-    long_reasoning = "Z" * 300
+    config_small = {
+        "telegram": {
+            "display_timezone": "Europe/Amsterdam",
+            "include_ai_reasoning": False,
+            "max_message_chars": 300,
+        }
+    }
     results = _make_results(
-        bullish=[_make_bullish(f"TK{i}", 70.0 + i % 10, 30.0 + i, long_reasoning) for i in range(15)],
-        bearish=[_make_bearish(f"BK{i}", 70.0 + i % 10, -30.0 - i, long_reasoning) for i in range(15)],
+        bullish=[_make_bullish(f"TK{i}", 70.0 + i % 10, 30.0 + i) for i in range(15)],
+        bearish=[_make_bearish(f"BK{i}", 70.0 + i % 10, -30.0 - i) for i in range(15)],
     )
     stats = _make_pipeline_stats()
-    messages = format_full_report(results, stats, SAMPLE_CONFIG)
+    messages = format_full_report(results, stats, config_small)
     assert len(messages) > 1
     total = len(messages)
     for i, msg in enumerate(messages, 1):

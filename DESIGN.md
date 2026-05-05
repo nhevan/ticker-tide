@@ -1118,9 +1118,14 @@ All config comes from `config/notifier.json → ai_reasoner` (model, max_tokens,
 
 ### 13.2 Telegram Formatter (`src/notifier/formatter.py`)
 
-Formats the AI reasoner output into readable Telegram messages. Handles Telegram's 4096-character
+Formats signal data into readable Telegram messages. Handles Telegram's 4096-character
 limit by splitting at section boundaries. Times are displayed in the configured timezone
 (default: `Europe/Amsterdam`).
+
+AI-generated content (per-ticker reasoning, daily summary, market context) is gated by
+`telegram.include_ai_reasoning` in `config/notifier.json`. When `false` (the default), the
+Claude API call is skipped entirely in `main.py` and only the concise signal lines are shown.
+Set to `true` to restore full AI commentary.
 
 **Public functions:**
 
@@ -1129,13 +1134,13 @@ limit by splitting at section boundaries. Times are displayed in the configured 
 | `format_duration(seconds)` | Human-readable duration: "45s", "2m 15s", "1h 2m 5s". |
 | `format_header(scoring_date, display_timezone)` | Report header with date and local time (e.g. "📊 Signal Report — March 16, 2026 • 01:23 CET"). |
 | `format_signal_distribution(bullish, bearish, neutral)` | Distribution summary line: "🟢 11 | 🔴 5 | 🟡 43". |
-| `format_daily_summary_section(daily_summary)` | "📋 Daily Summary" section; empty string if no signals. |
-| `format_bullish_section(tickers)` | "🟢 BULLISH" section sorted by confidence DESC; empty string if no tickers. |
-| `format_bearish_section(tickers)` | "🔴 BEARISH" section sorted by confidence DESC; empty string if no tickers. |
-| `format_flips_section(flips)` | "🔄 SIGNAL FLIPS" section; empty string if no flips. |
-| `format_market_context_section(market_context)` | "📉 Market Context" section. |
+| `format_daily_summary_section(daily_summary)` | "📋 Daily Summary" section; empty string if no signals. Shown only when `include_ai_reasoning=true`. |
+| `format_bullish_section(tickers, include_reasoning)` | "🟢 BULLISH" section sorted by confidence DESC. When `include_reasoning=False`, per-ticker reasoning is omitted. |
+| `format_bearish_section(tickers, include_reasoning)` | "🔴 BEARISH" section sorted by confidence DESC. Same reasoning gate. |
+| `format_flips_section(flips, include_reasoning)` | "🔄 SIGNAL FLIPS" section. Same reasoning gate. |
+| `format_market_context_section(market_context)` | "📉 Market Context" section. Shown only when `include_ai_reasoning=true`. |
 | `format_heartbeat(pipeline_stats)` | Pipeline completion stats with per-phase timing and ticker counts. |
-| `format_full_report(results, pipeline_stats, config)` | Assembles full report and splits into `list[str]` chunks ≤ 4096 chars each. |
+| `format_full_report(results, pipeline_stats, config)` | Assembles full report and splits into `list[str]` chunks ≤ 4096 chars each. Reads `include_ai_reasoning` from config. |
 | `format_no_signals_report(market_context, pipeline_stats, config)` | Minimal report for days with no qualifying signals. |
 | `format_market_closed_message(date, config)` | One-line market-closed notification. |
 | `format_pipeline_error_message(phase, error, config)` | Pipeline failure alert message. |
@@ -1171,8 +1176,8 @@ backward-compatible alias for `TELEGRAM_ADMIN_CHAT_ID`.
 
 ### 13.4 Notifier Orchestrator (`src/notifier/main.py`)
 
-Phase 4 entry point. Reads pipeline events, calls the AI reasoner, formats and sends the report,
-and records the pipeline run.
+Phase 4 entry point. Reads pipeline events, optionally calls the AI reasoner (skipped when
+`telegram.include_ai_reasoning=false`), formats and sends the report, and records the pipeline run.
 
 **`run_notifier(db_path, pipeline_stats) -> dict`**
 

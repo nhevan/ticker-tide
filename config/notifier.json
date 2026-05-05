@@ -20,6 +20,7 @@
     "always_include_flips": true,
     "max_tickers_per_section": 10,
     "include_heartbeat": true,
+    "include_ai_reasoning": false,
     "display_timezone": "Europe/Amsterdam",
     "max_message_chars": 4000
   },

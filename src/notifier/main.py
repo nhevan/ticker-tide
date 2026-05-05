@@ -8,7 +8,8 @@ Flow:
   1. Check 'scorer_done' event exists for the scoring date.
   2. Check 'notifier_done' — skip if already completed.
   3. Write 'notifier_done' with status='processing'.
-  4. Call reason_all_qualifying_tickers() for AI-generated analysis.
+  4. Call reason_all_qualifying_tickers() for AI-generated analysis
+     (skipped when telegram.include_ai_reasoning=False).
   5. Query signal distribution from scores_daily.
   6. Build pipeline_stats (query pipeline_runs for prior phase durations).
   7. Format the report (full or no-signals variant).
@@ -214,7 +215,8 @@ def run_notifier(
 
     logger.info(f"phase=notifier date={scoring_date} Starting notifier")
 
-    # Run AI reasoning — wrapped so any unexpected failure returns a fallback
+    # Run AI reasoning — skipped entirely when include_ai_reasoning=False to
+    # avoid Claude API cost when reasoning output will not be shown.
     results: dict = {
         "bullish": [],
         "bearish": [],
@@ -222,10 +224,14 @@ def run_notifier(
         "daily_summary": "No significant signals today.",
         "market_context_summary": "",
     }
-    try:
-        results = reason_all_qualifying_tickers(db_conn, scoring_date, config)
-    except Exception as exc:
-        logger.error(f"phase=notifier date={scoring_date} AI reasoning failed: {exc} — using fallback")
+    include_ai_reasoning = config.get("telegram", {}).get("include_ai_reasoning", True)
+    if include_ai_reasoning:
+        try:
+            results = reason_all_qualifying_tickers(db_conn, scoring_date, config)
+        except Exception as exc:
+            logger.error(f"phase=notifier date={scoring_date} AI reasoning failed: {exc} — using fallback")
+    else:
+        logger.info(f"phase=notifier date={scoring_date} include_ai_reasoning=false — skipping Claude API call")
 
     # Signal distribution
     signal_dist = _get_signal_distribution(db_conn, scoring_date)

@@ -331,3 +331,41 @@ def test_run_notifier_logs_pipeline_run(db_connection, tmp_path, mocker):
     assert call_kwargs[1].get("phase") == "notifier" or (
         len(call_kwargs[0]) > 2 and call_kwargs[0][2] == "notifier"
     )
+
+
+# ---------------------------------------------------------------------------
+# include_ai_reasoning=False skips the Claude API call
+# ---------------------------------------------------------------------------
+
+
+def test_run_notifier_skips_ai_reasoner_when_flag_false(db_connection, tmp_path, mocker):
+    """When include_ai_reasoning=False, reason_all_qualifying_tickers must not be called."""
+    _insert_scorer_done(db_connection)
+    _insert_scores_daily(db_connection)
+    _insert_indicators(db_connection)
+
+    config_no_ai = {
+        **SAMPLE_CONFIG,
+        "telegram": {**SAMPLE_CONFIG["telegram"], "include_ai_reasoning": False},
+    }
+
+    mocker.patch("src.notifier.main.load_env")
+    mocker.patch("src.notifier.main.load_config", return_value=config_no_ai)
+    mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
+    mock_reasoner = mocker.patch("src.notifier.main.reason_all_qualifying_tickers")
+    mocker.patch("src.notifier.main.format_full_report", return_value=["Report text"])
+    mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat text")
+    mocker.patch(
+        "src.notifier.main.send_daily_report",
+        return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
+    )
+    mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
+    mocker.patch("src.notifier.main.write_pipeline_event")
+    mocker.patch("src.notifier.main.log_pipeline_run")
+
+    from src.notifier.main import run_notifier
+
+    run_notifier(db_path=str(tmp_path / "test.db"))
+
+    assert not mock_reasoner.called, "AI reasoner must not be called when include_ai_reasoning=False"

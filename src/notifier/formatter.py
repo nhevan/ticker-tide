@@ -1,12 +1,16 @@
 """
 Telegram message formatter for the Stock Signal Engine.
 
-Formats the AI reasoner output into readable Telegram messages.
+Formats daily signal data into readable Telegram messages.
 Handles Telegram's 4096-character limit by splitting long messages at
 section boundaries. Displays times in the configured timezone
 (default: Europe/Amsterdam).
 
-Message structure:
+AI-generated content (per-ticker reasoning, daily summary, market context)
+is controlled by the telegram.include_ai_reasoning config flag. When False,
+only signal data is shown and the Claude API call is skipped entirely.
+
+Message structure (include_ai_reasoning=True):
   📊 Signal Report — March 16, 2026 • 01:23 CET
   ━━━━━━━━━━━━━━━━━━━━━━━━━
   🟢 11 | 🔴 5 | 🟡 43
@@ -34,6 +38,26 @@ Message structure:
   ━━━━━━━━━━━━━━━━━━━━━━━━━
   VIX: 23.5 (elevated) | SPY: ranging
 
+Message structure (include_ai_reasoning=False):
+  📊 Signal Report — March 16, 2026 • 01:23 CET
+  ━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 11 | 🔴 5 | 🟡 43
+  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  🟢 BULLISH (high confidence)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━
+  WMT — 67% 📊 +41.8
+  CVX — 82% 📊 +52.3
+
+  🔴 BEARISH (high confidence)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━
+  PYPL — 46% 📊 -36.1
+
+  🔄 SIGNAL FLIPS
+  ━━━━━━━━━━━━━━━━━━━━━━━━━
+  AAPL: NEUTRAL → BULLISH (72%)
+
+Heartbeat (admin-only, separate message):
   ✅ Pipeline completed at 01:23 CET
   Fetcher: 2m 15s | Calculator: 12m 4s | Scorer: 2m 14s
   Tickers: 59/59 (0 failed) | Signals: 3 🟢 2 🔴 54 🟡
@@ -132,16 +156,19 @@ def format_daily_summary_section(daily_summary: str) -> str:
     return f"\n📋 Daily Summary\n{DIVIDER}\n{daily_summary}"
 
 
-def format_bullish_section(bullish_tickers: list[dict]) -> str:
+def format_bullish_section(bullish_tickers: list[dict], include_reasoning: bool = True) -> str:
     """
     Format the BULLISH signals section.
 
     Tickers are sorted by confidence descending (highest conviction first).
-    Each ticker shows a concise summary line followed by AI reasoning.
+    Each ticker shows a concise summary line; AI reasoning is appended only
+    when include_reasoning=True.
 
     Parameters:
         bullish_tickers: List of dicts with keys: ticker, score (dict with
             confidence and final_score), reasoning.
+        include_reasoning: When True, appends the AI reasoning paragraph after
+            each ticker line. When False, only the summary line is shown.
 
     Returns:
         Formatted bullish section, or empty string if no tickers provided.
@@ -160,22 +187,28 @@ def format_bullish_section(bullish_tickers: list[dict]) -> str:
         ticker = item["ticker"]
         confidence = item["score"].get("confidence", 0)
         final_score = item["score"].get("final_score", 0) or 0
-        reasoning = item.get("reasoning", "")
-        lines.append(f"\n{ticker} — {confidence:.0f}% 📊 {final_score:+.1f}\n{reasoning}")
+        line = f"\n{ticker} — {confidence:.0f}% 📊 {final_score:+.1f}"
+        if include_reasoning:
+            reasoning = item.get("reasoning", "")
+            line = f"{line}\n{reasoning}"
+        lines.append(line)
 
     return "\n".join(lines)
 
 
-def format_bearish_section(bearish_tickers: list[dict]) -> str:
+def format_bearish_section(bearish_tickers: list[dict], include_reasoning: bool = True) -> str:
     """
     Format the BEARISH signals section.
 
     Tickers are sorted by confidence descending (highest conviction bearish first).
-    Each ticker shows a concise summary line followed by AI reasoning.
+    Each ticker shows a concise summary line; AI reasoning is appended only
+    when include_reasoning=True.
 
     Parameters:
         bearish_tickers: List of dicts with keys: ticker, score (dict with
             confidence and final_score), reasoning.
+        include_reasoning: When True, appends the AI reasoning paragraph after
+            each ticker line. When False, only the summary line is shown.
 
     Returns:
         Formatted bearish section, or empty string if no tickers provided.
@@ -194,21 +227,27 @@ def format_bearish_section(bearish_tickers: list[dict]) -> str:
         ticker = item["ticker"]
         confidence = item["score"].get("confidence", 0)
         final_score = item["score"].get("final_score", 0) or 0
-        reasoning = item.get("reasoning", "")
-        lines.append(f"\n{ticker} — {confidence:.0f}% 📊 {final_score:+.1f}\n{reasoning}")
+        line = f"\n{ticker} — {confidence:.0f}% 📊 {final_score:+.1f}"
+        if include_reasoning:
+            reasoning = item.get("reasoning", "")
+            line = f"{line}\n{reasoning}"
+        lines.append(line)
 
     return "\n".join(lines)
 
 
-def format_flips_section(flips: list[dict]) -> str:
+def format_flips_section(flips: list[dict], include_reasoning: bool = True) -> str:
     """
     Format the signal flips section.
 
-    Each flip shows the direction change and confidence, followed by reasoning.
+    Each flip shows the direction change and confidence; AI reasoning is
+    appended only when include_reasoning=True.
 
     Parameters:
         flips: List of dicts with keys: ticker, flip (dict with previous_signal,
             new_signal, new_confidence), score (dict with confidence), reasoning.
+        include_reasoning: When True, appends the AI reasoning paragraph after
+            each flip line. When False, only the transition line is shown.
 
     Returns:
         Formatted flips section, or empty string if no flips.
@@ -223,8 +262,11 @@ def format_flips_section(flips: list[dict]) -> str:
         prev = flip.get("previous_signal", "?")
         new = flip.get("new_signal", "?")
         confidence = item.get("score", {}).get("confidence", flip.get("new_confidence", 0))
-        reasoning = item.get("reasoning", "")
-        lines.append(f"\n{ticker}: {prev} → {new} ({confidence:.0f}%)\n{reasoning}")
+        line = f"\n{ticker}: {prev} → {new} ({confidence:.0f}%)"
+        if include_reasoning:
+            reasoning = item.get("reasoning", "")
+            line = f"{line}\n{reasoning}"
+        lines.append(line)
 
     return "\n".join(lines)
 
@@ -409,22 +451,27 @@ def format_full_report(
     """
     Assemble and return the full daily signal report as a list of Telegram messages.
 
-    Sections are assembled in order: header, signal distribution, daily summary,
-    bullish, bearish, flips, market context, and optionally heartbeat. If the
-    assembled text exceeds 4096 characters it is split at section boundaries.
+    Sections are assembled in order: header, signal distribution, and then the
+    bullish, bearish, and flips sections. When telegram.include_ai_reasoning is
+    True (default), per-ticker reasoning, a daily summary, and market context are
+    also included. When False, only signal data lines are shown. If the assembled
+    text exceeds 4096 characters it is split at section boundaries.
 
     Parameters:
         results: Dict from reason_all_qualifying_tickers with keys: bullish,
             bearish, flips, daily_summary, market_context_summary.
         pipeline_stats: Dict with timing and ticker counts.
-        config: Notifier config dict (reads telegram.display_timezone).
+        config: Notifier config dict (reads telegram.display_timezone and
+            telegram.include_ai_reasoning).
         include_heartbeat: When True (default), appends the pipeline heartbeat
             section. Pass False to omit it (e.g. for subscriber-only messages).
 
     Returns:
         List of message strings, each at most 4096 characters.
     """
-    display_timezone = config.get("telegram", {}).get("display_timezone", "Europe/Amsterdam")
+    tg_config = config.get("telegram", {})
+    display_timezone = tg_config.get("display_timezone", "Europe/Amsterdam")
+    include_reasoning = tg_config.get("include_ai_reasoning", True)
     scoring_date = pipeline_stats.get("scoring_date", "")
 
     bullish = results.get("bullish", [])
@@ -447,31 +494,33 @@ def format_full_report(
     dist = format_signal_distribution(bullish_count, bearish_count, neutral_count)
     sections.append(f"{header}\n{dist}")
 
-    summary_section = format_daily_summary_section(daily_summary)
-    if summary_section:
-        sections.append(summary_section)
+    if include_reasoning:
+        summary_section = format_daily_summary_section(daily_summary)
+        if summary_section:
+            sections.append(summary_section)
 
-    bullish_section = format_bullish_section(bullish)
+    bullish_section = format_bullish_section(bullish, include_reasoning=include_reasoning)
     if bullish_section:
         sections.append(bullish_section)
 
-    bearish_section = format_bearish_section(bearish)
+    bearish_section = format_bearish_section(bearish, include_reasoning=include_reasoning)
     if bearish_section:
         sections.append(bearish_section)
 
-    flips_section = format_flips_section(flips)
+    flips_section = format_flips_section(flips, include_reasoning=include_reasoning)
     if flips_section:
         sections.append(flips_section)
 
-    context_section = format_market_context_section(market_context)
-    if context_section:
-        sections.append(context_section)
+    if include_reasoning:
+        context_section = format_market_context_section(market_context)
+        if context_section:
+            sections.append(context_section)
 
     if include_heartbeat:
         heartbeat = format_heartbeat(stats_with_tz)
         sections.append(f"\n{heartbeat}")
 
-    max_chars = config.get("telegram", {}).get("max_message_chars", MAX_TELEGRAM_LENGTH)
+    max_chars = tg_config.get("max_message_chars", MAX_TELEGRAM_LENGTH)
     full_text = "\n".join(s for s in sections if s)
     if len(full_text) <= max_chars - _PAGE_INDICATOR_OVERHEAD:
         return [full_text]
@@ -533,8 +582,10 @@ def filter_results_for_subscriber(results: dict, watched_tickers: list[str]) -> 
     Filter AI reasoning results to only include a subscriber's watched tickers.
 
     The global daily_summary and market_context_summary are preserved unchanged
-    so subscribers still see broader market context. Signal distribution counts
-    are NOT part of results (they live in pipeline_stats) and are unaffected.
+    in the returned dict. Whether they are rendered depends on the
+    telegram.include_ai_reasoning config flag in format_full_report. Signal
+    distribution counts are NOT part of results (they live in pipeline_stats)
+    and are unaffected.
 
     Parameters:
         results: Dict from reason_all_qualifying_tickers with keys: bullish,

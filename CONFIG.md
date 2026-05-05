@@ -464,6 +464,7 @@ in ranging markets, daily dominates; volatile is 50/50.
 | `telegram.always_include_flips` | boolean | `true` | Always include signal flips regardless of confidence |
 | `telegram.max_tickers_per_section` | int | `10` | Max tickers per BULLISH/BEARISH/Flips section (controls API cost) |
 | `telegram.include_heartbeat` | boolean | `true` | Send a pipeline summary heartbeat to `admin_chat_id` after each run |
+| `telegram.include_ai_reasoning` | boolean | `false` | When `false`, skips the Claude API call entirely and omits per-ticker reasoning, the daily summary, and the market context section from the signal report. Set to `true` to restore full AI-generated commentary. |
 | `telegram.display_timezone` | string | `"Europe/Amsterdam"` | Timezone for timestamps shown in Telegram messages |
 | `telegram.max_message_chars` | int | `4000` | Maximum characters per Telegram message before splitting. Messages that exceed this limit are split at line boundaries and annotated with `(N/M)` page indicators in the header and footer. Keep below Telegram's hard limit of 4096. |
 
