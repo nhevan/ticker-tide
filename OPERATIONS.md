@@ -741,6 +741,24 @@ sudo systemctl status ticker-tide-bot   # confirm Active: running
 
 The systemd service picks up the new `CommandHandler("why", ...)` and `CallbackQueryHandler(pattern="^why:")` registered in `src/notifier/bot.py` on restart. No config changes are required.
 
+**Schema migration runs automatically.** `run_migrations(conn)` is called from `run_bot.py` at startup (and from `run_scorer.py` / `run_daily.py`), so the `scores_daily.key_signals_data` column is added to existing databases on the first restart after deploy. No manual `ALTER TABLE` is needed.
+
+**Data backfill — required before `/why` returns useful output.** `run_migrations` only adds the column; it does not populate it. Existing rows have `key_signals_data = NULL` until the scorer writes a fresh row. Until then, every `/why TICKER` returns the null-data sentinel reply (`"Signal data for TICKER is unavailable or malformed."`).
+
+Two ways to populate:
+
+1. **Wait for the next daily cron run (00:00 UTC)** — the scheduled `run_scorer.py` writes today's row with `key_signals_data` for every active ticker. `/why` works immediately after that.
+2. **Backfill manually now** (recommended after iterative pushes mid-day):
+
+   ```bash
+   cd /home/ec2-user/ticker-tide
+   python3 scripts/run_scorer.py --force
+   ```
+
+   Re-scores every active ticker for today's date. Takes ~20–30 seconds. After this completes, `/why` returns the verbose math walkthrough as expected.
+
+`--force` only re-scores the latest date. Historical rows (yesterday and earlier) keep their NULL `key_signals_data`. The `/why` feature is scoped to the latest signal only, so this is intentional — historical drill-down is not a supported mode.
+
 **Behavioral note — pre-deploy `/detail` messages will not have the button.** Telegram does not retroactively patch inline keyboards on already-sent messages. Only `/detail` responses generated after this deploy will include the "🔍 Why this signal?" button. Older messages remain unchanged.
 
 **Smoke test steps after deploy:**
