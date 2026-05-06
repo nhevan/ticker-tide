@@ -42,7 +42,10 @@ if _PROJECT_ROOT not in sys.path:
 
 from src.calculator.main import run_calculator  # noqa: E402
 from src.common.config import load_config, load_env  # noqa: E402
+from src.common.db import get_connection, run_migrations  # noqa: E402
 from src.common.logger import setup_root_logging  # noqa: E402
+
+_FALLBACK_DB = "data/signals.db"
 from src.fetcher.main import run_daily_fetch  # noqa: E402
 from src.fetcher.market_calendar import is_market_open_today  # noqa: E402
 from src.notifier.main import run_notifier  # noqa: E402
@@ -78,6 +81,13 @@ def run_daily_pipeline(
     """
     load_env()
     notifier_config = load_config("notifier")
+
+    resolved_db_path = db_path or load_config("database").get("db_path", _FALLBACK_DB)
+    migration_conn = get_connection(resolved_db_path)
+    try:
+        run_migrations(migration_conn)
+    finally:
+        migration_conn.close()
 
     tg_config = get_telegram_config(notifier_config)
     bot_token = tg_config["bot_token"]

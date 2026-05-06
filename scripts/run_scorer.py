@@ -25,6 +25,10 @@ sys.path.insert(0, _PROJECT_ROOT)
 
 from src.scorer.main import run_historical_scoring, run_scorer  # noqa: E402
 from src.common.logger import setup_root_logging  # noqa: E402
+from src.common.config import load_config  # noqa: E402
+from src.common.db import get_connection, run_migrations  # noqa: E402
+
+_FALLBACK_DB = "data/signals.db"
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -80,12 +84,22 @@ def main() -> int:
     """
     Parse CLI arguments, run the scorer pipeline, and print results.
 
+    Runs schema migrations before the scorer pipeline so that any existing
+    database is brought up to date with the current schema.
+
     Returns:
         int: Exit code — 0 on success, 1 on error.
     """
     setup_root_logging()
     parser = build_argument_parser()
     args = parser.parse_args()
+
+    db_path = args.db_path or load_config("database").get("db_path", _FALLBACK_DB)
+    migration_conn = get_connection(db_path)
+    try:
+        run_migrations(migration_conn)
+    finally:
+        migration_conn.close()
 
     try:
         if args.historical:

@@ -24,8 +24,11 @@ if _PROJECT_ROOT not in sys.path:
 
 from src.common.config import load_config
 from src.common.config import load_env
+from src.common.db import get_connection, run_migrations
 from src.common.logger import setup_root_logging
 from src.notifier.bot import start_bot
+
+_FALLBACK_DB = "data/signals.db"
 
 
 def main() -> None:
@@ -40,6 +43,13 @@ def main() -> None:
 
     logger = logging.getLogger(__name__)
     logger.info("phase=run_bot starting Telegram bot listener")
+
+    db_path = load_config("database").get("db_path", _FALLBACK_DB)
+    migration_conn = get_connection(db_path)
+    try:
+        run_migrations(migration_conn)
+    finally:
+        migration_conn.close()
 
     notifier_config = load_config("notifier")
 

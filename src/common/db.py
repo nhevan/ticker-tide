@@ -57,6 +57,50 @@ def create_all_tables(connection: sqlite3.Connection) -> None:
     logger.info("All schema tables and indexes created (or already existed)")
 
 
+def run_migrations(conn: sqlite3.Connection) -> None:
+    """
+    Apply any pending schema migrations to an existing database idempotently.
+
+    Each migration step checks whether the change has already been applied
+    (via PRAGMA table_info) before issuing the ALTER TABLE statement, so this
+    function is safe to call multiple times on the same connection.
+
+    Current migrations:
+        1. Add ``key_signals_data TEXT`` column to ``scores_daily`` if absent.
+           Fresh databases created by ``create_all_tables`` already include this
+           column; the migration exists for databases created before it was added.
+
+    Parameters:
+        conn: An open sqlite3.Connection to the target database.
+
+    Returns:
+        None
+    """
+    table_info_rows = conn.execute("PRAGMA table_info(scores_daily)").fetchall()
+    table_exists = len(table_info_rows) > 0
+
+    if not table_exists:
+        logger.debug(
+            "Migration scores_daily.key_signals_data skipped — table does not exist yet"
+        )
+        return
+
+    existing_columns = [row[1] for row in table_info_rows]
+
+    if "key_signals_data" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE scores_daily ADD COLUMN key_signals_data TEXT"
+        )
+        conn.commit()
+        logger.info(
+            "Applied migration: added scores_daily.key_signals_data"
+        )
+    else:
+        logger.debug(
+            "Migration scores_daily.key_signals_data already present — nothing to do"
+        )
+
+
 def _build_schema_statements() -> list[str]:
     """
     Return the ordered list of CREATE TABLE and CREATE INDEX SQL statements for the full schema.
@@ -585,6 +629,7 @@ def _build_schema_statements() -> list[str]:
             model_r2 REAL,
             data_completeness TEXT,
             key_signals TEXT,
+            key_signals_data TEXT,
             UNIQUE(ticker, date)
         )""",
 
