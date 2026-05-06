@@ -722,7 +722,34 @@ python scripts/run_bot.py
 - `/scatter 5 AAPL` — confidence vs 5-day return for AAPL only
 - `/scatter 20 AAPL 180` — 20-day return, AAPL, last 180 days of signals
 - `/tickers` — list all watched tickers by sector
+- `/why AAPL` — top-5 verbose math walkthrough of every contribution to the latest signal
+- `/why AAPL all` — ranked table of all contributions (capped at 50)
+- `/why AAPL rsi_14` — drill-down for a specific indicator or pattern by its canonical lowercase key
 - `/help` — list commands
+
+The raw-data breakdown message sent by `/detail` also includes an inline "🔍 Why this signal?" button; tapping it is equivalent to sending `/why AAPL` for that ticker.
+
+### `/why` Deploy and Smoke Test
+
+**Deploying the `/why` handlers** (iterative push between full `deploy.sh` runs):
+
+```bash
+git pull
+sudo systemctl restart ticker-tide-bot
+sudo systemctl status ticker-tide-bot   # confirm Active: running
+```
+
+The systemd service picks up the new `CommandHandler("why", ...)` and `CallbackQueryHandler(pattern="^why:")` registered in `src/notifier/bot.py` on restart. No config changes are required.
+
+**Behavioral note — pre-deploy `/detail` messages will not have the button.** Telegram does not retroactively patch inline keyboards on already-sent messages. Only `/detail` responses generated after this deploy will include the "🔍 Why this signal?" button. Older messages remain unchanged.
+
+**Smoke test steps after deploy:**
+
+1. `/why AAPL` → should return a verbose top-5 walkthrough (not an error).
+2. `/why AAPL all` → should return a ranked table of all contributions.
+3. `/why AAPL rsi_14` → should return a drill-down for the RSI-14 indicator. Use the canonical lowercase key (e.g. `rsi_14`, not `rsi`) to avoid an ambiguous-match reply.
+4. `/why` (no ticker) → should return a usage hint, not a crash.
+5. `/detail AAPL` → tap the "🔍 Why this signal?" inline button → response should be identical to step 1.
 
 ### `/scatter` Details
 

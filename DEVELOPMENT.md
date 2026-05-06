@@ -62,7 +62,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/common/db.py` | `get_connection(path)` → WAL mode + `row_factory`; `create_all_tables()` → idempotent schema creation; `run_migrations(conn)` → idempotent `ALTER TABLE … ADD COLUMN` migrations guarded by `PRAGMA table_info` (called by every pipeline entry point after `create_all_tables`) |
 | `src/common/events.py` | `pipeline_events` read/write; `alerts_log` insert; `pipeline_runs` logging; trading day detection |
 | `src/common/logger.py` | `setup_root_logging()` — call once per entry-point script; format: `[YYYY-MM-DD HH:MM:SS] LEVEL [module] msg` |
-| `src/common/progress.py` | `ProgressTracker` class; `send_telegram_message()`; `edit_telegram_message()` |
+| `src/common/progress.py` | `ProgressTracker` class; `send_telegram_message(bot_token, chat_id, text, *, reply_markup=None)` — `reply_markup` accepts a python-telegram-bot `InlineKeyboardMarkup`-compatible dict for attaching inline buttons; `edit_telegram_message()` |
 | `src/common/validators.py` | Input validation helpers (OHLCV row checks, date format, etc.) |
 | `src/common/yfinance_client.py` | yfinance wrapper for fundamentals, VIX, earnings calendar |
 | `src/backfiller/main.py` | Orchestrates all backfill phases; `sync_tickers_from_config()`; `run_full_backfill()` |
@@ -110,8 +110,8 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/notifier/sentiment_enrichment.py` | Finnhub sentiment enrichment via Claude Haiku; `run_sentiment_enrichment()` + `enrich_batch()` |
 | `src/notifier/formatter.py` | Formats full report, heartbeat, and no-signals variants |
 | `src/notifier/telegram.py` | Telegram send/edit helpers |
-| `src/notifier/bot.py` | Long-polling bot; `/detail`, `/scatter`, `/tickers`, `/help` handlers; logs every incoming command to `telegram_message_log` |
-| `src/notifier/why_command.py` | Backend formatters for `/why` (default, all, drill-down modes): `dispatch_why`, `format_why_default`, `format_why_all`, `format_why_drilldown`, `load_why_payload`, `resolve_name_token`. Telegram `CommandHandler` + `CallbackQueryHandler` wiring is deferred to Sitting 2. |
+| `src/notifier/bot.py` | Long-polling bot; `/detail`, `/scatter`, `/tickers`, `/help`, `/why` handlers; `CallbackQueryHandler(pattern="^why:")` handles inline button taps from `/detail` msg #3; logs every incoming command to `telegram_message_log` |
+| `src/notifier/why_command.py` | Backend formatters for `/why` (default, all, drill-down modes): `dispatch_why`, `format_why_default`, `format_why_all`, `format_why_drilldown`, `load_why_payload`, `resolve_name_token`. Public entry point used by the bot wrappers: `handle_why_command(db_conn, chat_id, message_text, bot_token, configs)`. Callback data format is `"why:{TICKER}"`, validated in `bot.py` by `_WHY_TICKER_PATTERN` regex; `await query.answer()` is in a `finally` block so the Telegram loading spinner is always dismissed even on error. |
 | `src/notifier/tickers_command.py` | `/tickers` Telegram bot command handler; logs invocations to `telegram_message_log` |
 | `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward excess returns (vs SPY), plots calibrated_score (predicted) vs actual excess return scatter chart with IC annotation (Spearman rank correlation via `compute_ic()`), sends PNG via Telegram |
 | `src/web/app.py` | `create_app(db_path, config)` FastAPI application factory. Sets up `SessionMiddleware`, mounts static files, registers all routes: `GET /login`, `POST /login`, `POST /logout`, `GET /`, `GET /api/tickers`, `GET /api/dates`, `GET /api/snapshot`, `POST /api/llm`. Per-(session, ticker, date, timeframe) in-memory LLM debounce stored in a closure dict (not module-level, so each `create_app()` call is isolated — important for tests). Single worker required; debounce is process-local. |

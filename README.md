@@ -228,7 +228,12 @@ The pipeline sends daily reports automatically. A separate interactive bot proce
 | `/scatter 10` | Confidence vs 10-day forward return scatter plot (all tickers, last 90 days) |
 | `/scatter 5 AAPL` | Confidence vs 5-day forward return for AAPL only |
 | `/scatter 20 AAPL 180` | 20-day forward return, AAPL only, last 180 days of signals |
+| `/why AAPL` | Top-5 verbose math walkthrough of every contribution to the latest signal |
+| `/why AAPL all` | Ranked table of every contribution (capped at 50) |
+| `/why AAPL rsi_14` | Drill-down for a specific indicator or pattern by its canonical key |
 | `/help` | List all available commands |
+
+The `/detail` response includes an inline "🔍 Why this signal?" button on the raw-data breakdown message; tapping it delivers the same response as `/why AAPL` without retyping the command.
 
 ### What `/detail` Returns
 
