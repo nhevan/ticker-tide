@@ -22,6 +22,72 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+#: Maps each key produced by ``score_all_indicators`` to its scoring category.
+#:
+#: **Maintenance obligation**: whenever you add an indicator to
+#: ``score_all_indicators`` in ``src/scorer/indicator_scorer.py``, you MUST
+#: also add a ``(key, category)`` entry here.  The 9 valid category names are:
+#: trend, momentum, volume, volatility, candlestick, structural, sentiment,
+#: fundamental, macro.
+#:
+#: NOTE: ``"keltner"`` is listed here (volatility) because the existing
+#: ``compute_all_category_scores`` references it, but ``score_all_indicators``
+#: does NOT currently emit a ``"keltner"`` key — it will always resolve to None.
+#: This mismatch is pre-existing and intentionally NOT fixed in this changeset.
+INDICATOR_CATEGORY_MAP: dict[str, str] = {
+    # --- trend ---
+    "ema_alignment": "trend",
+    "macd_line": "trend",
+    "macd_histogram": "trend",
+    "adx": "trend",
+    # --- momentum ---
+    "rsi_14": "momentum",
+    "stoch_k": "momentum",
+    "cci_20": "momentum",
+    "williams_r": "momentum",
+    # --- volume ---
+    "obv": "volume",
+    "cmf_20": "volume",
+    "ad_line": "volume",
+    # --- volatility ---
+    "bb_pctb": "volatility",
+    "atr_14": "volatility",
+    "keltner": "volatility",  # NOTE: not emitted by score_all_indicators — always None
+}
+
+#: Maps each key in the ``pattern_scores`` dict (assembled in
+#: ``src/scorer/main.py``) to its scoring category.
+#:
+#: **Maintenance obligation**: whenever you add a pattern key to the
+#: ``pattern_scores`` dict in ``src/scorer/main.py``, you MUST also add a
+#: ``(key, category)`` entry here.  The 9 valid category names are:
+#: trend, momentum, volume, volatility, candlestick, structural, sentiment,
+#: fundamental, macro.
+PATTERN_CATEGORY_MAP: dict[str, str] = {
+    # --- trend (crossovers) ---
+    "crossover_ema_9_21": "trend",
+    "crossover_ema_21_50": "trend",
+    "crossover_macd_signal": "trend",
+    # --- momentum (divergences) ---
+    "divergence_rsi": "momentum",
+    "divergence_macd": "momentum",
+    "divergence_stoch": "momentum",
+    # --- volume (divergences) ---
+    "divergence_obv": "volume",
+    # --- candlestick ---
+    "candlestick_pattern_score": "candlestick",
+    # --- structural ---
+    "structural_pattern_score": "structural",
+    "gap_score": "structural",
+    "fibonacci_score": "structural",
+}
+
+# All 9 category names used throughout the scoring pipeline.
+_ALL_CATEGORIES = frozenset({
+    "trend", "momentum", "volume", "volatility",
+    "candlestick", "structural", "sentiment", "fundamental", "macro",
+})
+
 
 def rollup_category(category_name: str, component_scores: dict) -> float:
     """
@@ -89,77 +155,30 @@ def compute_all_category_scores(
     Returns:
         Dict with 9 category names mapped to scores between -100 and +100.
     """
-    # 1. Trend: EMA alignment, MACD line, MACD histogram, ADX, crossovers
-    trend_components = {
-        "ema_alignment": indicator_scores.get("ema_alignment"),
-        "macd_line": indicator_scores.get("macd_line"),
-        "macd_histogram": indicator_scores.get("macd_histogram"),
-        "adx": indicator_scores.get("adx"),
-        "crossover_ema_9_21": pattern_scores.get("crossover_ema_9_21"),
-        "crossover_ema_21_50": pattern_scores.get("crossover_ema_21_50"),
-        "crossover_macd": pattern_scores.get("crossover_macd_signal"),
-    }
+    # Build per-category component dicts from the module-level maps.
+    components_by_category: dict[str, dict[str, float]] = {cat: {} for cat in _ALL_CATEGORIES}
 
-    # 2. Momentum: RSI, Stochastic, CCI, Williams %R, divergences
-    momentum_components = {
-        "rsi_14": indicator_scores.get("rsi_14"),
-        "stoch_k": indicator_scores.get("stoch_k"),
-        "cci_20": indicator_scores.get("cci_20"),
-        "williams_r": indicator_scores.get("williams_r"),
-        "divergence_rsi": pattern_scores.get("divergence_rsi"),
-        "divergence_macd": pattern_scores.get("divergence_macd"),
-        "divergence_stoch": pattern_scores.get("divergence_stoch"),
-    }
+    for ind_name, cat in INDICATOR_CATEGORY_MAP.items():
+        components_by_category[cat][ind_name] = indicator_scores.get(ind_name)
 
-    # 3. Volume: OBV, CMF, A/D Line, OBV divergence
-    volume_components = {
-        "obv": indicator_scores.get("obv"),
-        "cmf_20": indicator_scores.get("cmf_20"),
-        "ad_line": indicator_scores.get("ad_line"),
-        "divergence_obv": pattern_scores.get("divergence_obv"),
-    }
+    for pat_name, cat in PATTERN_CATEGORY_MAP.items():
+        components_by_category[cat][pat_name] = pattern_scores.get(pat_name)
 
-    # 4. Volatility: Bollinger Bands %B, ATR, Keltner
-    volatility_components = {
-        "bb_pctb": indicator_scores.get("bb_pctb"),
-        "atr_14": indicator_scores.get("atr_14"),
-        "keltner": indicator_scores.get("keltner"),
-    }
-
-    # 5. Candlestick: single candlestick pattern score
-    candlestick_components = {
-        "candlestick_pattern_score": pattern_scores.get("candlestick_pattern_score"),
-    }
-
-    # 6. Structural: structural patterns, gaps, Fibonacci
-    structural_components = {
-        "structural_pattern_score": pattern_scores.get("structural_pattern_score"),
-        "gap_score": pattern_scores.get("gap_score"),
-        "fibonacci_score": pattern_scores.get("fibonacci_score"),
-    }
-
-    # 7. Sentiment: news sentiment, short interest
-    sentiment_components = {
+    # Sentiment, fundamental, and macro are passed in as pre-computed scalars
+    # rather than being looked up from indicator/pattern dicts.
+    components_by_category["sentiment"] = {
         "news_sentiment_score": sentiment_scores.get("news_sentiment_score"),
         "short_interest_score": sentiment_scores.get("short_interest_score"),
     }
-
-    # 8. Fundamental: single pre-computed score
-    fundamental_components = {"fundamental_score": fundamental_score}
-
-    # 9. Macro: single pre-computed score
-    macro_components = {"macro_score": macro_score}
+    components_by_category["fundamental"] = {"fundamental_score": fundamental_score}
+    components_by_category["macro"] = {"macro_score": macro_score}
 
     return {
-        "trend": rollup_category("trend", trend_components),
-        "momentum": rollup_category("momentum", momentum_components),
-        "volume": rollup_category("volume", volume_components),
-        "volatility": rollup_category("volatility", volatility_components),
-        "candlestick": rollup_category("candlestick", candlestick_components),
-        "structural": rollup_category("structural", structural_components),
-        "sentiment": rollup_category("sentiment", sentiment_components),
-        "fundamental": rollup_category("fundamental", fundamental_components),
-        "macro": rollup_category("macro", macro_components),
+        cat: rollup_category(cat, components_by_category[cat])
+        for cat in (
+            "trend", "momentum", "volume", "volatility",
+            "candlestick", "structural", "sentiment", "fundamental", "macro",
+        )
     }
 
 
