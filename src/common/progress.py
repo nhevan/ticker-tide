@@ -270,9 +270,11 @@ def send_telegram_message(
     chat_id: str,
     text: str,
     parse_mode: str = None,
+    reply_markup: dict = None,
 ) -> int | None:
     """
-    Send a Telegram message via the Bot API and return the message_id.
+    Send a Telegram message via the Bot API with optional inline keyboard markup
+    and return the message_id.
 
     Truncates text to 4096 characters if necessary. Never raises — returns None
     on any error so pipeline failures are not caused by notification issues.
@@ -282,6 +284,9 @@ def send_telegram_message(
         chat_id: Target chat or channel ID.
         text: Message text to send.
         parse_mode: Optional parse mode ("Markdown", "MarkdownV2", or "HTML").
+        reply_markup: Optional inline keyboard markup dict (e.g. produced by
+                      InlineKeyboardMarkup(...).to_dict()). Passed verbatim to
+                      the Telegram Bot API as the reply_markup JSON field.
 
     Returns:
         The message_id integer from the API response, or None on failure.
@@ -293,6 +298,8 @@ def send_telegram_message(
     payload: dict = {"chat_id": chat_id, "text": text}
     if parse_mode is not None:
         payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
 
     try:
         response = httpx.post(url, json=payload, timeout=10.0)

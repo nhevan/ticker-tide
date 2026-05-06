@@ -333,3 +333,30 @@ def test_send_telegram_message_still_works_with_single_chat_id(mocker):
     assert result == 42
     payload = mock_post.call_args.kwargs.get("json", {})
     assert payload["chat_id"] == "single_chat_id"
+
+
+def test_send_telegram_message_includes_reply_markup(mocker):
+    """When reply_markup is provided, it should appear verbatim in the posted JSON payload."""
+    mock_response = mocker.MagicMock()
+    mock_response.json.return_value = {"ok": True, "result": {"message_id": 99}}
+    mock_response.raise_for_status = mocker.MagicMock()
+    mock_post = mocker.patch("httpx.post", return_value=mock_response)
+
+    markup = {"inline_keyboard": [[{"text": "x", "callback_data": "y"}]]}
+    send_telegram_message("tok", "chat_id", "hello", reply_markup=markup)
+
+    payload = mock_post.call_args.kwargs.get("json", {})
+    assert payload.get("reply_markup") == markup
+
+
+def test_send_telegram_message_omits_reply_markup_when_none(mocker):
+    """When reply_markup is not provided, the payload should not contain reply_markup."""
+    mock_response = mocker.MagicMock()
+    mock_response.json.return_value = {"ok": True, "result": {"message_id": 10}}
+    mock_response.raise_for_status = mocker.MagicMock()
+    mock_post = mocker.patch("httpx.post", return_value=mock_response)
+
+    send_telegram_message("tok", "chat_id", "hello")
+
+    payload = mock_post.call_args.kwargs.get("json", {})
+    assert "reply_markup" not in payload

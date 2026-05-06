@@ -12,13 +12,23 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from typing import Optional
 
+from src.common.progress import send_telegram_message
 from src.scorer.indicator_scorer import FIXED_LADDER, PROFILE_FREE_INDICATORS
 from src.scorer.pattern_scorer import PATTERN_RULE_DESCRIPTIONS
 
 logger = logging.getLogger(__name__)
+
+# Validates ticker tokens received via /why callback_data — mirrors the active-ticker
+# shape (uppercase letters/digits + . and - for tickers like BRK.B, max 10 chars) and
+# rejects empty/oversized/non-ticker callback payloads. Imported by bot.py for
+# CallbackQueryHandler validation.
+_WHY_TICKER_PATTERN: re.Pattern = re.compile(r'^[A-Z0-9.\-]{1,10}$')
+
+_WHY_USAGE_HINT: str = "Usage: /why TICKER [all|<name>]\nExample: /why AAPL"
 
 #: Returned by load_why_payload when the row exists but contains no usable data.
 _NULL_DATA_SENTINEL: dict = {"error": "no_payload"}
@@ -452,6 +462,51 @@ def _build_math_breakdown(item: dict, payload: dict) -> str:
         f"    Expansion factor: {expansion:.2f}\n"
         f"    Contribution: {share:+.3f} × {cat_w:.2f} × {expansion:.2f} = {contrib:+.3f}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Synchronous bot handler
+# ---------------------------------------------------------------------------
+
+def handle_why_command(
+    db_conn: sqlite3.Connection,
+    chat_id: str,
+    message_text: str,
+    bot_token: str,
+    configs: dict,
+) -> None:
+    """Handle a /why Telegram command synchronously and send the response.
+
+    Strips the leading /why or /why@<botname> prefix, tokenizes the remainder,
+    and delegates to dispatch_why for the appropriate formatter. The response
+    is sent via send_telegram_message without parse_mode (formatters emit plain
+    text only).
+
+    Parameters:
+        db_conn: Open SQLite connection for payload and profile lookups.
+        chat_id: Telegram chat ID to reply to.
+        message_text: Full raw message text, e.g. "/why AAPL all".
+        bot_token: Telegram Bot API token.
+        configs: Multi-key configs dict; dispatch_why reads
+                 configs['notifier']['why_top_n'] and
+                 configs['notifier']['why_list_max_entries'].
+
+    Returns:
+        None
+    """
+    remainder = re.sub(r'^/why(@\w+)?\s*', '', message_text).strip()
+    tokens = remainder.split() if remainder else []
+
+    if not tokens:
+        send_telegram_message(bot_token, chat_id, _WHY_USAGE_HINT)
+        return
+
+    ticker = tokens[0].upper()
+    args = tokens[1:]
+
+    logger.info("phase=bot command=/why ticker=%s args=%s", ticker, args)
+    response = dispatch_why(ticker, args, db_conn, configs)
+    send_telegram_message(bot_token, chat_id, response)
 
 
 # ---------------------------------------------------------------------------

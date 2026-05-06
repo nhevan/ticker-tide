@@ -21,14 +21,16 @@ import sqlite3
 from datetime import datetime, timezone
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from src.common.config import get_active_tickers, load_config
 from src.common.db import get_connection
 from src.common.events import log_telegram_message
+from src.common.progress import send_telegram_message
 from src.notifier.detail_command import handle_detail_command, send_photo_to_chat
 from src.notifier.scatter_command import handle_scatter_command
 from src.notifier.tickers_command import handle_tickers_command
+from src.notifier.why_command import handle_why_command, _WHY_TICKER_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,156 @@ _HELP_TEXT = (
     "  /scatter 20 AAPL 180        — 20-day return, AAPL, last 180 days\n"
     "  /help                       — show this message"
 )
+
+
+async def handle_why_command_wrapper(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Async wrapper that bridges python-telegram-bot with the synchronous /why handler.
+
+    Extracts chat_id and the full message text, logs the command, opens a fresh DB
+    connection, builds a multi-key configs dict, and delegates to handle_why_command().
+
+    Parameters:
+        update: Telegram Update object.
+        context: Telegram bot context (unused; args available via update).
+
+    Returns:
+        None
+    """
+    if update.message is None:
+        return
+
+    chat_id = str(update.message.chat_id)
+    message_text = update.message.text or ""
+    if not message_text.startswith("/why"):
+        args = context.args or []
+        message_text = "/why " + " ".join(args)
+
+    received_at = datetime.now(tz=timezone.utc).isoformat()
+    user = update.message.from_user
+    user_id = str(user.id) if user else None
+    username = user.username if user else None
+    command = _extract_command(message_text)
+
+    db_path = os.getenv("DB_PATH", "data/signals.db")
+    log_conn = get_connection(db_path)
+    try:
+        log_telegram_message(log_conn, chat_id, user_id, username, command, message_text, received_at)
+        logger.info("phase=bot chat_id=%s user=%s command=%s message logged", chat_id, username, command)
+    except sqlite3.Error as exc:
+        logger.warning("phase=bot failed to log telegram message: %s", exc)
+    finally:
+        log_conn.close()
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    configs = {
+        "notifier": load_config("notifier"),
+        "calculator": load_config("calculator"),
+    }
+
+    conn = get_connection(db_path)
+    try:
+        handle_why_command(conn, chat_id, message_text, bot_token, configs)
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        logger.error("phase=bot handle_why_command_wrapper unhandled error: %s", exc)
+    finally:
+        conn.close()
+
+
+def _dispatch_why_callback(query: object, ticker: str) -> None:
+    """
+    Log the inline /why callback and call handle_why_command for the given ticker.
+
+    Extracted from handle_why_callback_wrapper to keep that function under 50 lines.
+    Opens and closes both the log connection and the main DB connection independently.
+
+    Parameters:
+        query: The CallbackQuery object from the Telegram Update.
+        ticker: Validated ticker string extracted from callback_data.
+
+    Returns:
+        None
+    """
+    chat_id = str(query.message.chat_id)
+    message_text = f"callback_query:why:{ticker}"
+    received_at = datetime.now(tz=timezone.utc).isoformat()
+    user = query.from_user
+    user_id = str(user.id) if user else None
+    username = user.username if user else None
+
+    db_path = os.getenv("DB_PATH", "data/signals.db")
+    log_conn = get_connection(db_path)
+    try:
+        log_telegram_message(log_conn, chat_id, user_id, username, "/why", message_text, received_at)
+    except sqlite3.Error as exc:
+        logger.warning("phase=bot why-callback failed to log: %s", exc)
+    finally:
+        log_conn.close()
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    configs = {
+        "notifier": load_config("notifier"),
+        "calculator": load_config("calculator"),
+    }
+    conn = get_connection(db_path)
+    try:
+        handle_why_command(conn, chat_id, f"/why {ticker}", bot_token, configs)
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        logger.error("phase=bot handle_why_callback_wrapper unhandled error: %s", exc)
+    finally:
+        conn.close()
+
+
+async def handle_why_callback_wrapper(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Async wrapper for the inline "Why this signal?" button on /detail messages.
+
+    callback_data is f"why:{TICKER}". Validates the ticker token, then dispatches
+    to the same sync handler as a typed /why command. Reply target is
+    query.message.chat_id (the chat where the button was tapped).
+
+    query.answer() is always awaited in a finally block to dismiss the loading
+    spinner on every code path, including exceptions and early returns.
+
+    Parameters:
+        update: Telegram Update object containing the CallbackQuery.
+        context: Telegram bot context (unused).
+
+    Returns:
+        None
+    """
+    query = update.callback_query
+    if query is None:
+        return
+
+    try:
+        data = query.data or ""
+        if not data.startswith("why:"):
+            logger.warning("phase=bot why-callback malformed prefix data=%r", data)
+            send_telegram_message(
+                bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+                chat_id=str(query.message.chat_id),
+                text="Sorry, I couldn't process that button.",
+            )
+            return
+
+        ticker = data[len("why:"):]
+        if not _WHY_TICKER_PATTERN.match(ticker):
+            logger.warning("phase=bot why-callback invalid ticker token=%r", ticker)
+            send_telegram_message(
+                bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+                chat_id=str(query.message.chat_id),
+                text="Sorry, that ticker isn't in a format I recognize.",
+            )
+            return
+
+        _dispatch_why_callback(query, ticker)
+    finally:
+        await query.answer()
 
 
 async def handle_detail_command_wrapper(
@@ -249,6 +401,10 @@ def start_bot(config: dict) -> None:
     application.add_handler(CommandHandler("scatter", handle_scatter_command_wrapper))
     application.add_handler(CommandHandler("tickers", handle_tickers_command))
     application.add_handler(CommandHandler("help", handle_help_command))
+    application.add_handler(CommandHandler("why", handle_why_command_wrapper))
+    application.add_handler(
+        CallbackQueryHandler(handle_why_callback_wrapper, pattern="^why:")
+    )
 
     logger.info("phase=bot Telegram bot started, listening for commands...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)

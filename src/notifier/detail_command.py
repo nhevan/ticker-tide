@@ -29,6 +29,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from src.common.config import load_config
 from src.common.progress import edit_telegram_message, send_telegram_message
 from src.notifier.chart_generator import cleanup_chart, generate_chart
@@ -1771,8 +1773,12 @@ def handle_detail_command(
             active_tickers=active_tickers,
         )
         breakdown_chunks = _split_breakdown_at_sections(breakdown)
-        for chunk in breakdown_chunks:
-            send_telegram_message(bot_token, chat_id, chunk)
+        why_button = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔍 Why this signal?", callback_data=f"why:{ticker}")
+        ]]).to_dict()
+        for i, chunk in enumerate(breakdown_chunks):
+            markup = why_button if i == len(breakdown_chunks) - 1 else None
+            send_telegram_message(bot_token, chat_id, chunk, reply_markup=markup)
 
         if placeholder_id:
             edit_telegram_message(

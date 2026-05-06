@@ -1545,3 +1545,165 @@ class TestHandleDetailCommand:
         calls_text = " ".join(str(c) for c in mock_send.call_args_list)
         assert "AAPL" in calls_text
         assert "scorer" in calls_text.lower() or "scoring" in calls_text.lower() or "no" in calls_text.lower()
+
+    def _run_detail_command(self, db_connection: sqlite3.Connection, mock_send: object) -> None:
+        """Run handle_detail_command with all external calls mocked."""
+        from src.notifier.detail_command import handle_detail_command
+
+        calc_config = {
+            "fibonacci": {"levels": [0.236, 0.382, 0.5, 0.618, 0.786], "proximity_pct": 1.0, "min_range_pct": 5.0}
+        }
+        ai_mock_return = (
+            "BUY pullback to $185</verdict>"
+            "<timeframe_note>All timeframes bullish</timeframe_note>"
+            "<reasoning>MACD rising.</reasoning>"
+        )
+        with patch("src.notifier.detail_command.generate_chart", return_value="/tmp/fake_chart.png"):
+            with patch("src.notifier.detail_command.cleanup_chart"):
+                with patch("src.notifier.detail_command.send_photo_to_chat", return_value=True):
+                    with patch("src.notifier.detail_command._call_claude_for_analysis", return_value=ai_mock_return):
+                        with patch("src.notifier.detail_command.edit_telegram_message", return_value=True):
+                            handle_detail_command(
+                                db_connection,
+                                "chat123",
+                                "/detail AAPL",
+                                "bot_token",
+                                SAMPLE_CONFIG,
+                                ACTIVE_TICKERS,
+                                calc_config,
+                            )
+
+    def test_why_button_attached_only_to_last_breakdown_chunk_multi_chunk(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Multi-chunk breakdown: only the last chunk gets reply_markup; earlier chunks get None."""
+        from unittest.mock import patch
+
+        _insert_score(db_connection, "AAPL")
+        _insert_indicators(db_connection, "AAPL")
+
+        from src.notifier.detail_command import _split_breakdown_at_sections
+
+        # Build a fake breakdown that will produce exactly 3 chunks when split
+        section_sep = "\n\n---\n\n"
+        fake_breakdown = section_sep.join([
+            "Section A " * 300,
+            "Section B " * 300,
+            "Section C " * 300,
+        ])
+
+        with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
+            with patch(
+                "src.notifier.detail_command._split_breakdown_at_sections",
+                return_value=["chunk_one", "chunk_two", "chunk_three"],
+            ):
+                self._run_detail_command(db_connection, mock_send)
+
+        # Collect all breakdown-chunk calls (the last 3 calls before edit_telegram_message)
+        # Filter to calls whose text is one of our chunks
+        breakdown_calls = [
+            c for c in mock_send.call_args_list
+            if len(c.args) >= 3 and c.args[2] in ("chunk_one", "chunk_two", "chunk_three")
+        ]
+        assert len(breakdown_calls) == 3, f"Expected 3 breakdown calls, got {len(breakdown_calls)}"
+
+        assert breakdown_calls[0].kwargs.get("reply_markup") is None
+        assert breakdown_calls[1].kwargs.get("reply_markup") is None
+        assert breakdown_calls[2].kwargs.get("reply_markup") is not None
+
+    def test_why_button_attached_to_single_breakdown_chunk(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Single-chunk breakdown: that one call gets reply_markup set to a dict."""
+        from unittest.mock import patch
+
+        _insert_score(db_connection, "AAPL")
+        _insert_indicators(db_connection, "AAPL")
+
+        with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
+            with patch(
+                "src.notifier.detail_command._split_breakdown_at_sections",
+                return_value=["only_chunk"],
+            ):
+                self._run_detail_command(db_connection, mock_send)
+
+        breakdown_calls = [
+            c for c in mock_send.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "only_chunk"
+        ]
+        assert len(breakdown_calls) == 1
+        assert breakdown_calls[0].kwargs.get("reply_markup") is not None
+
+    def test_why_button_reply_markup_is_dict_not_inline_keyboard_markup_object(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """reply_markup passed to send_telegram_message must be a plain dict, not a Telegram object."""
+        from unittest.mock import patch
+
+        _insert_score(db_connection, "AAPL")
+        _insert_indicators(db_connection, "AAPL")
+
+        with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
+            with patch(
+                "src.notifier.detail_command._split_breakdown_at_sections",
+                return_value=["only_chunk"],
+            ):
+                self._run_detail_command(db_connection, mock_send)
+
+        breakdown_calls = [
+            c for c in mock_send.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "only_chunk"
+        ]
+        assert len(breakdown_calls) == 1
+        markup = breakdown_calls[0].kwargs.get("reply_markup")
+        assert isinstance(markup, dict), f"Expected dict, got {type(markup)}"
+
+    def test_why_button_reply_markup_has_inline_keyboard_key(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """reply_markup dict must contain 'inline_keyboard' as the top-level key."""
+        from unittest.mock import patch
+
+        _insert_score(db_connection, "AAPL")
+        _insert_indicators(db_connection, "AAPL")
+
+        with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
+            with patch(
+                "src.notifier.detail_command._split_breakdown_at_sections",
+                return_value=["only_chunk"],
+            ):
+                self._run_detail_command(db_connection, mock_send)
+
+        breakdown_calls = [
+            c for c in mock_send.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "only_chunk"
+        ]
+        markup = breakdown_calls[0].kwargs.get("reply_markup")
+        assert "inline_keyboard" in markup, f"'inline_keyboard' key missing from reply_markup: {markup}"
+
+    def test_why_button_callback_data_contains_correct_ticker(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """The button's callback_data must be 'why:AAPL' for a /detail AAPL command."""
+        from unittest.mock import patch
+
+        _insert_score(db_connection, "AAPL")
+        _insert_indicators(db_connection, "AAPL")
+
+        with patch("src.notifier.detail_command.send_telegram_message", return_value=42) as mock_send:
+            with patch(
+                "src.notifier.detail_command._split_breakdown_at_sections",
+                return_value=["only_chunk"],
+            ):
+                self._run_detail_command(db_connection, mock_send)
+
+        breakdown_calls = [
+            c for c in mock_send.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "only_chunk"
+        ]
+        markup = breakdown_calls[0].kwargs.get("reply_markup")
+        # inline_keyboard is a list of rows; first row, first button
+        button = markup["inline_keyboard"][0][0]
+        assert button["callback_data"] == "why:AAPL", (
+            f"Expected callback_data='why:AAPL', got {button['callback_data']!r}"
+        )

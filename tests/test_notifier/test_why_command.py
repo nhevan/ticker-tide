@@ -18,10 +18,13 @@ import pytest
 
 from src.notifier.why_command import (
     _NULL_DATA_SENTINEL,
+    _WHY_TICKER_PATTERN,
+    _WHY_USAGE_HINT,
     dispatch_why,
     format_why_all,
     format_why_default,
     format_why_drilldown,
+    handle_why_command,
     load_why_payload,
     resolve_name_token,
 )
@@ -586,3 +589,138 @@ class TestDispatchWhy:
         result = dispatch_why("AAPL", ["ema"], db, _SAMPLE_CONFIGS)
         assert "ema" in result.lower()
         assert "ambiguous" in result.lower() or "multiple" in result.lower() or "did you mean" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# _WHY_TICKER_PATTERN and _WHY_USAGE_HINT constants
+# ---------------------------------------------------------------------------
+
+class TestWhyConstants:
+    def test_ticker_pattern_accepts_valid_uppercase_tickers(self) -> None:
+        """Valid ticker symbols should match _WHY_TICKER_PATTERN."""
+        for ticker in ("AAPL", "MSFT", "BRK.B", "BRK-B", "A", "GOOGL123"):
+            assert _WHY_TICKER_PATTERN.match(ticker), f"Expected match for {ticker!r}"
+
+    def test_ticker_pattern_rejects_empty_string(self) -> None:
+        """Empty string should not match _WHY_TICKER_PATTERN."""
+        assert _WHY_TICKER_PATTERN.match("") is None
+
+    def test_ticker_pattern_rejects_lowercase(self) -> None:
+        """Lowercase ticker should not match _WHY_TICKER_PATTERN."""
+        assert _WHY_TICKER_PATTERN.match("aapl") is None
+
+    def test_ticker_pattern_rejects_oversized(self) -> None:
+        """String longer than 10 chars should not match _WHY_TICKER_PATTERN."""
+        assert _WHY_TICKER_PATTERN.match("ABCDEFGHIJK") is None
+
+    def test_ticker_pattern_rejects_spaces(self) -> None:
+        """String with spaces should not match _WHY_TICKER_PATTERN."""
+        assert _WHY_TICKER_PATTERN.match("AA PL") is None
+
+    def test_usage_hint_mentions_ticker_and_example(self) -> None:
+        """_WHY_USAGE_HINT should mention /why, TICKER, and an example."""
+        assert "/why" in _WHY_USAGE_HINT
+        assert "TICKER" in _WHY_USAGE_HINT
+        assert "AAPL" in _WHY_USAGE_HINT
+
+
+# ---------------------------------------------------------------------------
+# handle_why_command
+# ---------------------------------------------------------------------------
+
+class TestHandleWhyCommand:
+    """Tests for the synchronous handle_why_command function."""
+
+    _CONFIGS = {
+        "notifier": {"why_top_n": 5, "why_list_max_entries": 50},
+        "calculator": {},
+    }
+
+    def _setup_db_with_payload(self, db: sqlite3.Connection) -> None:
+        items = _thirty_items()
+        payload = _make_payload(items)
+        _setup_scores_daily(db, "AAPL", payload)
+
+    def _sent_text(self, mock_send) -> str:
+        """Extract the text (3rd positional arg) from the first send_telegram_message call."""
+        _, call_args, _ = mock_send.mock_calls[0]
+        return call_args[2]
+
+    def test_no_ticker_sends_usage_hint(self, db: sqlite3.Connection, mocker) -> None:
+        """When no ticker is given, send_telegram_message is called with _WHY_USAGE_HINT."""
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "100", "/why", "tok", self._CONFIGS)
+        mock_send.assert_called_once()
+        assert self._sent_text(mock_send) == _WHY_USAGE_HINT
+
+    def test_no_ticker_with_whitespace_sends_usage_hint(self, db: sqlite3.Connection, mocker) -> None:
+        """'/why   ' (trailing spaces) still sends usage hint."""
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "100", "/why   ", "tok", self._CONFIGS)
+        mock_send.assert_called_once()
+        assert self._sent_text(mock_send) == _WHY_USAGE_HINT
+
+    def test_lowercase_ticker_normalized_to_uppercase(self, db: sqlite3.Connection, mocker) -> None:
+        """Lowercase ticker in message is uppercased before dispatch."""
+        self._setup_db_with_payload(db)
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "100", "/why aapl", "tok", self._CONFIGS)
+        # dispatch_why returns a non-empty response for AAPL
+        mock_send.assert_called_once()
+        text = self._sent_text(mock_send)
+        assert isinstance(text, str) and len(text) > 0
+
+    def test_default_mode_dispatches_correctly(self, db: sqlite3.Connection, mocker) -> None:
+        """'/why AAPL' → default formatter output is sent."""
+        self._setup_db_with_payload(db)
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "200", "/why AAPL", "tok", self._CONFIGS)
+        mock_send.assert_called_once()
+        text = self._sent_text(mock_send)
+        # Default mode includes a 'more' footer since 30 > top_n=5
+        assert "more" in text
+
+    def test_all_mode_dispatches_correctly(self, db: sqlite3.Connection, mocker) -> None:
+        """'/why AAPL all' → all-mode formatter output is sent."""
+        self._setup_db_with_payload(db)
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "200", "/why AAPL all", "tok", self._CONFIGS)
+        mock_send.assert_called_once()
+        text = self._sent_text(mock_send)
+        # All mode uses a code block
+        assert "```" in text
+
+    def test_drilldown_mode_dispatches_correctly(self, db: sqlite3.Connection, mocker) -> None:
+        """'/why AAPL rsi_14' → drill-down output is sent."""
+        self._setup_db_with_payload(db)
+        _setup_indicator_profiles(db, "AAPL", "rsi_14")
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "200", "/why AAPL rsi_14", "tok", self._CONFIGS)
+        mock_send.assert_called_once()
+        text = self._sent_text(mock_send)
+        assert "rsi" in text.lower()
+
+    def test_why_top_n_from_config_is_honored(self, db: sqlite3.Connection, mocker) -> None:
+        """why_top_n=3 in config results in only 3 top entries, not the default 5."""
+        self._setup_db_with_payload(db)
+        configs_top3 = {
+            "notifier": {"why_top_n": 3, "why_list_max_entries": 50},
+            "calculator": {},
+        }
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "200", "/why AAPL", "tok", configs_top3)
+        mock_send.assert_called_once()
+        text = self._sent_text(mock_send)
+        # With 30 items and top_n=3, footer says +27 more
+        assert "+27 more" in text or "27 more" in text
+
+    def test_bot_mention_suffix_is_stripped(self, db: sqlite3.Connection, mocker) -> None:
+        """'/why@somebot AAPL' strips the bot-mention suffix correctly."""
+        self._setup_db_with_payload(db)
+        mock_send = mocker.patch("src.notifier.why_command.send_telegram_message")
+        handle_why_command(db, "200", "/why@somebot AAPL", "tok", self._CONFIGS)
+        mock_send.assert_called_once()
+        text = self._sent_text(mock_send)
+        # Should NOT treat "@somebot" as a ticker — should produce actual output
+        assert text != _WHY_USAGE_HINT
+        assert isinstance(text, str) and len(text) > 0
