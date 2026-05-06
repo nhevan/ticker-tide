@@ -67,6 +67,8 @@ def build_contributions_payload(
 
             {
                 "v": 1,
+                "expansion_factor": float,   # echoed so consumers can show
+                                             # the full math chain
                 "items": [
                     {
                         "name": str,
@@ -120,7 +122,7 @@ def build_contributions_payload(
     # Sort by |contribution| descending so the biggest drivers appear first.
     items.sort(key=lambda item: abs(item["contribution"]), reverse=True)
 
-    return {"v": 1, "items": items}
+    return {"v": 1, "expansion_factor": float(expansion_factor), "items": items}
 
 
 def _build_category_items(

@@ -412,15 +412,19 @@ def _build_math_chain(item: Optional[dict], payload: dict) -> str:
 def _build_math_breakdown(item: dict, payload: dict) -> str:
     """Walk through score → category share → regime weight → contribution.
 
-    Mirrors the formula in ``src.scorer.contribution``: each item's
-    contribution inside its category is ``score × |score| / Σ|sibling scores|``,
-    then scaled by the regime weight. Expansion factor is not shown here —
-    it's already baked into the persisted ``contribution`` value, so the
-    displayed share×weight product may differ slightly from the final number.
+    Mirrors the formula in ``src.scorer.contribution`` exactly so that the
+    displayed math reconciles with the persisted ``contribution``:
+
+        contribution = (score × |score| ÷ Σ|sibling scores|)
+                        × regime_weight × expansion_factor
+
+    The expansion factor lives at the payload root and is shown explicitly
+    in the math line so users can reproduce the number with a calculator.
 
     Parameters:
         item: The focal item.
-        payload: The full payload used to find category siblings.
+        payload: The full payload used to find category siblings AND read
+                 the top-level ``expansion_factor`` field.
 
     Returns:
         Multi-line indented block.
@@ -429,6 +433,7 @@ def _build_math_breakdown(item: dict, payload: dict) -> str:
     score = item["score"]
     contrib = item["contribution"]
     cat_w = item["category_weight"]
+    expansion = payload.get("expansion_factor", 1.0)
     siblings = [it for it in payload.get("items", []) if it.get("category") == cat]
     sibling_strs = ", ".join(f"{s['name']} {s['score']:+.2f}" for s in siblings)
     total_mag = sum(abs(s["score"]) for s in siblings)
@@ -444,7 +449,8 @@ def _build_math_breakdown(item: dict, payload: dict) -> str:
         f"    Total magnitude: {total_mag:.2f}\n"
         f"    Share: {score:+.2f} × |{score:.2f}| ÷ {total_mag:.2f} = {share:+.3f}\n"
         f"    Regime weight ({cat}): {cat_w:.2f}\n"
-        f"    Contribution: {share:+.3f} × {cat_w:.2f} ≈ {contrib:+.3f}"
+        f"    Expansion factor: {expansion:.2f}\n"
+        f"    Contribution: {share:+.3f} × {cat_w:.2f} × {expansion:.2f} = {contrib:+.3f}"
     )
 
 

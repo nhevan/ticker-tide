@@ -321,8 +321,10 @@ class TestFormatWhyDefault:
         assert "Share:" in output and "÷" in output
         # Regime weight
         assert "Regime weight (momentum):" in output
-        # Final contribution multiplication
-        assert "Contribution:" in output and "≈" in output
+        # Expansion factor is shown explicitly so the math reconciles
+        assert "Expansion factor:" in output
+        # Final contribution multiplication uses = (not ≈) since expansion is shown
+        assert "Contribution:" in output
 
 
 # ---------------------------------------------------------------------------

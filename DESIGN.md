@@ -1071,6 +1071,7 @@ After `apply_adaptive_weights` produces category scores, `src/scorer/contributio
 ```json
 {
   "v": 1,
+  "expansion_factor": 1.5,
   "items": [
     {
       "name":             "rsi_14",
@@ -1087,12 +1088,13 @@ After `apply_adaptive_weights` produces category scores, `src/scorer/contributio
 
 - `kind` is `"indicator"` or `"pattern"`.
 - `items` is sorted by `|contribution|` descending so the highest-impact signals appear first.
+- `expansion_factor` echoes `config['scoring']['score_expansion_factor']` at scoring time so `/why` can render the full math chain (`share × regime_weight × expansion_factor = contribution`) and reconcile exactly with the persisted contribution number.
 - The `v` field exists for forward-compatibility: if the payload schema changes in a future sitting, the `/why` formatter can detect stale data by checking `payload["v"]` and fall back gracefully.
 
 **Approximation note.** Summing `items[*].contribution` does not reproduce `final_score` exactly. Three sources of divergence are expected:
 
 1. **Clamping** — each category score is clamped to ±100 before weighting; the per-indicator scores that fed the average are unclamped.
-2. **Expansion factor** — `score_expansion_factor` (default 1.5) is applied during category rollup; the contribution payload accounts for the expansion only at the category level, not per item.
+2. **Expansion factor** — `score_expansion_factor` (default 1.5) is baked into each per-item `contribution` value and echoed at the payload root so `/why` can show it in the math chain. Sum of `items[*].contribution` therefore already reflects expansion; divergence from `final_score` comes from clamping and sector adjustment, not expansion.
 3. **Post-rollup sector adjustment** — the `sector_adjuster` adds ±5 to ±10 points after the category scores are combined; this is not attributable to any single indicator or pattern.
 
 These divergences are intentional: the payload is designed for relative ranking and human-readable explanation, not as a mathematical reconstruction of `final_score`.

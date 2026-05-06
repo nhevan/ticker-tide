@@ -322,7 +322,19 @@ def test_empty_input_returns_empty_items() -> None:
         expansion_factor=1.0,
     )
 
-    assert result == {"v": 1, "items": []}
+    assert result == {"v": 1, "expansion_factor": 1.0, "items": []}
+
+
+def test_expansion_factor_echoed_in_payload_root() -> None:
+    """The expansion_factor argument must be echoed at the payload root so
+    consumers (e.g., the /why formatter) can display the full math chain."""
+    result = build_contributions_payload(
+        indicator_scores={"rsi_14": 50.0},
+        pattern_scores={},
+        regime_weights={"momentum": 0.3},
+        expansion_factor=1.5,
+    )
+    assert result["expansion_factor"] == 1.5
 
 
 # ---------------------------------------------------------------------------
