@@ -454,6 +454,15 @@ in this block does, however, require a redeploy because
 | `telegram.display_timezone` | string | `"Europe/Amsterdam"` | Timezone for timestamps shown in Telegram messages |
 | `telegram.max_message_chars` | int | `4000` | Maximum characters per Telegram message before splitting. Messages that exceed this limit are split at line boundaries and annotated with `(N/M)` page indicators in the header and footer. Keep below Telegram's hard limit of 4096. |
 
+**`/why` command keys** (used by `src/notifier/why_command.py`):
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `why_top_n` | int | `5` | Number of top contributors shown in the default `/why TICKER` response. Increasing this shows more items; decreasing it keeps the message brief. |
+| `why_list_max_entries` | int | `50` | Hard cap on rows shown in `/why TICKER all` output. Exists to keep the message under Telegram's 4096-character limit. |
+
+Both keys are display-side only. Changing either value does **not** require re-running the scorer or any pipeline phase — simply restart the bot (`sudo systemctl restart ticker-tide-bot`) to pick up the new values.
+
 **`detail_command` keys** (used by the `/detail` bot command):
 
 | Key | Type | Default | Description |
@@ -587,6 +596,8 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `sentiment_enrichment.batch_size` | None — applies on next run |
 | `sentiment_enrichment.max_articles_per_run` | None — applies on next run (run `enrich_finnhub_sentiment.py --all` to reprocess with new cap) |
 | `telegram.*` | None — applies on next run |
+| `why_top_n` | None — bot restart only (`sudo systemctl restart ticker-tide-bot`) |
+| `why_list_max_entries` | None — bot restart only (`sudo systemctl restart ticker-tide-bot`) |
 | Adding ticker to `tickers.json` | See OPERATIONS.md → Adding a Ticker |
 | Setting `active: false` | None — ticker skipped on next run |
 | `web.json port` | `sudo systemctl restart ticker-tide-web` |

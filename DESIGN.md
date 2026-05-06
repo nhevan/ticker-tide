@@ -773,6 +773,7 @@ Enable WAL mode on connection.
 - model_r2 REAL
 - data_completeness TEXT (JSON)
 - key_signals TEXT (JSON array)
+- key_signals_data TEXT (nullable) — JSON contribution payload used by the `/why` command. See §11.1 below for the schema and approximation notes. **Daily-only**: `scores_weekly` and `scores_monthly` do not carry this column because the `/why` feature operates on daily signals.
 - UNIQUE(ticker, date)
 
 **scores_weekly** — denormalized weekly composite snapshot for query/UI consumers (e.g., `/detail` and scatter views). NOT in the scoring critical path: the runtime `merge_timeframes()` still consumes the in-memory composite and writes the final ±100 to `scores_daily.final_score`. This table is a write-through projection so historical queries do not need to recompute weekly aggregates from `indicators_weekly`.
@@ -1060,6 +1061,43 @@ in-progress bar — by design.
 
 ### Signal: +30 to +100 = BULLISH, -30 to +30 = NEUTRAL, -100 to -30 = BEARISH
 ### Confidence: |Final Score|% + modifiers (timeframe agreement, volume confirmation, earnings proximity, VIX, etc.)
+
+### 11.1 Contribution Payload (`key_signals_data`)
+
+After `apply_adaptive_weights` produces category scores, `src/scorer/contribution.py::build_contributions_payload` assembles a per-indicator/per-pattern breakdown of how much each signal contributed to the daily composite. The result is serialised as JSON and persisted in `scores_daily.key_signals_data` (nullable TEXT). The column is **daily-only** — `scores_weekly` and `scores_monthly` do not carry it.
+
+**Payload schema (`v: 1`):**
+
+```json
+{
+  "v": 1,
+  "items": [
+    {
+      "name":             "rsi_14",
+      "kind":             "indicator",
+      "raw_value":        52.3,
+      "score":            18.0,
+      "category":         "momentum",
+      "category_weight":  0.15,
+      "contribution":     2.7
+    }
+  ]
+}
+```
+
+- `kind` is `"indicator"` or `"pattern"`.
+- `items` is sorted by `|contribution|` descending so the highest-impact signals appear first.
+- The `v` field exists for forward-compatibility: if the payload schema changes in a future sitting, the `/why` formatter can detect stale data by checking `payload["v"]` and fall back gracefully.
+
+**Approximation note.** Summing `items[*].contribution` does not reproduce `final_score` exactly. Three sources of divergence are expected:
+
+1. **Clamping** — each category score is clamped to ±100 before weighting; the per-indicator scores that fed the average are unclamped.
+2. **Expansion factor** — `score_expansion_factor` (default 1.5) is applied during category rollup; the contribution payload accounts for the expansion only at the category level, not per item.
+3. **Post-rollup sector adjustment** — the `sector_adjuster` adds ±5 to ±10 points after the category scores are combined; this is not attributable to any single indicator or pattern.
+
+These divergences are intentional: the payload is designed for relative ranking and human-readable explanation, not as a mathematical reconstruction of `final_score`.
+
+**How the scorer produces it.** `src/scorer/main.py::score_ticker` calls `build_contributions_payload` after `apply_adaptive_weights` returns the category score dict, then passes the JSON string to `save_score_to_db` alongside the existing columns. The builder reads from `INDICATOR_CATEGORY_MAP` (in `category_scorer.py`) and `PATTERN_CATEGORY_MAP` (in `category_scorer.py`) to classify each signal, and from `PATTERN_RULE_DESCRIPTIONS` (in `pattern_scorer.py`) to annotate pattern items.
 
 ## 12. Historical Scoring (Option E)
 - Last 12 months: daily scores

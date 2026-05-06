@@ -59,7 +59,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 |---|---|
 | `src/common/api_client.py` | Polygon + Finnhub HTTP clients; `httpx` + `tenacity` retry (max 3, exponential backoff) |
 | `src/common/config.py` | `load_config(name)` → reads `config/{name}.json`; `load_env()` → loads `.env`; `get_active_tickers()` |
-| `src/common/db.py` | `get_connection(path)` → WAL mode + `row_factory`; `create_all_tables()` → idempotent schema creation |
+| `src/common/db.py` | `get_connection(path)` → WAL mode + `row_factory`; `create_all_tables()` → idempotent schema creation; `run_migrations(conn)` → idempotent `ALTER TABLE … ADD COLUMN` migrations guarded by `PRAGMA table_info` (called by every pipeline entry point after `create_all_tables`) |
 | `src/common/events.py` | `pipeline_events` read/write; `alerts_log` insert; `pipeline_runs` logging; trading day detection |
 | `src/common/logger.py` | `setup_root_logging()` — call once per entry-point script; format: `[YYYY-MM-DD HH:MM:SS] LEVEL [module] msg` |
 | `src/common/progress.py` | `ProgressTracker` class; `send_telegram_message()`; `edit_telegram_message()` |
@@ -103,6 +103,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/scorer/timeframe_merger.py` | 3-way merge of daily + weekly + monthly into composite score using regime-adaptive weights (trending: 0.10d/0.50w/0.40m, ranging: 0.60d/0.30w/0.10m, volatile: 0.25d/0.45w/0.30m); weights renormalized when a timeframe is absent. Public scoring API: `compute_weekly_score_breakdown()` / `compute_monthly_score_breakdown()` return a 7-key dict (`composite_score`, 4 main categories, `candlestick_score`, `structural_score`); thin shims `compute_weekly_score()` / `compute_monthly_score()` return just the composite scalar (used by `src/scorer/main.py`). Mode is gated on `config['weekly_score_method']` / `config['monthly_score_method']` ∈ {`v1_4cat`, `v2_8cat`} — defaults to `v1_4cat`. v2 also reads `patterns_*`, `divergences_*`, `crossovers_*` (with `week_start AS date` / `month_start AS date` aliasing) and routes them through `pattern_scorer`. Profiles come from `indicator_profiles_weekly` / `_monthly` with daily fallback (logs INFO once per ticker). Requires `scoring_date` and `regime`. Monthly candlestick category is permanently `None` (decay-window mismatch). |
 | `src/scorer/calibrator.py` | Rolling ridge regression calibrator: trains on recent signals + realized 10-day excess returns (vs SPY), predicts expected excess return for current signal; 17 features (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score + monthly_score); cold-start fallback when < 30 samples; `calibrate_score()` is the main entry point |
 | `src/scorer/confidence.py` | Signal classification; confidence modifiers; `data_completeness`; `key_signals` |
+| `src/scorer/contribution.py` | Builds the per-indicator/per-pattern contribution payload that backs `/why`; called by `score_ticker` after `apply_adaptive_weights` and persisted as `scores_daily.key_signals_data` JSON |
 | `src/scorer/flip_detector.py` | Detects signal direction changes → `signal_flips` |
 | `src/notifier/main.py` | `run_notifier()` — queries scores, calls AI reasoner, formats, sends Telegram |
 | `src/notifier/ai_reasoner.py` | `reason_all_qualifying_tickers()` — Claude API calls per qualifying ticker |
@@ -110,6 +111,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/notifier/formatter.py` | Formats full report, heartbeat, and no-signals variants |
 | `src/notifier/telegram.py` | Telegram send/edit helpers |
 | `src/notifier/bot.py` | Long-polling bot; `/detail`, `/scatter`, `/tickers`, `/help` handlers; logs every incoming command to `telegram_message_log` |
+| `src/notifier/why_command.py` | Backend formatters for `/why` (default, all, drill-down modes): `dispatch_why`, `format_why_default`, `format_why_all`, `format_why_drilldown`, `load_why_payload`, `resolve_name_token`. Telegram `CommandHandler` + `CallbackQueryHandler` wiring is deferred to Sitting 2. |
 | `src/notifier/tickers_command.py` | `/tickers` Telegram bot command handler; logs invocations to `telegram_message_log` |
 | `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward excess returns (vs SPY), plots calibrated_score (predicted) vs actual excess return scatter chart with IC annotation (Spearman rank correlation via `compute_ic()`), sends PNG via Telegram |
 | `src/web/app.py` | `create_app(db_path, config)` FastAPI application factory. Sets up `SessionMiddleware`, mounts static files, registers all routes: `GET /login`, `POST /login`, `POST /logout`, `GET /`, `GET /api/tickers`, `GET /api/dates`, `GET /api/snapshot`, `POST /api/llm`. Per-(session, ticker, date, timeframe) in-memory LLM debounce stored in a closure dict (not module-level, so each `create_app()` call is isolated — important for tests). Single worker required; debounce is process-local. |
@@ -178,6 +180,11 @@ web               ← common/db, notifier/ai_reasoner (build_ticker_context + ca
 
 5. **Add scoring logic in `src/scorer/indicator_scorer.py`** — map the indicator value to [−100, +100] using its percentile profile, following the existing pattern for RSI, ADX, etc. If the indicator is a momentum oscillator where overbought/oversold interpretation changes between trending and ranging markets, pass `oscillator_higher_is_bullish` (derived from `regime == "trending"`) as the `higher_is_bullish` argument, consistent with RSI, Stochastic %K, CCI, and Williams %R.
 
+5b. **Register in category and contribution maps:**
+    - Add the indicator key to `INDICATOR_CATEGORY_MAP` in `src/scorer/category_scorer.py` so the category rollup and the `/why` contribution builder both know which category it belongs to.
+    - If the indicator bypasses the percentile-profile path (i.e., it is scored by a fixed formula rather than a profile lookup), add it to `PROFILE_FREE_INDICATORS` in `src/scorer/indicator_scorer.py`.
+    - If the indicator also uses a fixed discrete ladder (e.g., regime-based step scores rather than linear interpolation), add it to `FIXED_LADDER` in `src/scorer/indicator_scorer.py`.
+
 6. **Write tests first (TDD)**:
     - `tests/test_calculator/test_indicators.py` — test that the value is computed and stored correctly
     - `tests/test_scorer/test_indicator_scorer.py` — test the score mapping
@@ -187,6 +194,30 @@ web               ← common/db, notifier/ai_reasoner (build_ticker_context + ca
     ```bash
     python scripts/run_calculator.py --mode full
     python scripts/run_scorer.py --historical
+    ```
+
+---
+
+## Adding a New Pattern
+
+1. **Add detection params to `config/calculator.json`** under `patterns`.
+
+2. **Implement detection in `src/calculator/patterns.py`** inside `detect_all_patterns_for_ticker()`.
+
+3. **Add scoring logic in `src/scorer/pattern_scorer.py`** under the appropriate category (candlestick, structural, etc.).
+
+4. **Register in category and contribution maps:**
+    - Add the pattern key to `PATTERN_CATEGORY_MAP` in `src/scorer/category_scorer.py` so the category rollup and the `/why` contribution builder classify it correctly.
+    - Add a human-readable description string to `PATTERN_RULE_DESCRIPTIONS` in `src/scorer/pattern_scorer.py` so `/why` drill-down can explain the rule.
+
+5. **Write tests first (TDD)** — `tests/test_calculator/test_patterns.py` and `tests/test_scorer/test_pattern_scorer.py`.
+
+6. **Re-run calculator and scorer:**
+
+    ```bash
+    python scripts/run_calculator.py --mode full
+    python scripts/run_scorer.py --historical
+    python scripts/verify_pipeline.py
     ```
 
 ---
@@ -217,6 +248,20 @@ web               ← common/db, notifier/ai_reasoner (build_ticker_context + ca
 ## Database Migrations
 
 Schema is created in `src/common/db.py` → `_build_schema_statements()`. All statements use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`, so re-running `setup_db.py` is safe but will not add new columns to existing tables.
+
+### Idempotent column migrations via `run_migrations(conn)`
+
+For lightweight column additions (no PRIMARY KEY change, no type change), prefer the `run_migrations` pattern over a standalone migration script. `src/common/db.py::run_migrations(conn)` runs a series of `ALTER TABLE … ADD COLUMN` statements, each guarded by a `PRAGMA table_info` pre-check so re-running the function on an already-migrated database is safe:
+
+```python
+# Pattern used inside run_migrations():
+existing = {row[1] for row in conn.execute("PRAGMA table_info(scores_daily)")}
+if "my_new_column" not in existing:
+    conn.execute("ALTER TABLE scores_daily ADD COLUMN my_new_column TEXT")
+    conn.commit()
+```
+
+`run_migrations` is called from every pipeline entry point (`scripts/run_scorer.py`, `scripts/run_daily.py`, `scripts/run_bot.py`) immediately after `create_all_tables`, so new columns are added on first deploy without a manual step. This is appropriate for nullable columns where `NULL` is a valid "not yet computed" sentinel. For non-nullable columns, `DEFAULT` constraints, or structural changes, use a standalone migration script instead.
 
 ### Add a new column to an existing table
 
