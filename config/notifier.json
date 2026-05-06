@@ -42,5 +42,7 @@
     "max_n_days": 60,
     "default_days_back": 90,
     "max_days_back": 365
-  }
+  },
+  "why_top_n": 5,
+  "why_list_max_entries": 50
 }
