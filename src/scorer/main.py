@@ -59,6 +59,7 @@ from src.scorer.pattern_scorer import (
     score_structural_patterns,
 )
 from src.scorer.calibrator import build_feature_vector, calibrate_score
+from src.scorer.contribution import build_contributions_payload
 from src.scorer.persistence import persist_monthly_score_row, persist_weekly_score_row
 from src.scorer.regime import detect_regime, get_atr_sma, get_current_vix, get_regime_weights
 from src.scorer.sector_adjuster import apply_sector_adjustment, compute_sector_etf_score
@@ -408,6 +409,8 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
 
     Uses INSERT OR REPLACE to make re-runs idempotent. Serialises
     data_completeness and key_signals as JSON strings if they are dicts/lists.
+    Persists key_signals_data (the per-indicator contribution payload) when
+    present in the score dict.
 
     Parameters:
         db_conn: Open SQLite connection with WAL mode enabled.
@@ -421,6 +424,8 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
     if isinstance(key_signals, list):
         key_signals = json.dumps(key_signals)
 
+    key_signals_data = score.get("key_signals_data")
+
     db_conn.execute(
         """
         INSERT OR REPLACE INTO scores_daily
@@ -429,8 +434,8 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
              volume_score, volatility_score, candlestick_score, structural_score,
              sentiment_score, fundamental_score, macro_score,
              calibrated_score, model_r2,
-             data_completeness, key_signals)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             data_completeness, key_signals, key_signals_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score["ticker"],
@@ -455,6 +460,7 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
             score.get("model_r2"),
             data_completeness,
             key_signals,
+            key_signals_data,
         ),
     )
     db_conn.commit()
@@ -634,6 +640,18 @@ def score_ticker(
     expansion_factor = config.get("scoring", {}).get("score_expansion_factor", 1.0)
     raw_daily = apply_adaptive_weights(category_scores, regime_weights, expansion_factor)
 
+    # 11b. Build per-indicator contribution payload for /why feature.
+    # Computed here — after apply_adaptive_weights so all four inputs are
+    # simultaneously in scope — but before sector adjustment and timeframe merge,
+    # which is intentional: the decomposition reflects the pre-adjusted daily signal.
+    contributions_payload = build_contributions_payload(
+        indicator_scores=indicator_scores,
+        pattern_scores=pattern_scores,
+        regime_weights=regime_weights,
+        expansion_factor=expansion_factor,
+    )
+    contributions_json = json.dumps(contributions_payload)
+
     # 12. Apply sector adjustment
     daily_score = apply_sector_adjustment(raw_daily, sector_etf_score, config)
 
@@ -775,6 +793,7 @@ def score_ticker(
         "model_r2": model_r2,
         "data_completeness": json.dumps(data_completeness),
         "key_signals": json.dumps(key_signals),
+        "key_signals_data": contributions_json,
     }
 
     # 20. Save to DB

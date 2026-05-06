@@ -1371,3 +1371,63 @@ class TestScoreTickerPersistsTimeframeRows:
             row["severity"] == "warning" and "scores_weekly persist failed" in row["message"]
             for row in alerts
         )
+
+
+# ---------------------------------------------------------------------------
+# key_signals_data persistence
+# ---------------------------------------------------------------------------
+
+class TestScorerPersistsKeySignalsData:
+    def test_scorer_persists_key_signals_data(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        After score_ticker() runs, scores_daily.key_signals_data must contain
+        the contribution payload serialised as JSON with shape:
+            {"v": 1, "items": [{"name": ..., "kind": ..., "raw_value": ...,
+                                 "score": ..., "category": ...,
+                                 "category_weight": ..., "contribution": ...}, ...]}
+        and items must be a non-empty list.
+        """
+        from src.scorer.main import score_ticker
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        score_ticker(
+            db_conn=db_connection,
+            ticker="AAPL",
+            ticker_config=SAMPLE_TICKER_CONFIG,
+            scoring_date=SCORING_DATE,
+            config=SAMPLE_CONFIG,
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_daily WHERE ticker=? AND date=?",
+            ("AAPL", SCORING_DATE),
+        ).fetchone()
+        assert row is not None, "scores_daily row must exist after score_ticker()"
+
+        raw_json = row["key_signals_data"]
+        assert raw_json is not None, "key_signals_data must not be NULL"
+
+        payload = json.loads(raw_json)
+        assert payload.get("v") == 1, f"Expected v=1, got {payload.get('v')}"
+        assert "items" in payload, "Payload must have an 'items' key"
+
+        items = payload["items"]
+        assert isinstance(items, list), f"items must be a list, got {type(items)}"
+        assert len(items) > 0, "items must be non-empty"
+
+        required_item_keys = {
+            "name", "kind", "raw_value", "score",
+            "category", "category_weight", "contribution",
+        }
+        for item in items:
+            missing_keys = required_item_keys - set(item.keys())
+            assert not missing_keys, (
+                f"Item {item.get('name')!r} is missing keys: {missing_keys}"
+            )
+            assert item["kind"] in ("indicator", "pattern"), (
+                f"Unexpected kind {item['kind']!r} for item {item['name']!r}"
+            )
