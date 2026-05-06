@@ -61,6 +61,70 @@ _FIB_LEVEL_SCORES = {
 }
 
 
+#: Human-readable descriptions of every pattern key that can appear in the
+#: pattern scoring chain output, including aggregate keys from PATTERN_CATEGORY_MAP.
+#:
+#: **Maintenance obligation**: when you add a new pattern key to the pattern
+#: scoring chain (or to ``PATTERN_CATEGORY_MAP`` in category_scorer.py), add
+#: its description here.  If a description is missing, the ``/why`` drill-down
+#: will display "rule not available — see source."
+PATTERN_RULE_DESCRIPTIONS: dict[str, str] = {
+    # --- crossovers (trend) ---
+    "crossover_ema_9_21": (
+        "EMA9/EMA21 crossover — score reflects a fresh bullish (golden) or bearish (death) cross."
+    ),
+    "crossover_ema_21_50": (
+        "EMA21/EMA50 crossover — longer-term trend flip; bullish above, bearish below."
+    ),
+    "crossover_macd_signal": (
+        "MACD/signal-line crossover — MACD crossing above signal is bullish; below is bearish."
+    ),
+    # --- divergences (momentum) ---
+    "divergence_rsi": (
+        "RSI divergence — price makes new high/low while RSI fails to confirm."
+    ),
+    "divergence_macd": (
+        "MACD divergence — price makes new high/low while MACD histogram fails to confirm."
+    ),
+    "divergence_stoch": (
+        "Stochastic divergence — price makes new high/low while Stochastic %K fails to confirm."
+    ),
+    # --- divergences (volume) ---
+    "divergence_obv": (
+        "OBV divergence — price trend and On-Balance Volume trend move in opposite directions."
+    ),
+    # --- candlestick (aggregate) ---
+    "candlestick_pattern_score": (
+        "Aggregate of candlestick patterns (engulfing, hammer, doji, etc.) — net bullish/bearish weight."
+    ),
+    # --- structural (aggregate & individual) ---
+    "structural_pattern_score": (
+        "Aggregate of structural patterns (double top/bottom, breakout, bull/bear flag) — recency-decayed."
+    ),
+    "gap_score": (
+        "Gap score — breakaway/continuation gaps are directional; exhaustion gaps signal reversal."
+    ),
+    "fibonacci_score": (
+        "Fibonacci proximity — price near a key retracement level (23.6–78.6%) acting as support/resistance."
+    ),
+    # --- sub-pattern keys (from _STRUCTURAL_BASE / _CROSSOVER_BASE / _GAP_BASE) ---
+    "double_bottom": "Double bottom — W-shaped reversal pattern signaling bullish trend change.",
+    "double_top": "Double top — M-shaped reversal pattern signaling bearish trend change.",
+    "breakout": "Breakout — price closes above a prior resistance level with momentum.",
+    "breakdown": "Breakdown — price closes below a prior support level with momentum.",
+    "bull_flag": "Bull flag — brief consolidation after a strong up-move; continuation bullish.",
+    "bear_flag": "Bear flag — brief consolidation after a strong down-move; continuation bearish.",
+    "false_breakout": "False breakout — price breaks a level then reverses, trapping early buyers/sellers.",
+    "ema_9_21": "EMA9/EMA21 crossover component — bullish when fast crosses above slow.",
+    "ema_21_50": "EMA21/EMA50 crossover component — bullish when medium crosses above slow.",
+    "macd_signal": "MACD/signal crossover component — bullish when MACD crosses above signal.",
+    "breakaway": "Breakaway gap — large gap at start of a new trend; strong directional signal.",
+    "continuation": "Continuation gap — gap in the direction of an existing trend; trend reinforcement.",
+    "exhaustion": "Exhaustion gap — gap near end of a trend; direction is reversed in scoring.",
+    "common": "Common gap — routine gap with no trend significance; low score weight.",
+}
+
+
 def _parse_date(date_str: str) -> date:
     """Parse a YYYY-MM-DD string to a date object."""
     return date.fromisoformat(date_str)

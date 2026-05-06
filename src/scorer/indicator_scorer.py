@@ -26,6 +26,45 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+#: Indicators scored entirely from fixed bands — no per-ticker profile consulted.
+#:
+#: **Maintenance obligation**: if you make an existing indicator profile-driven,
+#: remove it from both ``PROFILE_FREE_INDICATORS`` and ``FIXED_LADDER``.  If
+#: you add a new fixed-band indicator, add it to both.  The two constants MUST
+#: stay in sync.
+PROFILE_FREE_INDICATORS: frozenset[str] = frozenset({
+    "adx",
+    "ema_alignment",
+})
+
+#: Fixed threshold ladders for every profile-free indicator.
+#:
+#: Each entry is a list of ``(threshold, label)`` tuples ordered ascending by
+#: threshold.  Interpretation: value < threshold[0] → label[0]; threshold[i-1]
+#: ≤ value < threshold[i] → label[i]; value ≥ last threshold → last label.
+#:
+#: **Maintenance obligation**: if you change the thresholds inside
+#: ``score_adx`` or ``score_ema_alignment``, also update the matching entry
+#: here.  If you add a new profile-free indicator, add it to both
+#: ``PROFILE_FREE_INDICATORS`` and ``FIXED_LADDER``.
+FIXED_LADDER: dict[str, list[tuple[float, str]]] = {
+    # score_adx: < 20 → ranging; 20-25 → weak trend; 25-40 → developing trend; ≥ 40 → strong/very strong
+    "adx": [
+        (20.0, "ranging / no trend"),
+        (25.0, "weak trend developing"),
+        (40.0, "developing trend"),
+        (50.0, "strong trend"),
+    ],
+    # score_ema_alignment: fixed score brackets based on EMA stack ordering
+    "ema_alignment": [
+        (-40.0, "bearish stack (price below EMA9 and EMA9 < EMA21)"),
+        (0.0, "partial bearish alignment"),
+        (15.0, "mixed / neutral"),
+        (40.0, "partial bullish alignment"),
+        (100.0, "perfect bullish stack (price > EMA9 > EMA21 > EMA50)"),
+    ],
+}
+
 # Fixed RSI thresholds when no profile is available
 _RSI_FIXED_OVERSOLD = 30.0
 _RSI_FIXED_OVERBOUGHT = 70.0
