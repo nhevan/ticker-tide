@@ -1256,7 +1256,10 @@ def _load_score_for_ticker(
 
 
 def reason_all_qualifying_tickers(
-    db_conn: sqlite3.Connection, scoring_date: str, config: dict
+    db_conn: sqlite3.Connection,
+    scoring_date: str,
+    config: dict,
+    invoke_claude: bool = True,
 ) -> dict:
     """
     Run AI reasoning for all qualifying tickers and produce the daily summary.
@@ -1272,6 +1275,11 @@ def reason_all_qualifying_tickers(
         db_conn: Open SQLite connection with row_factory=sqlite3.Row.
         scoring_date: Date being processed (YYYY-MM-DD).
         config: Notifier config dict.
+        invoke_claude: When True (default), call Claude to generate per-ticker
+            reasoning and a daily summary. When False, run the DB-only path:
+            qualifying tickers and scores still load, but every `reasoning`
+            field and `daily_summary` are set to empty strings and Claude is
+            not invoked.
 
     Returns:
         Dict with keys:
@@ -1280,6 +1288,10 @@ def reason_all_qualifying_tickers(
             'flips': list of {ticker, flip, score, reasoning}
             'daily_summary': str
             'market_context_summary': str
+
+        Dict shape is identical regardless of `invoke_claude`. When False, all
+        `reasoning` fields and `daily_summary` are empty strings; `score` and
+        `flip` fields are still populated.
     """
     qualifying = get_qualifying_tickers(db_conn, scoring_date, config)
     bullish_rows: list[dict] = qualifying["bullish"]
@@ -1288,33 +1300,48 @@ def reason_all_qualifying_tickers(
 
     market_context = build_market_context(db_conn, scoring_date)
 
+    # When invoke_claude=False:
+    #   - get_qualifying_tickers and build_market_context still run (DB-only).
+    #   - _load_score_for_ticker still runs for flip-only tickers (formatter needs score fields).
+    #   - build_ticker_context (Fibonacci + RS lookups) is SKIPPED *in this function* — it
+    #     is only used here to assemble Claude prompts. Other callers (/detail, /why) still use it.
+    #   - generate_ticker_reasoning and generate_daily_summary are not called.
+
     # Build a set of flip ticker symbols for quick lookup
     flip_ticker_set = {f["ticker"] for f in flip_rows}
 
     # Track processed tickers to avoid double-processing flip tickers
     processed_tickers: set[str] = set()
 
+    log_suffix = "generated" if invoke_claude else "loaded-no-ai"
+
     bullish_results: list[dict] = []
     for score_row in bullish_rows:
         ticker = score_row["ticker"]
         processed_tickers.add(ticker)
         is_flip = ticker in flip_ticker_set
-        reasoning = generate_ticker_reasoning(
-            db_conn, ticker, score_row, market_context, config, is_flip=is_flip
-        )
+        if invoke_claude:
+            reasoning = generate_ticker_reasoning(
+                db_conn, ticker, score_row, market_context, config, is_flip=is_flip
+            )
+        else:
+            reasoning = ""
         bullish_results.append({"ticker": ticker, "score": score_row, "reasoning": reasoning})
-        logger.info(f"ticker={ticker} phase=ai_reasoner date={scoring_date} signal=BULLISH generated")
+        logger.info(f"ticker={ticker} phase=ai_reasoner date={scoring_date} signal=BULLISH {log_suffix}")
 
     bearish_results: list[dict] = []
     for score_row in bearish_rows:
         ticker = score_row["ticker"]
         processed_tickers.add(ticker)
         is_flip = ticker in flip_ticker_set
-        reasoning = generate_ticker_reasoning(
-            db_conn, ticker, score_row, market_context, config, is_flip=is_flip
-        )
+        if invoke_claude:
+            reasoning = generate_ticker_reasoning(
+                db_conn, ticker, score_row, market_context, config, is_flip=is_flip
+            )
+        else:
+            reasoning = ""
         bearish_results.append({"ticker": ticker, "score": score_row, "reasoning": reasoning})
-        logger.info(f"ticker={ticker} phase=ai_reasoner date={scoring_date} signal=BEARISH generated")
+        logger.info(f"ticker={ticker} phase=ai_reasoner date={scoring_date} signal=BEARISH {log_suffix}")
 
     flip_results: list[dict] = []
     for flip_row in flip_rows:
@@ -1340,9 +1367,12 @@ def reason_all_qualifying_tickers(
             logger.warning(f"ticker={ticker} phase=ai_reasoner date={scoring_date} no score row found for flip")
             continue
 
-        reasoning = generate_ticker_reasoning(
-            db_conn, ticker, score_row, market_context, config, is_flip=True
-        )
+        if invoke_claude:
+            reasoning = generate_ticker_reasoning(
+                db_conn, ticker, score_row, market_context, config, is_flip=True
+            )
+        else:
+            reasoning = ""
         flip_results.append({
             "ticker": ticker,
             "flip": flip_row,
@@ -1350,11 +1380,14 @@ def reason_all_qualifying_tickers(
             "reasoning": reasoning,
         })
         processed_tickers.add(ticker)
-        logger.info(f"ticker={ticker} phase=ai_reasoner date={scoring_date} flip-only reasoning generated")
+        logger.info(f"ticker={ticker} phase=ai_reasoner date={scoring_date} flip-only reasoning {log_suffix}")
 
-    daily_summary = generate_daily_summary(
-        db_conn, bullish_results, bearish_results, flip_results, market_context, config
-    )
+    if invoke_claude:
+        daily_summary = generate_daily_summary(
+            db_conn, bullish_results, bearish_results, flip_results, market_context, config
+        )
+    else:
+        daily_summary = ""
 
     return {
         "bullish": bullish_results,

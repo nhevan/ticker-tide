@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.notifier.ai_reasoner import _FALLBACK_RESPONSE
+
 SCORING_DATE = "2025-01-15"
 
 SAMPLE_CONFIG = {
@@ -172,43 +174,6 @@ def test_run_notifier_no_qualifying_tickers(db_connection, tmp_path, mocker):
 
 
 # ---------------------------------------------------------------------------
-# AI failure
-# ---------------------------------------------------------------------------
-
-
-def test_run_notifier_ai_failure(db_connection, tmp_path, mocker):
-    """Claude API failure: report still sent with fallback, no crash."""
-    _insert_scorer_done(db_connection)
-    _insert_scores_daily(db_connection)
-    _insert_indicators(db_connection)
-
-    mocker.patch("src.notifier.main.load_env")
-    mocker.patch("src.notifier.main.load_config", return_value=SAMPLE_CONFIG)
-    mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
-    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
-    mocker.patch(
-        "src.notifier.main.reason_all_qualifying_tickers",
-        side_effect=Exception("Claude API error"),
-    )
-    mocker.patch("src.notifier.main.format_no_signals_report", return_value=["Fallback."])
-    mocker.patch("src.notifier.main.format_full_report", return_value=["Fallback."])
-    mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat")
-    mock_send = mocker.patch(
-        "src.notifier.main.send_daily_report",
-        return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
-    )
-    mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
-
-    from src.notifier.main import run_notifier
-
-    result = run_notifier(db_path=str(tmp_path / "test.db"))
-
-    # Should not crash; report should still be sent
-    assert mock_send.called
-    assert "duration_seconds" in result
-
-
-# ---------------------------------------------------------------------------
 # Telegram failure
 # ---------------------------------------------------------------------------
 
@@ -339,33 +304,193 @@ def test_run_notifier_logs_pipeline_run(db_connection, tmp_path, mocker):
 
 
 def test_run_notifier_skips_ai_reasoner_when_flag_false(db_connection, tmp_path, mocker):
-    """When include_ai_reasoning=False, reason_all_qualifying_tickers must not be called."""
+    """When include_ai_reasoning=False, body still lists qualifying tickers (DB-only path)."""
     _insert_scorer_done(db_connection)
-    _insert_scores_daily(db_connection)
     _insert_indicators(db_connection)
+
+    # Inline-seed scores_daily — three rows: WMT@BULLISH 75, AMZN@BULLISH 80, PYPL@BEARISH 71
+    score_rows = [
+        ("WMT", SCORING_DATE, "BULLISH", 75.0, 41.8),
+        ("AMZN", SCORING_DATE, "BULLISH", 80.0, 45.0),
+        ("PYPL", SCORING_DATE, "BEARISH", 71.0, -36.1),
+    ]
+    for ticker, dt, signal, conf, final_score in score_rows:
+        db_connection.execute(
+            """INSERT OR REPLACE INTO scores_daily
+               (ticker, date, signal, confidence, final_score)
+               VALUES (?, ?, ?, ?, ?)""",
+            (ticker, dt, signal, conf, final_score),
+        )
+    # Inline-seed tickers rows
+    for ticker in ("WMT", "AMZN", "PYPL"):
+        db_connection.execute(
+            "INSERT OR IGNORE INTO tickers (symbol, sector, sector_etf, active) VALUES (?, ?, ?, ?)",
+            (ticker, "Consumer", "XLY", 1),
+        )
+    db_connection.commit()
 
     config_no_ai = {
         **SAMPLE_CONFIG,
-        "telegram": {**SAMPLE_CONFIG["telegram"], "include_ai_reasoning": False},
+        "telegram": {**SAMPLE_CONFIG["telegram"], "include_ai_reasoning": False, "confidence_threshold": 70},
     }
 
     mocker.patch("src.notifier.main.load_env")
     mocker.patch("src.notifier.main.load_config", return_value=config_no_ai)
     mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
     mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
-    mock_reasoner = mocker.patch("src.notifier.main.reason_all_qualifying_tickers")
-    mocker.patch("src.notifier.main.format_full_report", return_value=["Report text"])
-    mocker.patch("src.notifier.main.format_heartbeat", return_value="Heartbeat text")
+    # Test isolation — avoids dep on treasury_yields/ETF tables
     mocker.patch(
+        "src.notifier.ai_reasoner.build_market_context",
+        return_value="Market context: stable.",
+    )
+    mock_call_claude = mocker.patch(
+        "src.notifier.ai_reasoner.call_claude",
+        side_effect=AssertionError("Claude must not be called when include_ai_reasoning=False"),
+    )
+    # _build_pipeline_stats reads config/tickers.json from disk — accepted real-file dependency
+    mock_send = mocker.patch(
         "src.notifier.main.send_daily_report",
         return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
     )
     mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
-    mocker.patch("src.notifier.main.write_pipeline_event")
     mocker.patch("src.notifier.main.log_pipeline_run")
+    mock_write_event = mocker.patch("src.notifier.main.write_pipeline_event")
 
     from src.notifier.main import run_notifier
 
     run_notifier(db_path=str(tmp_path / "test.db"))
 
-    assert not mock_reasoner.called, "AI reasoner must not be called when include_ai_reasoning=False"
+    assert mock_send.called
+    captured_messages = mock_send.call_args[0][0] if mock_send.call_args[0] else mock_send.call_args[1]["messages"]
+    joined = "\n".join(captured_messages) if isinstance(captured_messages, list) else str(captured_messages)
+    assert "WMT" in joined
+    assert "AMZN" in joined
+    assert "PYPL" in joined
+    assert "No significant signals today." not in joined
+    assert mock_call_claude.call_count == 0
+
+    completed_calls = [
+        c for c in mock_write_event.call_args_list
+        if len(c[0]) >= 4 and c[0][1] == "notifier_done" and c[0][2] == SCORING_DATE and c[0][3] == "completed"
+    ]
+    assert completed_calls, "Expected notifier_done completed event"
+
+
+def test_run_notifier_claude_fallback_propagates(db_connection, tmp_path, mocker):
+    """When Claude returns the fallback response, it propagates through to the message."""
+    _insert_scorer_done(db_connection)
+    _insert_indicators(db_connection)
+
+    db_connection.execute(
+        """INSERT OR REPLACE INTO scores_daily
+           (ticker, date, signal, confidence, final_score, regime,
+            daily_score, weekly_score, trend_score, momentum_score, volume_score,
+            volatility_score, candlestick_score, structural_score,
+            sentiment_score, fundamental_score, macro_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("WMT", SCORING_DATE, "BULLISH", 85.0, 50.0, "trending",
+         5.0, 3.0, 10.0, 8.0, 4.0, -2.0, 6.0, 3.0, 5.0, 4.0, 2.0),
+    )
+    db_connection.execute(
+        "INSERT OR IGNORE INTO tickers (symbol, sector, sector_etf, active) VALUES (?, ?, ?, ?)",
+        ("WMT", "Consumer", "XLY", 1),
+    )
+    # Seed indicators + OHLCV so build_ticker_context succeeds
+    db_connection.execute(
+        """INSERT OR REPLACE INTO indicators_daily
+           (ticker, date, ema_9, ema_21, ema_50, macd_line, macd_signal, macd_histogram,
+            adx, rsi_14, stoch_k, stoch_d, cci_20, williams_r, obv, cmf_20, ad_line,
+            bb_upper, bb_lower, bb_pctb, atr_14, keltner_upper, keltner_lower)
+           VALUES (?, ?, 152.0, 150.0, 148.0, -0.5, -0.3, -0.2, 18.9, 38.7,
+                   22.0, 25.0, -80.0, -78.0, 9500000.0, -0.12, 4200000.0,
+                   160.0, 145.0, 0.22, 2.1, 161.0, 144.0)""",
+        ("WMT", SCORING_DATE),
+    )
+    db_connection.execute(
+        "INSERT OR REPLACE INTO ohlcv_daily "
+        "(ticker, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("WMT", SCORING_DATE, 153.0, 156.0, 152.0, 155.0, 50_000_000),
+    )
+    db_connection.commit()
+
+    config_with_ai = {
+        **SAMPLE_CONFIG,
+        "telegram": {**SAMPLE_CONFIG["telegram"], "include_ai_reasoning": True, "confidence_threshold": 70},
+    }
+
+    mocker.patch("src.notifier.main.load_env")
+    mocker.patch("src.notifier.main.load_config", return_value=config_with_ai)
+    mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
+    mocker.patch(
+        "src.notifier.ai_reasoner.build_market_context",
+        return_value="Market context: stable.",
+    )
+    mocker.patch(
+        "src.notifier.ai_reasoner.call_claude",
+        return_value=_FALLBACK_RESPONSE,
+    )
+    mock_send = mocker.patch(
+        "src.notifier.main.send_daily_report",
+        return_value={"sent": 1, "failed": 0, "total_subscribers": 1},
+    )
+    mocker.patch("src.notifier.main.send_heartbeat", return_value=True)
+    mocker.patch("src.notifier.main.log_pipeline_run")
+    mock_write_event = mocker.patch("src.notifier.main.write_pipeline_event")
+
+    from src.notifier.main import run_notifier
+
+    result = run_notifier(db_path=str(tmp_path / "test.db"))
+    assert result is not None
+
+    captured_messages = mock_send.call_args[0][0] if mock_send.call_args[0] else mock_send.call_args[1]["messages"]
+    joined = "\n".join(captured_messages) if isinstance(captured_messages, list) else str(captured_messages)
+    assert _FALLBACK_RESPONSE in joined
+
+    completed_calls = [
+        c for c in mock_write_event.call_args_list
+        if len(c[0]) >= 4 and c[0][1] == "notifier_done" and c[0][2] == SCORING_DATE and c[0][3] == "completed"
+    ]
+    assert completed_calls, "Expected notifier_done completed event"
+
+
+def test_run_notifier_db_error_propagates(db_connection, tmp_path, mocker):
+    """DB errors from get_qualifying_tickers must propagate (no try/except masking).
+
+    Also asserts that a `failed` pipeline event is written and no Telegram
+    message is sent, so a future contributor restoring a swallowing try/except
+    would break this test loudly.
+    """
+    _insert_scorer_done(db_connection)
+    _insert_indicators(db_connection)
+
+    mocker.patch("src.notifier.main.load_env")
+    mocker.patch("src.notifier.main.load_config", return_value=SAMPLE_CONFIG)
+    mocker.patch("src.notifier.main.get_connection", return_value=db_connection)
+    mocker.patch("src.notifier.main.get_telegram_config", return_value=SAMPLE_TELEGRAM_CONFIG)
+    mocker.patch(
+        "src.notifier.ai_reasoner.get_qualifying_tickers",
+        side_effect=sqlite3.OperationalError("simulated DB lock"),
+    )
+    mock_write_event = mocker.patch("src.notifier.main.write_pipeline_event")
+    mock_send = mocker.patch("src.notifier.main.send_daily_report")
+    mocker.patch("src.notifier.main.log_pipeline_run")
+
+    from src.notifier.main import run_notifier
+
+    with pytest.raises(sqlite3.OperationalError):
+        run_notifier(db_path=str(tmp_path / "test.db"))
+
+    assert not mock_send.called, "Telegram send must not happen when DB errors out"
+
+    failed_calls = [
+        c for c in mock_write_event.call_args_list
+        if len(c[0]) >= 4 and c[0][1] == "notifier_done" and c[0][2] == SCORING_DATE and c[0][3] == "failed"
+    ]
+    assert failed_calls, "Expected notifier_done failed event on DB error"
+
+    completed_calls = [
+        c for c in mock_write_event.call_args_list
+        if len(c[0]) >= 4 and c[0][1] == "notifier_done" and c[0][2] == SCORING_DATE and c[0][3] == "completed"
+    ]
+    assert not completed_calls, "Must not write completed event when DB errors out"

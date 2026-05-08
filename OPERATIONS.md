@@ -493,6 +493,7 @@ conn.close()
 | New ticker shows no data after adding | Backfill not run for new ticker | See "Adding a Ticker" below |
 | Disk space full | DB or log growth | Run VACUUM (see Database section); delete old logs: `find logs/ -name "daily_*.log" -mtime +30 -delete` |
 | `fetcher_done` stuck at `processing` | Previous run crashed mid-phase | `python scripts/run_daily.py --force` — force re-runs write a fresh event |
+| `notifier_done` shows `failed` status | DB error during ticker load (e.g. transient lock) | Check logs for the propagated `sqlite3` exception; re-run with `python scripts/run_notifier.py --force`. Claude API errors are absorbed inside `call_claude` and never surface as `failed` here. |
 | Scorer shows `partial` status for a ticker | One calculator module failed for that ticker | Check `alerts_log` for the specific error; re-run `python scripts/run_calculator.py --mode full --ticker <TICKER>` |
 
 ---

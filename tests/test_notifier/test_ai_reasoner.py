@@ -721,3 +721,57 @@ class TestReasonAllQualifyingTickers:
             or "signal change" in prompt_arg.upper()
             or "just changed" in prompt_arg.lower()
         )
+
+    def test_reason_all_qualifying_tickers_invoke_claude_false(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """When invoke_claude=False, qualifying tickers load from DB but Claude is not called."""
+        # WMT@BULLISH 85, PYPL@BEARISH 80, FLIP1@NEUTRAL 30 (below threshold but flipped)
+        self._setup_ticker(db_connection, "WMT", "BULLISH", 85.0, 50.0)
+        self._setup_ticker(db_connection, "PYPL", "BEARISH", 80.0, -45.0)
+        self._setup_ticker(db_connection, "FLIP1", "NEUTRAL", 30.0, 5.0)
+        _insert_ticker(db_connection, "WMT", "XLY")
+        _insert_ticker(db_connection, "PYPL", "XLF")
+        _insert_ticker(db_connection, "FLIP1", "XLK")
+
+        db_connection.execute(
+            "INSERT INTO signal_flips "
+            "(ticker, date, previous_signal, new_signal, previous_confidence, new_confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("FLIP1", SCORING_DATE, "BULLISH", "NEUTRAL", 60.0, 30.0),
+        )
+        db_connection.commit()
+
+        with patch(
+            "src.notifier.ai_reasoner.build_market_context",
+            return_value="Market context: stable.",
+        ), patch(
+            "src.notifier.ai_reasoner.call_claude",
+            side_effect=AssertionError("Claude must not be called"),
+        ) as mock_call_claude:
+            from src.notifier.ai_reasoner import reason_all_qualifying_tickers
+            results = reason_all_qualifying_tickers(
+                db_connection, SCORING_DATE, SAMPLE_CONFIG, invoke_claude=False
+            )
+
+        assert len(results["bullish"]) == 1
+        assert results["bullish"][0]["ticker"] == "WMT"
+        assert results["bullish"][0]["reasoning"] == ""
+        assert results["bullish"][0]["score"]["confidence"] is not None
+        assert results["bullish"][0]["score"]["final_score"] is not None
+
+        assert len(results["bearish"]) == 1
+        assert results["bearish"][0]["ticker"] == "PYPL"
+        assert results["bearish"][0]["reasoning"] == ""
+        assert results["bearish"][0]["score"]["confidence"] is not None
+        assert results["bearish"][0]["score"]["final_score"] is not None
+
+        assert len(results["flips"]) == 1
+        assert results["flips"][0]["ticker"] == "FLIP1"
+        assert results["flips"][0]["score"] is not None
+        assert results["flips"][0]["flip"] is not None
+        assert results["flips"][0]["reasoning"] == ""
+
+        assert results["daily_summary"] == ""
+        assert results["market_context_summary"] == "Market context: stable."
+        assert mock_call_claude.call_count == 0

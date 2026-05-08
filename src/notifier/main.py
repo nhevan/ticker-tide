@@ -215,23 +215,19 @@ def run_notifier(
 
     logger.info(f"phase=notifier date={scoring_date} Starting notifier")
 
-    # Run AI reasoning — skipped entirely when include_ai_reasoning=False to
-    # avoid Claude API cost when reasoning output will not be shown.
-    results: dict = {
-        "bullish": [],
-        "bearish": [],
-        "flips": [],
-        "daily_summary": "No significant signals today.",
-        "market_context_summary": "",
-    }
     include_ai_reasoning = config.get("telegram", {}).get("include_ai_reasoning", True)
-    if include_ai_reasoning:
-        try:
-            results = reason_all_qualifying_tickers(db_conn, scoring_date, config)
-        except Exception as exc:
-            logger.error(f"phase=notifier date={scoring_date} AI reasoning failed: {exc} — using fallback")
-    else:
-        logger.info(f"phase=notifier date={scoring_date} include_ai_reasoning=false — skipping Claude API call")
+    try:
+        results = reason_all_qualifying_tickers(
+            db_conn, scoring_date, config, invoke_claude=include_ai_reasoning
+        )
+    except Exception:
+        # call_claude swallows Claude API errors internally, so anything raised
+        # here is a DB or infrastructure failure. Record the failed event and
+        # close the connection before re-raising so monitoring sees a clean
+        # processing→failed transition instead of a stranded processing row.
+        write_pipeline_event(db_conn, "notifier_done", scoring_date, "failed")
+        db_conn.close()
+        raise
 
     # Signal distribution
     signal_dist = _get_signal_distribution(db_conn, scoring_date)
