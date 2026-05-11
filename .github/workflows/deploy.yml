@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload frontend dist to EC2 (atomic replace)
         run: |
-          rsync -az --delete web/dist/ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/ticker-tide/web/dist_new/"
+          rsync -az --delete --mkpath web/dist/ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/ticker-tide/web/dist_new/"
           ssh "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             'rm -rf ~/ticker-tide/web/dist_old && mv ~/ticker-tide/web/dist ~/ticker-tide/web/dist_old 2>/dev/null || true && mv ~/ticker-tide/web/dist_new ~/ticker-tide/web/dist'
 
