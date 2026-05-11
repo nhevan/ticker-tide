@@ -13,6 +13,7 @@ import { TimeframeCard } from '@/components/TimeframeCard';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { VerdictBlock } from '@/components/VerdictBlock';
 import { MatrixTable } from '@/components/MatrixTable';
+import { TickerTape } from '@/components/TickerTape';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTickers } from '@/lib/hooks/useTickers';
 import { useDateRange } from '@/lib/hooks/useDateRange';
@@ -96,6 +97,12 @@ export function DashboardPage() {
         tickers={tickers}
         minDate={dateRange?.min}
         maxDate={dateRange?.max}
+      />
+      <TickerTape
+        ticker={loadedTicker}
+        snapshot={snapshot}
+        isLoading={snapshotLoading}
+        error={errorMessage}
       />
 
       <main className="mx-auto max-w-6xl px-4 py-6">

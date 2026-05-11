@@ -90,8 +90,8 @@ type CellTone = 'green' | 'red' | 'grey';
 
 /** Tailwind background class for each tone. */
 const TONE_CLASS: Record<CellTone, string> = {
-  green: 'bg-emerald-500/20',
-  red: 'bg-rose-500/20',
+  green: 'bg-[hsl(var(--up)/0.18)]',
+  red: 'bg-[hsl(var(--down)/0.18)]',
   grey: 'bg-muted',
 };
 

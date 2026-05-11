@@ -1,43 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Bloomberg-terminal cosmetic preview: monospace, tight radii, amber accents.
+   Light = parchment/sepia (paper-terminal). Dark = classic amber-on-black. */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    /* Light: parchment paper-terminal */
+    --background: 40 38% 94%;
+    --foreground: 28 65% 16%;
+    --card: 40 45% 97%;
+    --card-foreground: 28 65% 16%;
+    --primary: 24 90% 38%;
+    --primary-foreground: 40 45% 97%;
+    --secondary: 38 35% 88%;
+    --secondary-foreground: 28 65% 16%;
+    --muted: 38 30% 86%;
+    --muted-foreground: 30 30% 38%;
+    --accent: 38 35% 88%;
+    --accent-foreground: 24 90% 30%;
+    --destructive: 0 80% 42%;
+    --destructive-foreground: 40 45% 97%;
+    --border: 30 35% 70%;
+    --input: 30 35% 70%;
+    --ring: 24 90% 45%;
+    --radius: 0px;
+    --up: 140 80% 28%;
+    --down: 0 80% 45%;
+    --font-display: 'Inter', system-ui, sans-serif;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    /* Dark: classic amber on black */
+    --background: 0 0% 4%;
+    --foreground: 41 100% 50%;
+    --card: 0 0% 6%;
+    --card-foreground: 41 100% 50%;
+    --primary: 30 100% 50%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 41 100% 50%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 41 60% 40%;
+    --accent: 0 0% 12%;
+    --accent-foreground: 41 100% 60%;
+    --destructive: 0 100% 55%;
+    --destructive-foreground: 0 0% 4%;
+    --border: 41 80% 22%;
+    --input: 41 80% 22%;
+    --ring: 41 100% 50%;
+    --up: 140 100% 55%;
+    --down: 0 100% 62%;
   }
 }
 
@@ -45,7 +61,41 @@
   * {
     @apply border-border;
   }
+  html, body, #root {
+    background-color: hsl(var(--background));
+  }
   body {
     @apply bg-background text-foreground;
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-feature-settings: 'tnum' 1, 'zero' 1;
+    letter-spacing: 0.01em;
+  }
+  h1, h2, h3, h4, th {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Semantic up/down colors, theme-aware via --up / --down */
+  .text-green-600, .text-green-700, .text-emerald-600, .text-emerald-700 {
+    color: hsl(var(--up)) !important;
+  }
+  .text-red-600, .text-red-700, .text-rose-600 {
+    color: hsl(var(--down)) !important;
+  }
+  .bg-green-100, .bg-emerald-100 {
+    background-color: hsl(var(--up) / 0.15) !important;
+  }
+  .bg-red-100, .bg-rose-100 {
+    background-color: hsl(var(--down) / 0.15) !important;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
   }
 }

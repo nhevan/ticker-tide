@@ -48,6 +48,16 @@ export function Header({
   maxDate,
 }: HeaderProps) {
   const queryClient = useQueryClient();
+  const [isDark, setIsDark] = React.useState(
+    () => document.documentElement.classList.contains('dark'),
+  );
+
+  function toggleTheme() {
+    const next = !isDark;
+    setIsDark(next);
+    document.documentElement.classList.toggle('dark', next);
+    localStorage.setItem('theme', next ? 'dark' : 'light');
+  }
 
   async function handleSignOut() {
     await logout();
@@ -57,6 +67,7 @@ export function Header({
   return (
     <header className="sticky top-0 z-10 border-b bg-background px-4 py-3">
       <div className="flex flex-wrap items-end gap-3">
+        <span className="font-display text-xs tracking-widest text-muted-foreground">TICKER·TIDE</span>
         <TickerPicker value={ticker} onChange={onTickerChange} tickers={tickers} />
         <DatePicker value={date} onChange={onDateChange} min={minDate} max={maxDate} />
         <Button
@@ -66,7 +77,10 @@ export function Header({
         >
           {isLoading ? 'Loading…' : 'Load'}
         </Button>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={toggleTheme} title="Toggle theme">
+            {isDark ? 'Light' : 'Dark'}
+          </Button>
           <Button variant="ghost" size="sm" onClick={handleSignOut}>
             Sign out
           </Button>
