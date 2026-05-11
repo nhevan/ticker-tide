@@ -15,6 +15,7 @@ Environment variables (must be set in .env):
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
@@ -87,6 +88,16 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    parser = argparse.ArgumentParser(description="Run the Ticker Tide web UI.")
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload on source changes (dev only). Watches src/ and "
+        "config/. Imports the app via src.web.asgi:app, so a fresh app is built "
+        "on every reload.",
+    )
+    args = parser.parse_args()
+
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     web_config_path = os.path.join(project_root, "config", "web.json")
     db_config_path = os.path.join(project_root, "config", "database.json")
@@ -99,8 +110,6 @@ def main() -> None:
 
     _check_required_env_vars()
 
-    from src.web.app import create_app
-
     # dist_dir is a structural convention: web/dist relative to the repo root.
     # It is intentionally NOT a config key (see CONFIG.md). Pass it explicitly
     # so create_app() can enable static-serve and the SPA catch-all route.
@@ -108,12 +117,31 @@ def main() -> None:
         (Path(os.path.abspath(__file__)).parent.parent / "web" / "dist").as_posix()
     )
 
-    app = create_app(db_path=db_path, config=web_config, dist_dir=dist_dir)
-
     logger.info(
         f"Starting Ticker Tide web UI: host=127.0.0.1, port={port}, "
-        f"workers=1, db={db_path!r}, dist_dir={dist_dir!r}"
+        f"workers=1, db={db_path!r}, dist_dir={dist_dir!r}, reload={args.reload}"
     )
+
+    if args.reload:
+        # Reload mode: uvicorn re-imports src.web.asgi:app on every source change.
+        uvicorn.run(
+            "src.web.asgi:app",
+            host="127.0.0.1",
+            port=port,
+            reload=True,
+            reload_dirs=[
+                os.path.join(project_root, "src"),
+                os.path.join(project_root, "config"),
+            ],
+            proxy_headers=True,
+            forwarded_allow_ips="127.0.0.1",
+            log_level="info",
+        )
+        return
+
+    from src.web.app import create_app
+
+    app = create_app(db_path=db_path, config=web_config, dist_dir=dist_dir)
 
     uvicorn.run(
         app,

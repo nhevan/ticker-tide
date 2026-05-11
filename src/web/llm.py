@@ -389,6 +389,94 @@ def call_claude_for_web(
         return "Analysis unavailable — unknown timeframe."
 
 
+def generate_dashboard_verdict(
+    conn: sqlite3.Connection,
+    ticker: str,
+    scoring_date: str,
+    web_config: dict,
+) -> str:
+    """
+    Generate a short BUY/SELL/HOLD-WAIT verdict for the dashboard top block.
+
+    Mirrors the spirit of the Telegram /detail verdict but stays entirely
+    inside the web layer: builds context with build_daily_context() and
+    calls Claude via call_claude(). Output is post-processed to enforce a
+    maximum of MAX_VERDICT_LINES lines as a safety net (the prompt also asks
+    Claude to comply).
+
+    Parameters:
+        conn: Open SQLite connection with row_factory=sqlite3.Row.
+        ticker: Ticker symbol (e.g. 'AAPL').
+        scoring_date: Date being analyzed (YYYY-MM-DD).
+        web_config: Web config dict containing the 'ai_reasoner' section.
+
+    Returns:
+        Verdict text, max 5 non-empty lines, stripped of surrounding whitespace.
+    """
+    score_row_db = conn.execute(
+        "SELECT * FROM scores_daily WHERE ticker = ? AND date = ?",
+        (ticker, scoring_date),
+    ).fetchone()
+    score_row = dict(score_row_db) if score_row_db else {}
+
+    max_lines = int(web_config.get("verdict", {}).get("max_lines", 5))
+    context = build_daily_context(conn, ticker, score_row, scoring_date)
+    prompt = _build_verdict_prompt(ticker, context, scoring_date, max_lines)
+    adapted_config = {"ai_reasoner": web_config.get("ai_reasoner", {})}
+    raw = call_claude(prompt, adapted_config)
+    return _enforce_verdict_line_cap(raw, max_lines)
+
+
+def _build_verdict_prompt(
+    ticker: str,
+    context: str,
+    scoring_date: str,
+    max_lines: int,
+) -> str:
+    """
+    Build the Claude prompt for the dashboard verdict block.
+
+    Asks for a structured short verdict in plain text (no XML tags), capped
+    at max_lines lines.
+
+    Parameters:
+        ticker: Ticker symbol.
+        context: Full daily context string from build_daily_context().
+        scoring_date: Date being analyzed (YYYY-MM-DD).
+        max_lines: Hard cap on number of output lines (from web config).
+
+    Returns:
+        Complete prompt string to send to Claude.
+    """
+    reason_lines = max(0, max_lines - 1)
+    return (
+        f"You are a senior technical analyst. Based on the daily technical data below "
+        f"for {ticker} on {scoring_date}, give a concise verdict in PLAIN TEXT (no XML tags, "
+        f"no markdown). Output exactly this shape, max {max_lines} lines total:\n"
+        f"Line 1: One of BUY / SELL / HOLD-WAIT.\n"
+        f"Lines 2-{max_lines}: Up to {reason_lines} short bullet-style reasons "
+        f"(no leading '-' or '*'), one per line, each under 90 characters. "
+        f"Focus on what matters most.\n"
+        f"Do NOT exceed {max_lines} lines.\n\n"
+        f"{context}"
+    )
+
+
+def _enforce_verdict_line_cap(text: str, max_lines: int) -> str:
+    """
+    Trim Claude output to at most max_lines non-empty lines and strip whitespace.
+
+    Parameters:
+        text: Raw text returned by Claude.
+        max_lines: Hard cap on number of lines retained.
+
+    Returns:
+        Cleaned, line-capped verdict text.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines[:max_lines])
+
+
 # ── Prompt builders ───────────────────────────────────────────────────────────
 
 def _build_daily_prompt(

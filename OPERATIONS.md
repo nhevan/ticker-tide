@@ -183,6 +183,31 @@ CREATE TABLE IF NOT EXISTS web_login_attempts (
 CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time ON web_login_attempts(ip, attempted_at);
 ```
 
+### Dev auto-reload
+
+`scripts/run_web.py --reload` boots uvicorn in reload mode, watching `src/` and `config/`. The app is re-imported via `src.web.asgi:app` on every change. Production (`run_web.py` with no flag) still passes the constructed app instance directly. Do not use `--reload` in the systemd service — it forks subprocesses that conflict with the single-worker assumptions of the in-memory rate-limit and LLM debounce.
+
+### New table: `dashboard_verdicts`
+
+Caches the Claude-generated verdict shown above the three timeframe cards on the dashboard. One row per `(ticker, date)`; `POST /api/verdict` returns the cached row when present and only calls Claude on a miss.
+
+```sql
+CREATE TABLE IF NOT EXISTS dashboard_verdicts (
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_verdicts_ticker_date ON dashboard_verdicts(ticker, date);
+```
+
+To invalidate (force regeneration for a ticker/date), delete the row:
+
+```sql
+DELETE FROM dashboard_verdicts WHERE ticker = 'AAPL' AND date = '2026-04-25';
+```
+
 ---
 
 ## Manual Commands

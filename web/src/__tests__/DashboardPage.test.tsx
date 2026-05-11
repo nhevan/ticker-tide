@@ -24,6 +24,8 @@ vi.mock('@/lib/hooks/useDateRange', () => ({
 vi.mock('@/lib/api/endpoints', () => ({
   logout: vi.fn(),
   askAI: vi.fn(),
+  generateVerdict: vi.fn(),
+  getVerdict: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('@/lib/hooks/useLlm', () => ({
   useLlm: vi.fn().mockReturnValue({
@@ -32,6 +34,15 @@ vi.mock('@/lib/hooks/useLlm', () => ({
     error: null,
     isPending: false,
     reset: vi.fn(),
+  }),
+}));
+vi.mock('@/lib/hooks/useVerdict', () => ({
+  useVerdict: vi.fn().mockReturnValue({ data: null, isLoading: false }),
+  useGenerateVerdict: vi.fn().mockReturnValue({
+    mutate: vi.fn(),
+    data: undefined,
+    error: null,
+    isPending: false,
   }),
 }));
 

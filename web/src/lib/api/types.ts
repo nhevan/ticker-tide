@@ -125,6 +125,12 @@ export interface LlmResponse {
   text: string;
 }
 
+/** Response from GET/POST /api/verdict. */
+export interface VerdictResponse {
+  verdict: string;
+  generated_at: string;
+}
+
 /** Response from GET /api/me. */
 export interface MeResponse {
   authenticated: boolean;

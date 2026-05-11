@@ -19,6 +19,7 @@ from src.web.llm import (
     build_timeframe_context,
     analyze_daily,
     analyze_timeframe,
+    generate_dashboard_verdict,
 )
 
 
@@ -139,7 +140,8 @@ def _web_config() -> dict:
             "max_tokens": 800,
             "temperature": 0.3,
             "target_words": 150,
-        }
+        },
+        "verdict": {"max_lines": 5},
     }
 
 
@@ -376,3 +378,74 @@ class TestAnalyzeTimeframe:
 
         assert len(result) > 0
         mock_client.messages.create.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# generate_dashboard_verdict tests
+# ---------------------------------------------------------------------------
+
+class TestGenerateDashboardVerdict:
+    """Tests for generate_dashboard_verdict() — mocked Claude calls."""
+
+    def test_verdict_calls_claude_and_returns_text(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """generate_dashboard_verdict() must call Claude and return the response text."""
+        with patch("anthropic.Anthropic") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.messages.create.return_value = _mock_claude_response(
+                "BUY\nStrong bullish momentum.\nRSI rising.\nPrice above EMA-50.\nVolume confirming."
+            )
+            result = generate_dashboard_verdict(
+                conn, "AAPL", "2026-04-25", _web_config()
+            )
+
+        assert "BUY" in result
+        mock_client.messages.create.assert_called_once()
+
+    def test_verdict_truncated_to_max_five_lines(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Verdict output must be capped to 5 lines regardless of Claude's response."""
+        ten_lines = "\n".join(f"line {i}" for i in range(1, 11))
+        with patch("anthropic.Anthropic") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.messages.create.return_value = _mock_claude_response(ten_lines)
+            result = generate_dashboard_verdict(
+                conn, "AAPL", "2026-04-25", _web_config()
+            )
+
+        assert len(result.splitlines()) <= 5
+
+    def test_verdict_prompt_requests_five_lines(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The prompt sent to Claude must instruct a max of 5 lines."""
+        with patch("anthropic.Anthropic") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.messages.create.return_value = _mock_claude_response("BUY\nshort")
+            generate_dashboard_verdict(conn, "AAPL", "2026-04-25", _web_config())
+
+        call_kwargs = mock_client.messages.create.call_args
+        prompt_text = str(call_kwargs)
+        assert "5 lines" in prompt_text or "five lines" in prompt_text.lower()
+
+    def test_verdict_strips_blank_lines(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Leading/trailing whitespace and surrounding blank lines must be stripped."""
+        with patch("anthropic.Anthropic") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.messages.create.return_value = _mock_claude_response(
+                "\n\n  BUY  \nLine 2\n\n"
+            )
+            result = generate_dashboard_verdict(
+                conn, "AAPL", "2026-04-25", _web_config()
+            )
+
+        assert result.startswith("BUY")
+        assert not result.endswith("\n")

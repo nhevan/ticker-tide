@@ -22,6 +22,7 @@ import logging
 import os
 import sqlite3
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -37,7 +38,7 @@ from src.web.auth import (
     prune_old_login_attempts,
     record_login_attempt,
 )
-from src.web.llm import call_claude_for_web
+from src.web.llm import call_claude_for_web, generate_dashboard_verdict
 from src.web.queries import fetch_active_tickers, fetch_date_range, fetch_snapshot
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,80 @@ class LoginBody(BaseModel):
 # ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
+
+
+def _run_llm_analysis(
+    db_path: str,
+    ticker: str,
+    date_str: str,
+    timeframe: str,
+    config: dict,
+) -> str:
+    """
+    Open a worker-thread SQLite connection and run the LLM analysis pipeline.
+
+    Mirrors the threading discipline of _generate_and_persist_verdict: sqlite3
+    connections are thread-bound, so the to_thread worker must own its own
+    connection rather than reusing one opened in the event-loop thread.
+
+    Parameters:
+        db_path: Absolute path to the SQLite database file.
+        ticker: Ticker symbol.
+        date_str: Date being analyzed (YYYY-MM-DD).
+        timeframe: One of 'daily', 'weekly', 'monthly'.
+        config: Web config dict (passed through to the LLM layer).
+
+    Returns:
+        Claude's analysis text.
+    """
+    conn = get_connection(db_path)
+    try:
+        score_row_db = conn.execute(
+            "SELECT * FROM scores_daily WHERE ticker = ? AND date = ?",
+            (ticker, date_str),
+        ).fetchone()
+        score_row = dict(score_row_db) if score_row_db else {}
+        return call_claude_for_web(conn, ticker, date_str, timeframe, score_row, config)
+    finally:
+        conn.close()
+
+
+def _generate_and_persist_verdict(
+    db_path: str,
+    ticker: str,
+    date_str: str,
+    config: dict,
+) -> tuple[str, str]:
+    """
+    Open a worker-thread SQLite connection, generate a verdict via Claude,
+    INSERT OR REPLACE the result, and return (verdict_text, generated_at).
+
+    sqlite3.Connection objects are thread-bound by default, so this helper
+    must own the connection it uses. Called via asyncio.to_thread() from the
+    POST /api/verdict handler.
+
+    Parameters:
+        db_path: Absolute path to the SQLite database file.
+        ticker: Ticker symbol.
+        date_str: Date being analyzed (YYYY-MM-DD).
+        config: Web config dict (passed through to the LLM layer).
+
+    Returns:
+        (verdict_text, generated_at_iso_utc) tuple.
+    """
+    conn = get_connection(db_path)
+    try:
+        verdict_text = generate_dashboard_verdict(conn, ticker, date_str, config)
+        generated_at = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR REPLACE INTO dashboard_verdicts(ticker, date, verdict, generated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (ticker, date_str, verdict_text, generated_at),
+        )
+        conn.commit()
+        return verdict_text, generated_at
+    finally:
+        conn.close()
 
 
 def create_app(
@@ -334,39 +409,126 @@ def create_app(
 
         llm_debounce[debounce_key] = now
 
+        try:
+            analysis_text = await asyncio.to_thread(
+                _run_llm_analysis, db_path, ticker, date_str, timeframe, config
+            )
+        except Exception as exc:
+            logger.error(
+                f"LLM analysis failed: ticker={ticker!r}, timeframe={timeframe!r}, "
+                f"error={exc!r}"
+            )
+            # Reset debounce so user can retry
+            llm_debounce.pop(debounce_key, None)
+            return JSONResponse(
+                {"detail": "AI analysis is temporarily unavailable. Please try again later."},
+                status_code=503,
+            )
+
+        return JSONResponse({"text": analysis_text})
+
+    # ── /api/verdict ──────────────────────────────────────────────────────────
+
+    @app.get("/api/verdict")
+    async def api_verdict_get(request: Request, ticker: str, date: str) -> Response:
+        """
+        Return the cached dashboard verdict for a ticker and date.
+
+        Parameters:
+            request: FastAPI request object for session access.
+            ticker: Ticker symbol query parameter.
+            date: Date string (YYYY-MM-DD) query parameter.
+
+        Returns:
+            200 {"verdict": str, "generated_at": str} if cached.
+            401 {"detail": ...} if not authenticated.
+            404 {"detail": ...} if no cached verdict exists.
+        """
+        if not _is_authenticated(request):
+            return JSONResponse({"detail": "Not authenticated."}, status_code=401)
         conn = _open_db()
         try:
-            score_row_db = conn.execute(
-                "SELECT * FROM scores_daily WHERE ticker = ? AND date = ?",
-                (ticker, date_str),
+            row = conn.execute(
+                "SELECT verdict, generated_at FROM dashboard_verdicts "
+                "WHERE ticker = ? AND date = ?",
+                (ticker, date),
             ).fetchone()
-            score_row = dict(score_row_db) if score_row_db else {}
-
-            try:
-                analysis_text = await asyncio.to_thread(
-                    call_claude_for_web,
-                    conn,
-                    ticker,
-                    date_str,
-                    timeframe,
-                    score_row,
-                    config,
-                )
-            except Exception as exc:
-                logger.error(
-                    f"LLM analysis failed: ticker={ticker!r}, timeframe={timeframe!r}, "
-                    f"error={exc!r}"
-                )
-                # Reset debounce so user can retry
-                llm_debounce.pop(debounce_key, None)
+            if row is None:
                 return JSONResponse(
-                    {"detail": "AI analysis is temporarily unavailable. Please try again later."},
-                    status_code=503,
+                    {"detail": "No verdict cached for this ticker and date."},
+                    status_code=404,
                 )
-
-            return JSONResponse({"text": analysis_text})
+            return JSONResponse(
+                {"verdict": row["verdict"], "generated_at": row["generated_at"]}
+            )
         finally:
             conn.close()
+
+    @app.post("/api/verdict")
+    async def api_verdict_post(request: Request) -> Response:
+        """
+        Generate (or return cached) dashboard verdict for a ticker and date.
+
+        Idempotent: if a cached row exists, returns it without calling Claude.
+        Otherwise generates via Claude, persists with INSERT OR REPLACE, and
+        returns the new verdict. 503 on Claude failure.
+
+        Parameters:
+            request: FastAPI request object for session and body access.
+
+        Returns:
+            200 {"verdict": str, "generated_at": str} on success or cache hit.
+            400 {"detail": ...} on missing/invalid body.
+            401 {"detail": ...} if not authenticated.
+            503 {"detail": ...} on Claude failure.
+        """
+        if not _is_authenticated(request):
+            return JSONResponse({"detail": "Not authenticated."}, status_code=401)
+
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
+
+        ticker = body.get("ticker", "")
+        date_str = body.get("date", "")
+        if not ticker or not date_str:
+            return JSONResponse(
+                {"detail": "ticker and date are required."}, status_code=400
+            )
+
+        # Cache check uses an event-loop-thread connection.
+        conn = _open_db()
+        try:
+            cached = conn.execute(
+                "SELECT verdict, generated_at FROM dashboard_verdicts "
+                "WHERE ticker = ? AND date = ?",
+                (ticker, date_str),
+            ).fetchone()
+            if cached is not None:
+                return JSONResponse(
+                    {"verdict": cached["verdict"], "generated_at": cached["generated_at"]}
+                )
+        finally:
+            conn.close()
+
+        # Generation + persistence run on a worker thread with their own connection
+        # because sqlite3.Connection objects are thread-bound by default.
+        try:
+            verdict_text, generated_at = await asyncio.to_thread(
+                _generate_and_persist_verdict, db_path, ticker, date_str, config
+            )
+        except Exception as exc:
+            logger.error(
+                f"Verdict generation failed: ticker={ticker!r}, date={date_str!r}, "
+                f"error={exc!r}"
+            )
+            return JSONResponse(
+                {"detail": "Verdict generation is temporarily unavailable. Please try again later."},
+                status_code=503,
+            )
+
+        return JSONResponse({"verdict": verdict_text, "generated_at": generated_at})
 
     # ── Static file serving ───────────────────────────────────────────────────
     # Route registration order: /assets mount → explicit root assets → catch-all.

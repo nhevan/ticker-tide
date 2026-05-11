@@ -39,6 +39,7 @@ _TEST_CONFIG = {
     },
     "why_bullets": {"limit": 3},
     "signal_flip_lookback_days": 14,
+    "verdict": {"max_lines": 5},
 }
 
 
@@ -314,6 +315,110 @@ class TestLlmAuth:
             )
         assert second.status_code == 429
         assert "detail" in second.json()
+
+
+# ---------------------------------------------------------------------------
+# /api/verdict tests
+# ---------------------------------------------------------------------------
+
+
+class TestVerdict:
+    """Auth and behavior tests for GET/POST /api/verdict."""
+
+    def test_get_verdict_returns_404_when_not_cached(
+        self, client: TestClient
+    ) -> None:
+        """GET /api/verdict must return 404 when no row exists for (ticker, date)."""
+        _login(client)
+        response = client.get("/api/verdict?ticker=AAPL&date=2026-04-25")
+        assert response.status_code == 404
+        assert "detail" in response.json()
+
+    def test_get_verdict_returns_401_when_not_authenticated(
+        self, client: TestClient
+    ) -> None:
+        """GET /api/verdict must return 401 when not logged in."""
+        response = client.get("/api/verdict?ticker=AAPL&date=2026-04-25")
+        assert response.status_code == 401
+
+    def test_post_verdict_generates_caches_and_returns_text(
+        self, client: TestClient
+    ) -> None:
+        """POST /api/verdict must call Claude, persist, and return the verdict."""
+        _login(client)
+        with patch(
+            "src.web.app.generate_dashboard_verdict",
+            return_value="BUY\nStrong momentum.",
+        ) as mock_gen:
+            response = client.post(
+                "/api/verdict",
+                json={"ticker": "AAPL", "date": "2026-04-25"},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["verdict"].startswith("BUY")
+        assert "generated_at" in data
+        mock_gen.assert_called_once()
+
+        # GET must now return the cached row
+        cached = client.get("/api/verdict?ticker=AAPL&date=2026-04-25")
+        assert cached.status_code == 200
+        assert cached.json()["verdict"].startswith("BUY")
+
+    def test_post_verdict_is_idempotent_when_cached(
+        self, client: TestClient
+    ) -> None:
+        """POST /api/verdict must reuse the cached row without calling Claude again."""
+        _login(client)
+        with patch(
+            "src.web.app.generate_dashboard_verdict",
+            return_value="BUY\nFirst call.",
+        ) as mock_gen:
+            client.post(
+                "/api/verdict",
+                json={"ticker": "AAPL", "date": "2026-04-25"},
+            )
+            assert mock_gen.call_count == 1
+            response = client.post(
+                "/api/verdict",
+                json={"ticker": "AAPL", "date": "2026-04-25"},
+            )
+        assert response.status_code == 200
+        assert response.json()["verdict"].startswith("BUY")
+        assert mock_gen.call_count == 1  # no second Claude call
+
+    def test_post_verdict_returns_401_when_not_authenticated(
+        self, client: TestClient
+    ) -> None:
+        """POST /api/verdict must return 401 when not logged in."""
+        response = client.post(
+            "/api/verdict",
+            json={"ticker": "AAPL", "date": "2026-04-25"},
+        )
+        assert response.status_code == 401
+
+    def test_post_verdict_returns_400_on_missing_fields(
+        self, client: TestClient
+    ) -> None:
+        """POST /api/verdict must return 400 when ticker or date is missing."""
+        _login(client)
+        response = client.post("/api/verdict", json={"ticker": "AAPL"})
+        assert response.status_code == 400
+
+    def test_post_verdict_returns_503_on_claude_failure(
+        self, client: TestClient
+    ) -> None:
+        """POST /api/verdict must return 503 when Claude raises."""
+        _login(client)
+        with patch(
+            "src.web.app.generate_dashboard_verdict",
+            side_effect=RuntimeError("claude down"),
+        ):
+            response = client.post(
+                "/api/verdict",
+                json={"ticker": "AAPL", "date": "2026-04-25"},
+            )
+        assert response.status_code == 503
 
 
 # ---------------------------------------------------------------------------

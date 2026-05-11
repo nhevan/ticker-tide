@@ -11,6 +11,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { TimeframeCard } from '@/components/TimeframeCard';
 import { ErrorBanner } from '@/components/ErrorBanner';
+import { VerdictBlock } from '@/components/VerdictBlock';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTickers } from '@/lib/hooks/useTickers';
 import { useDateRange } from '@/lib/hooks/useDateRange';
@@ -106,32 +107,35 @@ export function DashboardPage() {
         )}
 
         {showCards && snapshot && !snapshotLoading && (
-          <div className="grid gap-4 md:grid-cols-3">
-            <TimeframeCard
-              title="Daily"
-              timeframe="daily"
-              section={snapshot.daily}
-              ticker={loadedTicker}
-              date={loadedDate}
-              isLoading={false}
-            />
-            <TimeframeCard
-              title="Weekly"
-              timeframe="weekly"
-              section={snapshot.weekly}
-              ticker={loadedTicker}
-              date={loadedDate}
-              isLoading={false}
-            />
-            <TimeframeCard
-              title="Monthly"
-              timeframe="monthly"
-              section={snapshot.monthly}
-              ticker={loadedTicker}
-              date={loadedDate}
-              isLoading={false}
-            />
-          </div>
+          <>
+            <VerdictBlock ticker={loadedTicker} date={loadedDate} />
+            <div className="grid gap-4 md:grid-cols-3">
+                <TimeframeCard
+                title="Daily"
+                timeframe="daily"
+                section={snapshot.daily}
+                ticker={loadedTicker}
+                date={loadedDate}
+                isLoading={false}
+              />
+              <TimeframeCard
+                title="Weekly"
+                timeframe="weekly"
+                section={snapshot.weekly}
+                ticker={loadedTicker}
+                date={loadedDate}
+                isLoading={false}
+              />
+              <TimeframeCard
+                title="Monthly"
+                timeframe="monthly"
+                section={snapshot.monthly}
+                ticker={loadedTicker}
+                date={loadedDate}
+                isLoading={false}
+              />
+            </div>
+          </>
         )}
 
         {!snapshotLoading && !showCards && !errorMessage && (

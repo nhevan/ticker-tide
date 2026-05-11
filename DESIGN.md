@@ -1429,6 +1429,8 @@ Browser ←→ Vite/React SPA (web/dist/ static files)
 - `GET /api/dates?ticker=X` — `{min, max}` from `scores_daily`
 - `GET /api/snapshot?ticker=X&date=Y` — three-card snapshot dict (404 if no data)
 - `POST /api/llm { ticker, date, timeframe }` — LLM analysis (429 on debounce, 503 on Claude failure)
+- `GET /api/verdict?ticker=X&date=Y` — cached dashboard verdict (404 if not generated yet)
+- `POST /api/verdict { ticker, date }` — generate (or return cached) verdict (503 on Claude failure)
 
 **Static-serve (SPA):**
 - `GET /assets/*` — `StaticFiles` mount serving Vite-hashed assets from `web/dist/assets/`
@@ -1466,7 +1468,16 @@ The `categories` array is the UI rendering contract. The UI renders only bars li
 - **Claude error**: returns 503 with friendly message (never exposes a stack trace).
 - **Async dispatch**: `await asyncio.to_thread(call_claude_for_web, ...)` keeps the ASGI event loop responsive.
 
-### 14.4 New DB Table: `web_login_attempts`
+### 14.3.1 Dashboard Verdict Block
+
+`GET /api/verdict?ticker=X&date=Y` → `{ verdict, generated_at }` or `404`.
+`POST /api/verdict { ticker, date }` → `{ verdict, generated_at }`.
+
+Rendered at the top of the dashboard above the three timeframe cards. The first time a user clicks "Generate verdict" for a `(ticker, date)` pair, the server builds the same daily context as `/api/llm`, asks Claude for a max-5-line plain-text verdict (line 1 = BUY/SELL/HOLD-WAIT, lines 2–5 = short reasons), enforces the 5-line cap in `_enforce_verdict_line_cap()`, persists the result in `dashboard_verdicts`, and returns it. Subsequent calls for the same `(ticker, date)` — including via the GET endpoint — return the cached row without a fresh Claude call. POST is idempotent: re-clicking after a cache hit is a no-op at the Claude level.
+
+The frontend hook `useVerdict(ticker, date)` keys its TanStack query on `(ticker, date)`; switching dates causes the cached verdict for the new date (if any) to render automatically and otherwise reveals the "Generate verdict" button. `useGenerateVerdict()` calls `setQueryData` on success so the UI transitions without a follow-up GET.
+
+### 14.4 New DB Tables: `web_login_attempts`, `dashboard_verdicts`
 
 ```sql
 CREATE TABLE IF NOT EXISTS web_login_attempts (
@@ -1476,7 +1487,18 @@ CREATE TABLE IF NOT EXISTS web_login_attempts (
 CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time ON web_login_attempts(ip, attempted_at);
 ```
 
-Added to `create_all_tables()` in `src/common/db.py`. No migration script needed — `CREATE TABLE IF NOT EXISTS` is idempotent.
+```sql
+CREATE TABLE IF NOT EXISTS dashboard_verdicts (
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_verdicts_ticker_date ON dashboard_verdicts(ticker, date);
+```
+
+Both added to `create_all_tables()` in `src/common/db.py`. No migration script needed — `CREATE TABLE IF NOT EXISTS` is idempotent.
 
 ### 14.5 Deployment
 

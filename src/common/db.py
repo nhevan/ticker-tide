@@ -736,6 +736,17 @@ def _build_schema_statements() -> list[str]:
         "CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time "
         "ON web_login_attempts(ip, attempted_at)",
 
+        """CREATE TABLE IF NOT EXISTS dashboard_verdicts (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            PRIMARY KEY (ticker, date)
+        )""",
+
+        "CREATE INDEX IF NOT EXISTS idx_dashboard_verdicts_ticker_date "
+        "ON dashboard_verdicts(ticker, date)",
+
         # ── Indexes ────────────────────────────────────────────────────────────────
         "CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_date ON ohlcv_daily(ticker, date)",
         "CREATE INDEX IF NOT EXISTS idx_indicators_ticker_date ON indicators_daily(ticker, date)",

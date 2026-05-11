@@ -9,7 +9,14 @@
  */
 
 import { apiFetch } from './client';
-import type { DateRange, LlmResponse, MeResponse, Snapshot } from './types';
+import { ApiError } from './client';
+import type {
+  DateRange,
+  LlmResponse,
+  MeResponse,
+  Snapshot,
+  VerdictResponse,
+} from './types';
 
 /** Log in with a password. Sets the session cookie on success. */
 export async function login(password: string): Promise<void> {
@@ -73,6 +80,51 @@ export interface AskAIArgs {
  */
 export async function askAI(args: AskAIArgs): Promise<LlmResponse> {
   return apiFetch<LlmResponse>('/api/llm', {
+    method: 'POST',
+    body: JSON.stringify(args),
+  });
+}
+
+/** Arguments for /api/verdict (both GET and POST). */
+export interface VerdictArgs {
+  ticker: string;
+  date: string;
+}
+
+/**
+ * Return the cached dashboard verdict for a ticker/date, or null if none.
+ *
+ * Returns null on 404 (no cached verdict) rather than throwing. Other errors
+ * still throw (ApiError or UnauthorizedError).
+ *
+ * @param args - Ticker and date to look up.
+ */
+export async function getVerdict(
+  args: VerdictArgs,
+): Promise<VerdictResponse | null> {
+  try {
+    return await apiFetch<VerdictResponse>(
+      `/api/verdict?ticker=${encodeURIComponent(args.ticker)}&date=${encodeURIComponent(args.date)}`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Generate (or fetch cached) dashboard verdict for a ticker and date.
+ *
+ * Server is idempotent: a cached row is returned without a fresh Claude call.
+ *
+ * @param args - Ticker and date to generate the verdict for.
+ */
+export async function generateVerdict(
+  args: VerdictArgs,
+): Promise<VerdictResponse> {
+  return apiFetch<VerdictResponse>('/api/verdict', {
     method: 'POST',
     body: JSON.stringify(args),
   });
