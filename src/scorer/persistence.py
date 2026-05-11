@@ -172,6 +172,7 @@ def persist_weekly_score_row(
     data_completeness: object,
     key_signals: object,
     scoring_date: str,
+    indicator_scores: Optional[dict[str, Optional[float]]] = None,
 ) -> bool:
     """
     Persist a closed-week score snapshot to ``scores_weekly``.
@@ -186,6 +187,10 @@ def persist_weekly_score_row(
          row with ``date <= week_start + 4 days`` (Friday) — see
          ``_inherit_fundamental_macro``.
       4. ``INSERT OR REPLACE`` into scores_weekly on (ticker, week_start).
+      5. When ``indicator_scores`` is provided (not None), write the
+         per-indicator rows to ``indicator_scores_weekly`` keyed by the same
+         resolved ``week_start``.  The sidecar write reuses
+         ``persist_indicator_scores_weekly`` so the insert logic is DRY.
 
     Parameters:
         db_conn:           Open SQLite connection.
@@ -200,6 +205,10 @@ def persist_weekly_score_row(
         key_signals:       List (preferred) or pre-serialised JSON string.
                            Stored as JSON text.
         scoring_date:      Reference date the scorer ran against.
+        indicator_scores:  Optional dict mapping indicator name → score
+                           (float or None) from ``score_all_indicators`` for
+                           the weekly timeframe.  When None (default), no
+                           sidecar rows are written.
 
     Returns:
         True if a row was written. False when the week is in-progress
@@ -264,12 +273,129 @@ def persist_weekly_score_row(
         ),
     )
     db_conn.commit()
+
+    if indicator_scores is not None:
+        persist_indicator_scores_weekly(db_conn, ticker, week_start, indicator_scores)
+
     return True
 
 
 # ---------------------------------------------------------------------------
 # Monthly persistence
 # ---------------------------------------------------------------------------
+
+def persist_indicator_scores_daily(
+    conn: sqlite3.Connection,
+    ticker: str,
+    date: str,
+    indicator_scores: dict[str, Optional[float]],
+) -> None:
+    """
+    Persist per-indicator signed scores for a daily scoring run.
+
+    Iterates ``indicator_scores`` and INSERT OR REPLACE each entry into
+    ``indicator_scores_daily``. None values are stored as SQL NULL. Commits
+    after all rows have been written.
+
+    Parameters:
+        conn:             Open SQLite connection.
+        ticker:           Ticker symbol.
+        date:             Scoring date (YYYY-MM-DD).
+        indicator_scores: Dict mapping indicator name → score (float or None),
+                          as returned by ``score_all_indicators``.
+
+    Returns:
+        None
+    """
+    for indicator_name, score in indicator_scores.items():
+        conn.execute(
+            """INSERT OR REPLACE INTO indicator_scores_daily
+                (ticker, date, indicator_name, score)
+               VALUES (?, ?, ?, ?)""",
+            (ticker, date, indicator_name, score),
+        )
+    conn.commit()
+    logger.debug(
+        f"{ticker}: persisted {len(indicator_scores)} indicator_scores_daily rows "
+        f"for date={date}"
+    )
+
+
+def persist_indicator_scores_weekly(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str,
+    indicator_scores: dict[str, Optional[float]],
+) -> None:
+    """
+    Persist per-indicator signed scores for a weekly scoring run.
+
+    Iterates ``indicator_scores`` and INSERT OR REPLACE each entry into
+    ``indicator_scores_weekly``. None values are stored as SQL NULL. Commits
+    after all rows have been written.
+
+    Parameters:
+        conn:             Open SQLite connection.
+        ticker:           Ticker symbol.
+        week_start:       Week start date (YYYY-MM-DD).
+        indicator_scores: Dict mapping indicator name → score (float or None),
+                          as returned by ``score_all_indicators`` for the
+                          weekly timeframe.
+
+    Returns:
+        None
+    """
+    for indicator_name, score in indicator_scores.items():
+        conn.execute(
+            """INSERT OR REPLACE INTO indicator_scores_weekly
+                (ticker, week_start, indicator_name, score)
+               VALUES (?, ?, ?, ?)""",
+            (ticker, week_start, indicator_name, score),
+        )
+    conn.commit()
+    logger.debug(
+        f"{ticker}: persisted {len(indicator_scores)} indicator_scores_weekly rows "
+        f"for week_start={week_start}"
+    )
+
+
+def persist_indicator_scores_monthly(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    indicator_scores: dict[str, Optional[float]],
+) -> None:
+    """
+    Persist per-indicator signed scores for a monthly scoring run.
+
+    Iterates ``indicator_scores`` and INSERT OR REPLACE each entry into
+    ``indicator_scores_monthly``. None values are stored as SQL NULL. Commits
+    after all rows have been written.
+
+    Parameters:
+        conn:             Open SQLite connection.
+        ticker:           Ticker symbol.
+        month_start:      Month start date (YYYY-MM-DD).
+        indicator_scores: Dict mapping indicator name → score (float or None),
+                          as returned by ``score_all_indicators`` for the
+                          monthly timeframe.
+
+    Returns:
+        None
+    """
+    for indicator_name, score in indicator_scores.items():
+        conn.execute(
+            """INSERT OR REPLACE INTO indicator_scores_monthly
+                (ticker, month_start, indicator_name, score)
+               VALUES (?, ?, ?, ?)""",
+            (ticker, month_start, indicator_name, score),
+        )
+    conn.commit()
+    logger.debug(
+        f"{ticker}: persisted {len(indicator_scores)} indicator_scores_monthly rows "
+        f"for month_start={month_start}"
+    )
+
 
 def persist_monthly_score_row(
     db_conn: sqlite3.Connection,
@@ -279,6 +405,7 @@ def persist_monthly_score_row(
     data_completeness: object,
     key_signals: object,
     scoring_date: str,
+    indicator_scores: Optional[dict[str, Optional[float]]] = None,
 ) -> bool:
     """
     Persist a closed-month score snapshot to ``scores_monthly``.
@@ -289,6 +416,11 @@ def persist_monthly_score_row(
     ``scores_daily`` row whose ``date <= last calendar day of the month``,
     and writes the row via ``INSERT OR REPLACE``.
 
+    When ``indicator_scores`` is provided (not None), also writes the
+    per-indicator rows to ``indicator_scores_monthly`` keyed by the same
+    resolved ``month_start`` by delegating to
+    ``persist_indicator_scores_monthly``.
+
     Parameters:
         db_conn:           Open SQLite connection.
         ticker:            Ticker symbol.
@@ -297,6 +429,10 @@ def persist_monthly_score_row(
         data_completeness: Dict or pre-serialised JSON string.
         key_signals:       List or pre-serialised JSON string.
         scoring_date:      Reference date.
+        indicator_scores:  Optional dict mapping indicator name → score
+                           (float or None) from ``score_all_indicators`` for
+                           the monthly timeframe.  When None (default), no
+                           sidecar rows are written.
 
     Returns:
         True if a row was written; False when the month is in-progress
@@ -359,4 +495,8 @@ def persist_monthly_score_row(
         ),
     )
     db_conn.commit()
+
+    if indicator_scores is not None:
+        persist_indicator_scores_monthly(db_conn, ticker, month_start, indicator_scores)
+
     return True

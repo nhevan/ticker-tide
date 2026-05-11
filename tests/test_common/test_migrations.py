@@ -113,3 +113,77 @@ def test_weekly_and_monthly_untouched_after_migration(tmp_path: Path) -> None:
     assert "key_signals_data" not in weekly_columns
     assert "key_signals_data" not in monthly_columns
     conn.close()
+
+
+def test_migration_creates_indicator_scores_sidecar_tables(tmp_path: Path) -> None:
+    """
+    run_migrations on a DB that lacks the indicator_scores sidecar tables must
+    create all three: indicator_scores_daily, indicator_scores_weekly,
+    indicator_scores_monthly.
+    """
+    db_file = str(tmp_path / "signals.db")
+    # Bare DB with only a minimal scores_daily (no sidecar tables).
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        """CREATE TABLE scores_daily (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            signal TEXT,
+            UNIQUE(ticker, date)
+        )"""
+    )
+    conn.commit()
+
+    # Verify sidecar tables are absent before migration.
+    existing_before = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "indicator_scores_daily" not in existing_before
+    assert "indicator_scores_weekly" not in existing_before
+    assert "indicator_scores_monthly" not in existing_before
+
+    run_migrations(conn)
+
+    existing_after = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "indicator_scores_daily" in existing_after, (
+        "run_migrations must create indicator_scores_daily"
+    )
+    assert "indicator_scores_weekly" in existing_after, (
+        "run_migrations must create indicator_scores_weekly"
+    )
+    assert "indicator_scores_monthly" in existing_after, (
+        "run_migrations must create indicator_scores_monthly"
+    )
+    conn.close()
+
+
+def test_migration_sidecar_tables_idempotent(tmp_path: Path) -> None:
+    """
+    Calling run_migrations twice on a fresh DB must not raise.
+    The sidecar tables use CREATE TABLE IF NOT EXISTS, so the second call is a no-op.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = get_connection(db_file)
+    create_all_tables(conn)
+
+    run_migrations(conn)
+    run_migrations(conn)  # must not raise
+
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "indicator_scores_daily" in tables
+    assert "indicator_scores_weekly" in tables
+    assert "indicator_scores_monthly" in tables
+    conn.close()

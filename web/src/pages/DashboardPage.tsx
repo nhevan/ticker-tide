@@ -12,11 +12,23 @@ import { Header } from '@/components/Header';
 import { TimeframeCard } from '@/components/TimeframeCard';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { VerdictBlock } from '@/components/VerdictBlock';
+import { MatrixTable } from '@/components/MatrixTable';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTickers } from '@/lib/hooks/useTickers';
 import { useDateRange } from '@/lib/hooks/useDateRange';
 import { useSnapshot } from '@/lib/hooks/useSnapshot';
 import { ApiError } from '@/lib/api/client';
+
+/**
+ * Map a numeric composite score to a numeric direction for the indicator matrix.
+ *
+ * @param score - Composite score from a TimeframeSection.
+ * @returns 1 if positive, -1 if negative, 0 if zero or absent.
+ */
+function scoreToDirection(score: number | null | undefined): 1 | -1 | 0 {
+  const direction = Math.sign(score ?? 0);
+  return direction as 1 | -1 | 0;
+}
 
 /**
  * Render the main dashboard with ticker/date controls and three timeframe cards.
@@ -113,6 +125,26 @@ export function DashboardPage() {
               date={loadedDate}
               snapshot={snapshot}
             />
+            <div className="mb-4 space-y-4">
+              <MatrixTable
+                title="Daily — Indicator Agreement"
+                indicators={snapshot.daily.indicators}
+                indicatorScores={snapshot.daily.indicator_scores}
+                signalDirection={scoreToDirection(snapshot.daily.composite_score)}
+              />
+              <MatrixTable
+                title="Weekly — Indicator Agreement"
+                indicators={snapshot.weekly.indicators}
+                indicatorScores={snapshot.weekly.indicator_scores}
+                signalDirection={scoreToDirection(snapshot.weekly.composite_score)}
+              />
+              <MatrixTable
+                title="Monthly — Indicator Agreement"
+                indicators={snapshot.monthly.indicators}
+                indicatorScores={snapshot.monthly.indicator_scores}
+                signalDirection={scoreToDirection(snapshot.monthly.composite_score)}
+              />
+            </div>
             <div className="grid gap-4 md:grid-cols-3">
                 <TimeframeCard
                 title="Daily"

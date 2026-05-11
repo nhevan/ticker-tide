@@ -357,6 +357,7 @@ class TestBreakdownShape:
         assert set(result.keys()) == {
             "composite_score", "trend_score", "momentum_score", "volume_score",
             "volatility_score", "candlestick_score", "structural_score",
+            "indicator_scores",
         }
         assert result["candlestick_score"] is None
         assert result["structural_score"] is None
@@ -585,3 +586,103 @@ class TestDefaultFlagIsV1:
             bare_conn, "QQQ", config_explicit_v1, scoring_date="2026-04-09",
         )
         assert score_default == pytest.approx(score_v1, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — indicator_scores included in breakdown return dict
+# ---------------------------------------------------------------------------
+
+class TestBreakdownIncludesIndicatorScores:
+    """Verify that compute_weekly/monthly_score_breakdown include
+    ``indicator_scores`` (the raw per-indicator dict from score_all_indicators)
+    in their return value."""
+
+    def test_weekly_v1_breakdown_has_indicator_scores_key(self, bare_conn) -> None:
+        """compute_weekly_score_breakdown returns ``indicator_scores`` dict in v1 mode."""
+        _insert_weekly_indicators(bare_conn, "QQQ", _BULLISH_INDICATORS)
+        bare_conn.commit()
+        result = compute_weekly_score_breakdown(
+            bare_conn, "QQQ", _v1_config(), scoring_date="2026-04-09",
+        )
+        assert result is not None
+        assert "indicator_scores" in result, "breakdown must include 'indicator_scores' key"
+        assert isinstance(result["indicator_scores"], dict)
+
+    def test_weekly_v1_breakdown_indicator_scores_nonempty(self, bare_conn) -> None:
+        """The indicator_scores dict is non-empty and contains known keys."""
+        _insert_weekly_indicators(bare_conn, "QQQ", _BULLISH_INDICATORS)
+        bare_conn.commit()
+        result = compute_weekly_score_breakdown(
+            bare_conn, "QQQ", _v1_config(), scoring_date="2026-04-09",
+        )
+        assert result is not None
+        scores = result["indicator_scores"]
+        # rsi_14 is in the indicators row and should appear in the returned dict
+        assert "rsi_14" in scores, "rsi_14 should be in indicator_scores"
+        # The value should be a float or None (not missing/absent)
+        assert scores["rsi_14"] is None or isinstance(scores["rsi_14"], float)
+
+    def test_weekly_v2_breakdown_has_indicator_scores_key(self, bare_conn) -> None:
+        """compute_weekly_score_breakdown returns ``indicator_scores`` dict in v2 mode."""
+        _insert_weekly_indicators(bare_conn, "QQQ", _BULLISH_INDICATORS)
+        bare_conn.commit()
+        result = compute_weekly_score_breakdown(
+            bare_conn, "QQQ", _v2_config(), scoring_date="2026-04-09",
+        )
+        assert result is not None
+        assert "indicator_scores" in result
+        assert isinstance(result["indicator_scores"], dict)
+
+    def test_monthly_v1_breakdown_has_indicator_scores_key(self, bare_conn) -> None:
+        """compute_monthly_score_breakdown returns ``indicator_scores`` dict in v1 mode."""
+        bullish_monthly = {**_BULLISH_INDICATORS, "month_start": "2026-04-01"}
+        _insert_monthly_indicators(bare_conn, "QQQ", bullish_monthly)
+        bare_conn.commit()
+        result = compute_monthly_score_breakdown(
+            bare_conn, "QQQ", _v1_config(), scoring_date="2026-04-02",
+        )
+        assert result is not None
+        assert "indicator_scores" in result
+        assert isinstance(result["indicator_scores"], dict)
+
+    def test_monthly_v2_breakdown_has_indicator_scores_key(self, bare_conn) -> None:
+        """compute_monthly_score_breakdown returns ``indicator_scores`` dict in v2 mode."""
+        bullish_monthly = {**_BULLISH_INDICATORS, "month_start": "2026-04-01"}
+        _insert_monthly_indicators(bare_conn, "QQQ", bullish_monthly)
+        bare_conn.commit()
+        result = compute_monthly_score_breakdown(
+            bare_conn, "QQQ", _v2_config(), scoring_date="2026-04-02",
+        )
+        assert result is not None
+        assert "indicator_scores" in result
+        assert isinstance(result["indicator_scores"], dict)
+
+    def test_indicator_scores_matches_inline_computation(self, bare_conn) -> None:
+        """indicator_scores in the breakdown matches a direct score_all_indicators call."""
+        from src.scorer.indicator_scorer import score_all_indicators, load_profile_for_ticker
+
+        _insert_weekly_indicators(bare_conn, "QQQ", _BULLISH_INDICATORS)
+        bare_conn.commit()
+
+        result = compute_weekly_score_breakdown(
+            bare_conn, "QQQ", _v1_config(), scoring_date="2026-04-09",
+        )
+        assert result is not None
+        breakdown_scores = result["indicator_scores"]
+
+        # Recompute directly to verify the dict is the same one score_all_indicators produced.
+        row = bare_conn.execute(
+            "SELECT w.close, i.* FROM indicators_weekly i "
+            "JOIN weekly_candles w ON i.ticker = w.ticker AND i.week_start = w.week_start "
+            "WHERE i.ticker = 'QQQ' ORDER BY i.week_start DESC LIMIT 1"
+        ).fetchone()
+        indicators = dict(row)
+        profiles = load_profile_for_ticker(bare_conn, "QQQ", source_table="indicator_profiles_weekly")
+        expected = score_all_indicators(
+            indicators=indicators,
+            close=indicators["close"],
+            profiles=profiles,
+            config=_v1_config(),
+            regime="ranging",
+        )
+        assert breakdown_scores == expected

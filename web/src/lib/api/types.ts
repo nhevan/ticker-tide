@@ -88,6 +88,7 @@ export interface DailySection {
   resolved_period: string;
   scores?: CategoryScores;
   indicators?: Record<string, number | string | null>;
+  indicator_scores?: Record<string, number | null>;
   patterns?: Pattern[];
   sparkline?: SparklinePoint[];
   signal?: string | null;
@@ -108,6 +109,7 @@ export interface TimeframeSection {
   is_fallback: boolean;
   scores?: CategoryScores;
   indicators?: Record<string, number | string | null>;
+  indicator_scores?: Record<string, number | null>;
   patterns?: Pattern[];
   sparkline?: SparklinePoint[];
   composite_score?: number | null;

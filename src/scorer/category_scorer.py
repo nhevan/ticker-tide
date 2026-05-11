@@ -30,10 +30,14 @@ logger = logging.getLogger(__name__)
 #: trend, momentum, volume, volatility, candlestick, structural, sentiment,
 #: fundamental, macro.
 #:
-#: NOTE: ``"keltner"`` is listed here (volatility) because the existing
-#: ``compute_all_category_scores`` references it, but ``score_all_indicators``
-#: does NOT currently emit a ``"keltner"`` key — it will always resolve to None.
-#: This mismatch is pre-existing and intentionally NOT fixed in this changeset.
+#: Removed entries:
+#: - ``"atr_14"`` was here (volatility) but ``score_all_indicators`` always
+#:   returns 0.0 for it (it is a confidence-modifier input, not directional).
+#:   Keeping a zero-valued entry causes it to dilute genuine volatility signals
+#:   via the magnitude-weighted rollup, so it is excluded.
+#: - ``"keltner"`` was here (volatility) but ``score_all_indicators`` never
+#:   emits a ``"keltner"`` key — the entry always resolved to None and
+#:   contributed nothing to category rollups.
 INDICATOR_CATEGORY_MAP: dict[str, str] = {
     # --- trend ---
     "ema_alignment": "trend",
@@ -51,8 +55,6 @@ INDICATOR_CATEGORY_MAP: dict[str, str] = {
     "ad_line": "volume",
     # --- volatility ---
     "bb_pctb": "volatility",
-    "atr_14": "volatility",
-    "keltner": "volatility",  # NOTE: not emitted by score_all_indicators — always None
 }
 
 #: Maps each key in the ``pattern_scores`` dict (assembled in

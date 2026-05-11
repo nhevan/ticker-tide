@@ -798,6 +798,29 @@ Enable WAL mode on connection.
 - key_signals TEXT (JSON array)
 - PRIMARY KEY (ticker, month_start)
 
+**indicator_scores_daily** — per-indicator signed scores written alongside each daily scoring run. Populated by `persist_indicator_scores_daily` in `src/scorer/persistence.py`, called from `score_ticker` in `src/scorer/main.py` after `save_score_to_db`. Used by the dashboard indicator-agreement matrix.
+- ticker TEXT NOT NULL
+- date TEXT NOT NULL
+- indicator_name TEXT NOT NULL
+- score REAL
+- PRIMARY KEY (ticker, date, indicator_name)
+
+**indicator_scores_weekly** — per-indicator signed scores for weekly bars. Written inside `persist_weekly_score_row` when the caller passes `indicator_scores` dict.
+- ticker TEXT NOT NULL
+- week_start TEXT NOT NULL
+- indicator_name TEXT NOT NULL
+- score REAL
+- PRIMARY KEY (ticker, week_start, indicator_name)
+
+**indicator_scores_monthly** — per-indicator signed scores for monthly bars. Written inside `persist_monthly_score_row` when the caller passes `indicator_scores` dict.
+- ticker TEXT NOT NULL
+- month_start TEXT NOT NULL
+- indicator_name TEXT NOT NULL
+- score REAL
+- PRIMARY KEY (ticker, month_start, indicator_name)
+
+All three sidecar tables are created by `create_all_tables` (fresh databases) and by `run_migrations` (existing databases) via idempotent `CREATE TABLE IF NOT EXISTS` statements.
+
 #### Closed-period gate (commit 6)
 
 Both `scores_weekly` and `scores_monthly` are populated by per-ticker hooks
@@ -1100,6 +1123,17 @@ After `apply_adaptive_weights` produces category scores, `src/scorer/contributio
 These divergences are intentional: the payload is designed for relative ranking and human-readable explanation, not as a mathematical reconstruction of `final_score`.
 
 **How the scorer produces it.** `src/scorer/main.py::score_ticker` calls `build_contributions_payload` after `apply_adaptive_weights` returns the category score dict, then passes the JSON string to `save_score_to_db` alongside the existing columns. The builder reads from `INDICATOR_CATEGORY_MAP` (in `category_scorer.py`) and `PATTERN_CATEGORY_MAP` (in `category_scorer.py`) to classify each signal, and from `PATTERN_RULE_DESCRIPTIONS` (in `pattern_scorer.py`) to annotate pattern items.
+
+### 11.2 Per-Indicator Signed Score Persistence
+
+The raw signed scores produced by `score_all_indicators` (output of `src/scorer/indicator_scorer.py`) are now persisted alongside the category rollups so the dashboard indicator-agreement matrix can show how each indicator voted relative to the final direction.
+
+- **Daily**: `persist_indicator_scores_daily` in `src/scorer/persistence.py` is called from `score_ticker` immediately after `save_score_to_db`. Wrapped in try/except — failures write a `warning` row to `alerts_log` and do NOT raise (daily scoring is never blocked by sidecar persist).
+- **Weekly/Monthly**: persistence is consolidated inside `persist_weekly_score_row` / `persist_monthly_score_row` via an `indicator_scores: Optional[dict[str, Optional[float]]] = None` kwarg. When provided, the sidecar rows are written using the same resolved `week_start` / `month_start` as the parent `scores_weekly` / `scores_monthly` row. Same try/except isolation.
+
+`INDICATOR_CATEGORY_MAP` in `src/scorer/category_scorer.py` contains 12 entries — `atr_14` (confidence-modifier input, not directional) and `keltner` (never emitted by `score_all_indicators`) have been removed.
+
+**Dashboard matrix.** `web/src/lib/scoring/categoryMap.ts` mirrors `INDICATOR_CATEGORY_MAP` (12 entries) and exports `INDICATOR_DISPLAY_LABELS` for human-readable names. `web/src/components/MatrixTable.tsx` renders one row per indicator with columns for each category. Own-category cells are coloured green when the indicator's sign agrees with `scoreToDirection(composite_score)` and red when it opposes; off-category cells are grey. `tests/web/test_category_map_sync.py` is a drift-guard test that asserts the Python and TypeScript maps stay in sync.
 
 ## 12. Historical Scoring (Option E)
 - Last 12 months: daily scores
@@ -1455,6 +1489,7 @@ No CORS. Same-origin requests only. `dist_dir` is hardcoded to `web/dist` relati
 | `key_signals` | top-N why-bullets from `scores_daily.key_signals` (see §14.6) | absent | absent |
 | `earnings` | `{next, last_surprise}` from `earnings_calendar` (see §14.6) | absent | absent |
 | `signal_flip` | most-recent flip within lookback window from `signal_flips` (see §14.6) | absent | absent |
+| `indicator_scores` | `dict[str, float \| null]` — per-indicator signed scores from `indicator_scores_{daily,weekly,monthly}`. Returns `{}` on unmigrated databases (catches `sqlite3.OperationalError` so the API never 500s before migration). Used by the dashboard indicator-agreement matrix. | present | present |
 
 The `categories` array is the UI rendering contract. The UI renders only bars listed in this array. The `scores` dict may contain `candlestick` for monthly (always None) — the UI ignores it because `"candlestick"` is absent from the monthly `categories` array.
 

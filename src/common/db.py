@@ -62,13 +62,17 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     Apply any pending schema migrations to an existing database idempotently.
 
     Each migration step checks whether the change has already been applied
-    (via PRAGMA table_info) before issuing the ALTER TABLE statement, so this
-    function is safe to call multiple times on the same connection.
+    (via PRAGMA table_info or CREATE TABLE IF NOT EXISTS) before issuing
+    the ALTER TABLE statement, so this function is safe to call multiple times
+    on the same connection.
 
     Current migrations:
         1. Add ``key_signals_data TEXT`` column to ``scores_daily`` if absent.
            Fresh databases created by ``create_all_tables`` already include this
            column; the migration exists for databases created before it was added.
+        2. Create ``indicator_scores_daily``, ``indicator_scores_weekly``, and
+           ``indicator_scores_monthly`` sidecar tables if they do not yet exist.
+           Uses ``CREATE TABLE IF NOT EXISTS`` so the step is fully idempotent.
 
     Parameters:
         conn: An open sqlite3.Connection to the target database.
@@ -83,22 +87,49 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         logger.debug(
             "Migration scores_daily.key_signals_data skipped — table does not exist yet"
         )
-        return
-
-    existing_columns = [row[1] for row in table_info_rows]
-
-    if "key_signals_data" not in existing_columns:
-        conn.execute(
-            "ALTER TABLE scores_daily ADD COLUMN key_signals_data TEXT"
-        )
-        conn.commit()
-        logger.info(
-            "Applied migration: added scores_daily.key_signals_data"
-        )
     else:
-        logger.debug(
-            "Migration scores_daily.key_signals_data already present — nothing to do"
-        )
+        existing_columns = [row[1] for row in table_info_rows]
+
+        if "key_signals_data" not in existing_columns:
+            conn.execute(
+                "ALTER TABLE scores_daily ADD COLUMN key_signals_data TEXT"
+            )
+            conn.commit()
+            logger.info(
+                "Applied migration: added scores_daily.key_signals_data"
+            )
+        else:
+            logger.debug(
+                "Migration scores_daily.key_signals_data already present — nothing to do"
+            )
+
+    # Migration 2: indicator_scores sidecar tables (idempotent via IF NOT EXISTS).
+    for statement in (
+        """CREATE TABLE IF NOT EXISTS indicator_scores_daily (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, date, indicator_name)
+        )""",
+        """CREATE TABLE IF NOT EXISTS indicator_scores_weekly (
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, week_start, indicator_name)
+        )""",
+        """CREATE TABLE IF NOT EXISTS indicator_scores_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, month_start, indicator_name)
+        )""",
+    ):
+        conn.execute(statement)
+    conn.commit()
+    logger.debug("Migration: indicator_scores sidecar tables ensured")
 
 
 def _build_schema_statements() -> list[str]:
@@ -742,6 +773,31 @@ def _build_schema_statements() -> list[str]:
             verdict TEXT NOT NULL,
             generated_at TEXT NOT NULL,
             PRIMARY KEY (ticker, date)
+        )""",
+
+        # ── Indicator Scores Sidecar Tables ────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS indicator_scores_daily (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, date, indicator_name)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS indicator_scores_weekly (
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, week_start, indicator_name)
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS indicator_scores_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, month_start, indicator_name)
         )""",
 
         "CREATE INDEX IF NOT EXISTS idx_dashboard_verdicts_ticker_date "

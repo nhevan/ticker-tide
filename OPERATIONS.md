@@ -208,6 +208,37 @@ To invalidate (force regeneration for a ticker/date), delete the row:
 DELETE FROM dashboard_verdicts WHERE ticker = 'AAPL' AND date = '2026-04-25';
 ```
 
+### Indicator score sidecar tables
+
+Three sidecar tables (`indicator_scores_daily`, `indicator_scores_weekly`, `indicator_scores_monthly`) store the per-indicator signed scores (output of `score_all_indicators`) produced during every scorer run. The dashboard indicator-agreement matrix reads from these tables to show which indicators agreed or disagreed with the final signal direction for each timeframe.
+
+**What populates them:**
+- **Daily**: `persist_indicator_scores_daily` in `src/scorer/persistence.py`, called from `score_ticker` after `save_score_to_db`. Runs on every daily and historical scorer pass.
+- **Weekly/Monthly**: written inside `persist_weekly_score_row` / `persist_monthly_score_row` using the same resolved `week_start` / `month_start` as the parent snapshot row.
+
+**Partial-write caveat (daily):** The daily `save_score_to_db` and `persist_indicator_scores_daily` commit separately. A process interruption between the two leaves `scores_daily` populated but `indicator_scores_daily` empty for that ticker/date. Symptom: the matrix shows no indicator cells for an otherwise-valid signal. Remediation:
+
+```bash
+python scripts/run_scorer.py --force --ticker <SYMBOL>
+```
+
+Weekly and monthly sidecar writes are folded into their respective persistence helpers, but they also commit at the SQL level — the same caveat applies.
+
+**One-time backfill on first deploy of this feature.** Run the full historical scorer to populate the sidecar tables across the full date range. Until backfill completes, the matrix shows empty cells for historical dates:
+
+```bash
+python scripts/run_scorer.py --historical --force
+```
+
+**Useful monitoring query:**
+
+```sql
+-- Count distinct ticker/date pairs with indicator scores (daily)
+SELECT COUNT(DISTINCT ticker || date) FROM indicator_scores_daily;
+```
+
+Compare this against `SELECT COUNT(DISTINCT ticker || date) FROM scores_daily` to detect gaps.
+
 ---
 
 ## Manual Commands

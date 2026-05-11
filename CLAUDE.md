@@ -103,10 +103,12 @@ Every change to indicators, patterns, scoring logic, or thresholds must be verif
 4. Add to `PROFILED_INDICATORS` in `src/calculator/profiles.py`
 5. Add scoring logic in `src/scorer/indicator_scorer.py`
 6. Map to the appropriate category in `src/scorer/category_scorer.py`
+6b. Add the same entry to `web/src/lib/scoring/categoryMap.ts` (both `INDICATOR_CATEGORY_MAP` and `INDICATOR_DISPLAY_LABELS`) so the dashboard matrix renders the new row. The drift-guard test `tests/web/test_category_map_sync.py` will fail loudly on drift.
 7. Add range definition to `INDICATOR_RANGES` in `src/backfiller/verify_pipeline.py`
 8. Write tests for each step above
 9. Run: `python scripts/verify_pipeline.py`
 10. Verify the new indicator appears in profiles and scores affect the signal
+11. Re-run scorer with `--force` to backfill `indicator_scores_*` for historical rows; the matrix will otherwise show empty cells for old dates: `python scripts/run_scorer.py --historical --force`
 
 ### Adding a new pattern:
 1. Add detection parameters to `config/calculator.json`

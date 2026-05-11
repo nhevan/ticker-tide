@@ -661,6 +661,29 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             message_text TEXT NOT NULL,
             received_at TEXT NOT NULL
         )""",
+
+        # Indicator scores sidecar tables
+        """CREATE TABLE IF NOT EXISTS indicator_scores_daily (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, date, indicator_name)
+        )""",
+        """CREATE TABLE IF NOT EXISTS indicator_scores_weekly (
+            ticker TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, week_start, indicator_name)
+        )""",
+        """CREATE TABLE IF NOT EXISTS indicator_scores_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            score REAL,
+            PRIMARY KEY (ticker, month_start, indicator_name)
+        )""",
     ]
 
     for statement in schema_statements:

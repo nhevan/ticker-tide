@@ -60,7 +60,11 @@ from src.scorer.pattern_scorer import (
 )
 from src.scorer.calibrator import build_feature_vector, calibrate_score
 from src.scorer.contribution import build_contributions_payload
-from src.scorer.persistence import persist_monthly_score_row, persist_weekly_score_row
+from src.scorer.persistence import (
+    persist_indicator_scores_daily,
+    persist_monthly_score_row,
+    persist_weekly_score_row,
+)
 from src.scorer.regime import detect_regime, get_atr_sma, get_current_vix, get_regime_weights
 from src.scorer.sector_adjuster import apply_sector_adjustment, compute_sector_etf_score
 from src.scorer.timeframe_merger import (
@@ -799,6 +803,19 @@ def score_ticker(
     # 20. Save to DB
     save_score_to_db(db_conn, score)
 
+    # 20a. Persist per-indicator signed scores for the daily timeframe.
+    # Wrapped in try/except so a sidecar failure cannot break the daily scoring path.
+    try:
+        persist_indicator_scores_daily(db_conn, ticker, scoring_date, indicator_scores)
+    except Exception as exc:
+        logger.warning(
+            f"{ticker}: indicator_scores_daily persist failed — {exc}", exc_info=True
+        )
+        log_alert(
+            db_conn, ticker, scoring_date, _PHASE,
+            "warning", f"indicator_scores_daily persist failed: {exc}",
+        )
+
     # 20b. Persist closed-period weekly + monthly snapshots.
     # Both helpers are no-ops on in-progress periods; per-step try/except so a
     # persist failure cannot break the daily scoring path. Failures are logged
@@ -813,6 +830,7 @@ def score_ticker(
                 data_completeness=data_completeness,
                 key_signals=key_signals,
                 scoring_date=scoring_date,
+                indicator_scores=weekly_breakdown.get("indicator_scores"),
             )
         except Exception as exc:
             logger.warning(
@@ -832,6 +850,7 @@ def score_ticker(
                 data_completeness=data_completeness,
                 key_signals=key_signals,
                 scoring_date=scoring_date,
+                indicator_scores=monthly_breakdown.get("indicator_scores"),
             )
         except Exception as exc:
             logger.warning(

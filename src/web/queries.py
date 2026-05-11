@@ -166,6 +166,7 @@ def _build_daily_section(
     signal_flip = _fetch_signal_flip(
         conn, ticker, picked_date, lookback_days=signal_flip_lookback_days
     )
+    indicator_scores = _fetch_daily_indicator_scores(conn, ticker, picked_date)
 
     return {
         "data_available": True,
@@ -182,6 +183,7 @@ def _build_daily_section(
         "key_signals": key_signals,
         "earnings": earnings,
         "signal_flip": signal_flip,
+        "indicator_scores": indicator_scores,
     }
 
 
@@ -229,6 +231,7 @@ def _build_weekly_section(
     patterns = _fetch_weekly_patterns(conn, ticker, week_start)
     sparkline = _fetch_weekly_sparkline(conn, ticker, picked_date, sparkline_weeks)
     period_label = _format_weekly_period_label(week_start)
+    indicator_scores = _fetch_weekly_indicator_scores(conn, ticker, week_start)
 
     return {
         "data_available": True,
@@ -241,6 +244,7 @@ def _build_weekly_section(
         "resolved_period": week_start,
         "resolved_period_label": period_label,
         "is_fallback": is_fallback,
+        "indicator_scores": indicator_scores,
     }
 
 
@@ -290,6 +294,7 @@ def _build_monthly_section(
     patterns = _fetch_monthly_patterns(conn, ticker, month_start)
     sparkline = _fetch_monthly_sparkline(conn, ticker, picked_date, sparkline_months)
     period_label = _format_monthly_period_label(month_start)
+    indicator_scores = _fetch_monthly_indicator_scores(conn, ticker, month_start)
 
     return {
         "data_available": True,
@@ -302,7 +307,98 @@ def _build_monthly_section(
         "resolved_period": month_start,
         "resolved_period_label": period_label,
         "is_fallback": is_fallback,
+        "indicator_scores": indicator_scores,
     }
+
+
+# ── Indicator scores sidecar fetch helpers ───────────────────────────────────
+
+def _fetch_daily_indicator_scores(
+    conn: sqlite3.Connection,
+    ticker: str,
+    date_str: str,
+) -> dict[str, float | None]:
+    """
+    Fetch per-indicator signed scores from indicator_scores_daily for a ticker and date.
+
+    Returns an empty dict if no rows exist or if the table does not yet exist
+    (OperationalError path — handles databases that have not been migrated yet).
+
+    Parameters:
+        conn:     Open SQLite connection.
+        ticker:   Ticker symbol.
+        date_str: Exact date (YYYY-MM-DD).
+
+    Returns:
+        Dict mapping indicator_name to score (float or None).
+    """
+    try:
+        rows = conn.execute(
+            "SELECT indicator_name, score FROM indicator_scores_daily "
+            "WHERE ticker = ? AND date = ?",
+            (ticker, date_str),
+        ).fetchall()
+        return {row["indicator_name"]: row["score"] for row in rows}
+    except sqlite3.OperationalError:
+        return {}
+
+
+def _fetch_weekly_indicator_scores(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str,
+) -> dict[str, float | None]:
+    """
+    Fetch per-indicator signed scores from indicator_scores_weekly for a ticker and week_start.
+
+    Returns an empty dict if no rows exist or if the table does not yet exist.
+
+    Parameters:
+        conn:       Open SQLite connection.
+        ticker:     Ticker symbol.
+        week_start: Resolved week_start date string (YYYY-MM-DD).
+
+    Returns:
+        Dict mapping indicator_name to score (float or None).
+    """
+    try:
+        rows = conn.execute(
+            "SELECT indicator_name, score FROM indicator_scores_weekly "
+            "WHERE ticker = ? AND week_start = ?",
+            (ticker, week_start),
+        ).fetchall()
+        return {row["indicator_name"]: row["score"] for row in rows}
+    except sqlite3.OperationalError:
+        return {}
+
+
+def _fetch_monthly_indicator_scores(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+) -> dict[str, float | None]:
+    """
+    Fetch per-indicator signed scores from indicator_scores_monthly for a ticker and month_start.
+
+    Returns an empty dict if no rows exist or if the table does not yet exist.
+
+    Parameters:
+        conn:        Open SQLite connection.
+        ticker:      Ticker symbol.
+        month_start: Resolved month_start date string (YYYY-MM-DD).
+
+    Returns:
+        Dict mapping indicator_name to score (float or None).
+    """
+    try:
+        rows = conn.execute(
+            "SELECT indicator_name, score FROM indicator_scores_monthly "
+            "WHERE ticker = ? AND month_start = ?",
+            (ticker, month_start),
+        ).fetchall()
+        return {row["indicator_name"]: row["score"] for row in rows}
+    except sqlite3.OperationalError:
+        return {}
 
 
 # ── Score extraction helpers ──────────────────────────────────────────────────

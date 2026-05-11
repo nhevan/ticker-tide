@@ -865,3 +865,147 @@ class TestBuildDailySectionNewKeys:
         extended_config["signal_flip_lookback_days"] = 30
         extended_snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=extended_config)
         assert extended_snapshot["daily"]["signal_flip"] is not None
+
+
+# ---------------------------------------------------------------------------
+# indicator_scores in snapshot sections (Step 6)
+# ---------------------------------------------------------------------------
+
+def _insert_indicator_scores_daily(
+    conn: sqlite3.Connection,
+    ticker: str,
+    date: str,
+    scores: dict,
+) -> None:
+    """Insert rows into indicator_scores_daily for testing."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO indicator_scores_daily(ticker, date, indicator_name, score) "
+        "VALUES (?, ?, ?, ?)",
+        [(ticker, date, name, val) for name, val in scores.items()],
+    )
+    conn.commit()
+
+
+def _insert_indicator_scores_weekly(
+    conn: sqlite3.Connection,
+    ticker: str,
+    week_start: str,
+    scores: dict,
+) -> None:
+    """Insert rows into indicator_scores_weekly for testing."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO indicator_scores_weekly(ticker, week_start, indicator_name, score) "
+        "VALUES (?, ?, ?, ?)",
+        [(ticker, week_start, name, val) for name, val in scores.items()],
+    )
+    conn.commit()
+
+
+def _insert_indicator_scores_monthly(
+    conn: sqlite3.Connection,
+    ticker: str,
+    month_start: str,
+    scores: dict,
+) -> None:
+    """Insert rows into indicator_scores_monthly for testing."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO indicator_scores_monthly(ticker, month_start, indicator_name, score) "
+        "VALUES (?, ?, ?, ?)",
+        [(ticker, month_start, name, val) for name, val in scores.items()],
+    )
+    conn.commit()
+
+
+class TestSnapshotIndicatorScores:
+    """Verify fetch_snapshot returns indicator_scores in each section."""
+
+    def test_daily_indicator_scores_present_in_snapshot(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Daily section includes indicator_scores when rows exist."""
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        expected = {"rsi_14": 45.5, "macd_histogram": -20.0}
+        _insert_indicator_scores_daily(conn, "AAPL", "2026-04-25", expected)
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        assert "indicator_scores" in snapshot["daily"], (
+            "Daily section must contain 'indicator_scores'"
+        )
+        assert snapshot["daily"]["indicator_scores"] == expected
+
+    def test_daily_indicator_scores_empty_when_no_rows(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Daily section returns empty dict for indicator_scores when no sidecar rows exist."""
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        assert snapshot["daily"]["indicator_scores"] == {}
+
+    def test_daily_indicator_scores_empty_when_table_missing(
+        self, tmp_path
+    ) -> None:
+        """indicator_scores returns {} when indicator_scores_daily table doesn't exist."""
+        import sqlite3 as _sqlite3
+        from src.web.queries import fetch_snapshot as _fetch_snapshot
+        # Create a minimal DB without sidecar tables — use create_all_tables
+        # but then drop the sidecar tables to simulate pre-migration state.
+        from src.common.db import create_all_tables
+        raw_conn = _sqlite3.connect(str(tmp_path / "bare.db"))
+        raw_conn.row_factory = _sqlite3.Row
+        create_all_tables(raw_conn)
+        # Drop the sidecar table to simulate pre-migration state.
+        raw_conn.execute("DROP TABLE IF EXISTS indicator_scores_daily")
+        raw_conn.execute(
+            "INSERT INTO scores_daily(ticker, date, signal, confidence, final_score, regime) "
+            "VALUES ('AAPL', '2026-04-25', 'BULLISH', 60.0, 30.0, 'ranging')"
+        )
+        raw_conn.commit()
+
+        snapshot = _fetch_snapshot(raw_conn, "AAPL", "2026-04-25", config=_default_config())
+        assert snapshot["daily"]["indicator_scores"] == {}, (
+            "indicator_scores must be empty dict when table does not exist"
+        )
+        raw_conn.close()
+
+    def test_weekly_indicator_scores_present_in_snapshot(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Weekly section includes indicator_scores when rows exist."""
+        _insert_weekly_score(conn, "AAPL", "2026-04-20")
+        expected = {"rsi_14": 60.0, "adx": None}
+        _insert_indicator_scores_weekly(conn, "AAPL", "2026-04-20", expected)
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        assert "indicator_scores" in snapshot["weekly"]
+        assert snapshot["weekly"]["indicator_scores"] == expected
+
+    def test_weekly_indicator_scores_empty_when_no_rows(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Weekly section returns empty dict when no indicator_scores_weekly rows exist."""
+        _insert_weekly_score(conn, "AAPL", "2026-04-20")
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        assert snapshot["weekly"]["indicator_scores"] == {}
+
+    def test_monthly_indicator_scores_present_in_snapshot(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Monthly section includes indicator_scores when rows exist."""
+        _insert_monthly_score(conn, "AAPL", "2026-04-01")
+        expected = {"cmf_20": 15.0, "bb_pctb": -5.0}
+        _insert_indicator_scores_monthly(conn, "AAPL", "2026-04-01", expected)
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        assert "indicator_scores" in snapshot["monthly"]
+        assert snapshot["monthly"]["indicator_scores"] == expected
+
+    def test_monthly_indicator_scores_empty_when_no_rows(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Monthly section returns empty dict when no indicator_scores_monthly rows exist."""
+        _insert_monthly_score(conn, "AAPL", "2026-04-01")
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        assert snapshot["monthly"]["indicator_scores"] == {}

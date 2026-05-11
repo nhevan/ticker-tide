@@ -31,6 +31,9 @@ ALL_TABLES = [
     "indicator_profiles",
     "indicator_profiles_monthly",
     "indicator_profiles_weekly",
+    "indicator_scores_daily",
+    "indicator_scores_monthly",
+    "indicator_scores_weekly",
     "indicators_daily",
     "indicators_monthly",
     "indicators_weekly",
@@ -1138,6 +1141,71 @@ def test_scores_monthly_composite_score_not_null(fresh_db: sqlite3.Connection) -
             "VALUES (?, ?, ?)",
             ("AAPL", "2026-03-01", None),
         )
+
+
+# ── Indicator scores sidecar table tests ──────────────────────────────────────
+
+def _get_column_names(conn: sqlite3.Connection, table: str) -> list:
+    """Return column names for the given table using PRAGMA table_info."""
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return [row[1] for row in rows]
+
+
+def _get_pk_columns(conn: sqlite3.Connection, table: str) -> list:
+    """Return the PRIMARY KEY column names for the given table."""
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return [row[1] for row in rows if row[5] > 0]
+
+
+def test_indicator_scores_daily_columns_and_pk(fresh_db: sqlite3.Connection) -> None:
+    """
+    indicator_scores_daily must have ticker, date, indicator_name, score columns
+    with PRIMARY KEY (ticker, date, indicator_name).
+    """
+    cols = _get_column_names(fresh_db, "indicator_scores_daily")
+    assert "ticker" in cols
+    assert "date" in cols
+    assert "indicator_name" in cols
+    assert "score" in cols
+
+    pk_cols = _get_pk_columns(fresh_db, "indicator_scores_daily")
+    assert set(pk_cols) == {"ticker", "date", "indicator_name"}, (
+        f"Expected PK (ticker, date, indicator_name), got {pk_cols}"
+    )
+
+
+def test_indicator_scores_weekly_columns_and_pk(fresh_db: sqlite3.Connection) -> None:
+    """
+    indicator_scores_weekly must have ticker, week_start, indicator_name, score
+    with PRIMARY KEY (ticker, week_start, indicator_name).
+    """
+    cols = _get_column_names(fresh_db, "indicator_scores_weekly")
+    assert "ticker" in cols
+    assert "week_start" in cols
+    assert "indicator_name" in cols
+    assert "score" in cols
+
+    pk_cols = _get_pk_columns(fresh_db, "indicator_scores_weekly")
+    assert set(pk_cols) == {"ticker", "week_start", "indicator_name"}, (
+        f"Expected PK (ticker, week_start, indicator_name), got {pk_cols}"
+    )
+
+
+def test_indicator_scores_monthly_columns_and_pk(fresh_db: sqlite3.Connection) -> None:
+    """
+    indicator_scores_monthly must have ticker, month_start, indicator_name, score
+    with PRIMARY KEY (ticker, month_start, indicator_name).
+    """
+    cols = _get_column_names(fresh_db, "indicator_scores_monthly")
+    assert "ticker" in cols
+    assert "month_start" in cols
+    assert "indicator_name" in cols
+    assert "score" in cols
+
+    pk_cols = _get_pk_columns(fresh_db, "indicator_scores_monthly")
+    assert set(pk_cols) == {"ticker", "month_start", "indicator_name"}, (
+        f"Expected PK (ticker, month_start, indicator_name), got {pk_cols}"
+    )
 
 
 # ── Connection Tests ───────────────────────────────────────────────────────────

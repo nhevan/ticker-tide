@@ -94,7 +94,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/calculator/news_aggregator.py` | `news_articles` → `news_daily_summary` per ticker per day |
 | `src/scorer/main.py` | `run_scorer()` and `run_historical_scoring()`; per-ticker `score_ticker()` pipeline. `final_score` in `scores_daily` is always the ±100 merged timeframe composite; `calibrated_score` is the ridge prediction (≈ ±2–15%) or NULL; `effective_score` (local only, never persisted) drives signal classification. After `save_score_to_db`, `score_ticker` calls `persist_weekly_score_row` + `persist_monthly_score_row` (commit 6) to write closed-period snapshots; per-step try/except + `alerts_log` warning ensure persistence failures cannot break daily scoring. `run_historical_scoring(mode=...)` accepts `daily`, `weekly`, `monthly`, `both` (back-compat alias — now also covers monthly), and `all`. Helpers `_get_weekly_dates` / `_get_monthly_dates` drive the respective iterations. |
 | `src/scorer/period_gate.py` | Closed-period gate helpers used by the persistence layer. `is_week_closed(week_start, scoring_date)` returns True when `scoring_date >= week_start + 7 days` (Sunday is mid-week, Monday closes). `is_month_closed(month_start, scoring_date)` returns True when `scoring_date` falls in any later `(year, month)` than `month_start`. |
-| `src/scorer/persistence.py` | `persist_weekly_score_row` + `persist_monthly_score_row` — closed-period writers for `scores_weekly` / `scores_monthly`. Resolve the latest `indicators_*.{week_start,month_start} <= scoring_date`, apply the closed-period gate, inherit `fundamental_score` + `macro_score` from the most recent in-period `scores_daily` row via `_inherit_fundamental_macro` (period_end = `week_start + 4 days` for weekly, `calendar.monthrange(year, month)[1]` for monthly), and write via `INSERT OR REPLACE`. `data_completeness` and `key_signals` are JSON-serialised to TEXT. |
+| `src/scorer/persistence.py` | `persist_weekly_score_row` + `persist_monthly_score_row` — closed-period writers for `scores_weekly` / `scores_monthly`. Resolve the latest `indicators_*.{week_start,month_start} <= scoring_date`, apply the closed-period gate, inherit `fundamental_score` + `macro_score` from the most recent in-period `scores_daily` row via `_inherit_fundamental_macro` (period_end = `week_start + 4 days` for weekly, `calendar.monthrange(year, month)[1]` for monthly), and write via `INSERT OR REPLACE`. `data_completeness` and `key_signals` are JSON-serialised to TEXT. Both helpers also accept an `indicator_scores: Optional[dict[str, Optional[float]]] = None` kwarg; when provided, per-indicator signed scores are written to `indicator_scores_weekly` / `indicator_scores_monthly` using the same resolved period key. `persist_indicator_scores_daily` handles the daily sidecar, called from `score_ticker` after `save_score_to_db`. All three sidecar writes are try/except-isolated and do not raise. |
 | `src/scorer/regime.py` | Trending/Ranging/Volatile detection from ADX, ATR, VIX; EMA stack alignment override (close/EMA9/EMA21/EMA50 fully aligned → Trending even with low ADX) |
 | `src/scorer/indicator_scorer.py` | Maps indicator values → [−100, +100] using percentile profiles; momentum oscillators (RSI, Stochastic %K, CCI, Williams %R) accept a `regime` parameter — `"trending"` flips to `higher_is_bullish=True` (trend-continuation), `"ranging"`/`"volatile"` use mean-reversion. `load_profile_for_ticker(db_conn, ticker, *, source_table="indicator_profiles")` reads from a whitelisted profile table (`indicator_profiles`, `indicator_profiles_weekly`, or `indicator_profiles_monthly`); raises `ValueError` for any other value (mirrors the parametrization pattern used in commit 2/3). |
 | `src/scorer/pattern_scorer.py` | Scores patterns, divergences, crossovers, gaps, Fibonacci, news, fundamentals, macro |
@@ -266,16 +266,23 @@ Shadcn components land in `web/src/components/ui/`.
     - If the indicator bypasses the percentile-profile path (i.e., it is scored by a fixed formula rather than a profile lookup), add it to `PROFILE_FREE_INDICATORS` in `src/scorer/indicator_scorer.py`.
     - If the indicator also uses a fixed discrete ladder (e.g., regime-based step scores rather than linear interpolation), add it to `FIXED_LADDER` in `src/scorer/indicator_scorer.py`.
 
+5c. **Mirror the category map entry in the frontend:**
+    - Add the same indicator key and category to `INDICATOR_CATEGORY_MAP` in `web/src/lib/scoring/categoryMap.ts` so the dashboard indicator-agreement matrix renders the new row.
+    - Add a human-readable label to `INDICATOR_DISPLAY_LABELS` in the same file.
+    - The drift-guard test `tests/web/test_category_map_sync.py` will fail loudly if the Python and TypeScript maps fall out of sync.
+
 6. **Write tests first (TDD)**:
     - `tests/test_calculator/test_indicators.py` — test that the value is computed and stored correctly
     - `tests/test_scorer/test_indicator_scorer.py` — test the score mapping
 
-7. **Re-run calculator in full mode** to populate the new column:
+7. **Re-run calculator and scorer in full mode** to populate the new column and backfill the sidecar tables:
 
     ```bash
     python scripts/run_calculator.py --mode full
-    python scripts/run_scorer.py --historical
+    python scripts/run_scorer.py --historical --force
     ```
+
+    The `--force` flag ensures `indicator_scores_*` sidecar rows are written for all historical dates. Without it, the dashboard matrix will show empty cells for old dates.
 
 ---
 
@@ -343,6 +350,8 @@ if "my_new_column" not in existing:
 ```
 
 `run_migrations` is called from every pipeline entry point (`scripts/run_scorer.py`, `scripts/run_daily.py`, `scripts/run_bot.py`) immediately after `create_all_tables`, so new columns are added on first deploy without a manual step. This is appropriate for nullable columns where `NULL` is a valid "not yet computed" sentinel. For non-nullable columns, `DEFAULT` constraints, or structural changes, use a standalone migration script instead.
+
+`run_migrations` also creates the three indicator-score sidecar tables (`indicator_scores_daily`, `indicator_scores_weekly`, `indicator_scores_monthly`) on existing databases via idempotent `CREATE TABLE IF NOT EXISTS` statements. Fresh databases get them through `create_all_tables` directly.
 
 ### Add a new column to an existing table
 

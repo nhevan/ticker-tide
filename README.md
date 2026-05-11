@@ -200,7 +200,7 @@ web/                           # Vite + React + TypeScript SPA
 └── dist/                      # Vite build output (gitignored; produced by CI)
 ```
 
-The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, and indicator profiles at all three timeframes (daily, weekly, monthly). `scores_weekly` and `scores_monthly` carry per-closed-period score breakdowns. See DESIGN.md §12b for the calibrator acceptance gate and OPERATIONS.md "Flipping weekly_score_method" for the v1↔v2 procedure.
+The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, and indicator profiles at all three timeframes (daily, weekly, monthly). `scores_weekly` and `scores_monthly` carry per-closed-period score breakdowns. Per-indicator signed scores are persisted in `indicator_scores_{daily,weekly,monthly}` and displayed in the dashboard indicator-agreement matrix. See DESIGN.md §12b for the calibrator acceptance gate and OPERATIONS.md "Flipping weekly_score_method" for the v1↔v2 procedure.
 
 ## Tech Stack
 

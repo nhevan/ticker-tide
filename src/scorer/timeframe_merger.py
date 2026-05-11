@@ -630,8 +630,10 @@ def compute_weekly_score_breakdown(
 
     Returns:
         Dict with keys: composite_score, trend_score, momentum_score,
-        volume_score, volatility_score, candlestick_score, structural_score.
+        volume_score, volatility_score, candlestick_score, structural_score,
+        indicator_scores.
         candlestick_score and structural_score are None in v1 mode.
+        indicator_scores is the raw per-indicator dict from score_all_indicators.
         Returns None when no weekly indicator data is available.
     """
     from src.scorer.indicator_scorer import score_all_indicators
@@ -690,6 +692,7 @@ def compute_weekly_score_breakdown(
             "volatility_score": category_scores["volatility"],
             "candlestick_score": None,
             "structural_score": None,
+            "indicator_scores": indicator_scores,
         }
     return {
         "composite_score": composite,
@@ -699,6 +702,7 @@ def compute_weekly_score_breakdown(
         "volatility_score": category_scores["volatility"],
         "candlestick_score": category_scores["candlestick"],
         "structural_score": category_scores["structural"],
+        "indicator_scores": indicator_scores,
     }
 
 
@@ -735,8 +739,10 @@ def compute_monthly_score_breakdown(
         regime:       Market regime.
 
     Returns:
-        Dict with the same 7 keys as the weekly breakdown.
+        Dict with the same 8 keys as the weekly breakdown (including
+        ``indicator_scores``).
         ``candlestick_score`` is always None.
+        ``indicator_scores`` is the raw per-indicator dict from score_all_indicators.
         Returns None when no monthly indicator data is available.
     """
     from src.scorer.indicator_scorer import score_all_indicators
@@ -794,6 +800,7 @@ def compute_monthly_score_breakdown(
             "volatility_score": category_scores["volatility"],
             "candlestick_score": None,
             "structural_score": None,
+            "indicator_scores": indicator_scores,
         }
     return {
         "composite_score": composite,
@@ -803,6 +810,7 @@ def compute_monthly_score_breakdown(
         "volatility_score": category_scores["volatility"],
         "candlestick_score": None,  # F3: always None on monthly
         "structural_score": category_scores["structural"],
+        "indicator_scores": indicator_scores,
     }
 
 
