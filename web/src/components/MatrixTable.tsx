@@ -17,7 +17,7 @@
 import { INDICATOR_CATEGORY_MAP, INDICATOR_DISPLAY_LABELS } from '@/lib/scoring/categoryMap';
 import type { Category } from '@/lib/scoring/categoryMap';
 import { humanizePatternName } from '@/lib/scoring/patternLabels';
-import type { Pattern } from '@/lib/api/types';
+import type { CategoryScores, Pattern } from '@/lib/api/types';
 import type { DailyCategory, WeeklyCategory, MonthlyCategory } from '@/lib/api/types';
 
 interface MatrixTableProps {
@@ -39,6 +39,12 @@ interface MatrixTableProps {
   timeframe?: 'daily' | 'weekly' | 'monthly';
   /** Optional recent pattern rows rendered below indicator rows. */
   recentPatterns?: Pattern[];
+  /**
+   * Per-category aggregate scores from the snapshot (section.scores). Used to
+   * render the Sentiment, Fundamental, and Macro aggregate rows — categories
+   * that have no indicator/pattern constituents in the matrix.
+   */
+  categoryScores?: CategoryScores;
 }
 
 /** All 9 categories. Always rendered as columns; off-timeframe cells get a tooltip. */
@@ -65,6 +71,14 @@ const CATEGORY_HEADERS: Record<Category, string> = {
 
 /** Pattern categories that get a placeholder row when no real patterns exist. */
 const PATTERN_CATEGORIES: Array<'candlestick' | 'structural'> = ['candlestick', 'structural'];
+
+/**
+ * Categories with no indicator/pattern constituents in the matrix. Rendered
+ * as aggregate rows showing the category's rollup score directly.
+ */
+const AGGREGATE_CATEGORIES: Array<'sentiment' | 'fundamental' | 'macro'> = [
+  'sentiment', 'fundamental', 'macro',
+];
 
 type CellTone = 'green' | 'red' | 'grey';
 
@@ -189,6 +203,38 @@ function resolvePatternCellState(
 }
 
 /**
+ * Resolve the cell state for an aggregate-category row × column intersection.
+ *
+ * Aggregate rows (sentiment, fundamental, macro) render the category's
+ * rollup score directly — no constituent indicator or pattern.
+ */
+function resolveAggregateCellState(
+  aggregateCategory: Category,
+  columnCategory: Category,
+  score: number | null | undefined,
+  signalDirection: 1 | -1 | 0,
+  scored: Set<string>,
+): CellState {
+  if (aggregateCategory !== columnCategory) {
+    return { kind: 'off-category' };
+  }
+  if (!scored.has(columnCategory)) {
+    return { kind: 'off-timeframe', tooltip: offTimeframeReason(columnCategory) };
+  }
+  if (score === null || score === undefined) {
+    return { kind: 'missing', tooltip: 'Score not available' };
+  }
+  if (score === 0 || signalDirection === 0) {
+    return { kind: 'valid', tone: 'grey', text: '' };
+  }
+  return {
+    kind: 'valid',
+    tone: Math.sign(score) === signalDirection ? 'green' : 'red',
+    text: '',
+  };
+}
+
+/**
  * Resolve the cell state for a placeholder pattern row × column intersection.
  */
 function resolvePlaceholderCellState(
@@ -278,6 +324,7 @@ export function MatrixTable({
   categories = DEFAULT_SCORED_CATEGORIES,
   timeframe = 'daily',
   recentPatterns = [],
+  categoryScores,
 }: MatrixTableProps) {
   const hasData =
     (indicators !== undefined && Object.keys(indicators).length > 0) ||
@@ -368,6 +415,29 @@ export function MatrixTable({
                     ))}
                   </tr>,
                 ];
+              })}
+
+              {AGGREGATE_CATEGORIES.map((aggCat) => {
+                const score = categoryScores?.[aggCat] ?? null;
+                const valueText =
+                  score === null || score === undefined ? '—' : score.toFixed(2);
+                return (
+                  <tr key={`aggregate-${aggCat}`} className="border-t border-border/40">
+                    <td className="py-1 pr-3 text-left text-muted-foreground italic">
+                      {CATEGORY_HEADERS[aggCat]}
+                    </td>
+                    <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
+                      {valueText}
+                    </td>
+                    {ALL_CATEGORIES.map((cat) => (
+                      <CellView
+                        key={cat}
+                        testid={`aggregate-cell-${aggCat}-${cat}`}
+                        state={resolveAggregateCellState(aggCat, cat, score, signalDirection, scored)}
+                      />
+                    ))}
+                  </tr>
+                );
               })}
             </tbody>
           </table>

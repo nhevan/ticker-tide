@@ -285,6 +285,63 @@ describe('MatrixTable', () => {
       expect(screen.getByTestId('pattern-placeholder-cell-structural-structural')).not.toBeNull();
     });
 
+    it('aggregate_sentiment_row_renders_with_value_and_green_when_score_matches_signal', () => {
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          categoryScores={{ sentiment: 25, fundamental: -10, macro: 0 }}
+        />,
+      );
+      // Sentiment aggregate row, own cell, positive score + bullish signal → green
+      const sentimentCell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
+      expect(sentimentCell.getAttribute('data-tone')).toBe('green');
+      // Fundamental: negative score + bullish signal → red
+      const fundamentalCell = screen.getByTestId('aggregate-cell-fundamental-fundamental');
+      expect(fundamentalCell.getAttribute('data-tone')).toBe('red');
+      // Macro: zero score → grey
+      const macroCell = screen.getByTestId('aggregate-cell-macro-macro');
+      expect(macroCell.getAttribute('data-tone')).toBe('grey');
+    });
+
+    it('aggregate_row_off_timeframe_shows_em_dash_with_daily_only_tooltip', () => {
+      render(
+        <MatrixTable
+          title="Weekly"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural']}
+          timeframe="weekly"
+          categoryScores={{}}
+        />,
+      );
+      const cell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
+      expect(cell).toHaveTextContent('—');
+      expect(cell.getAttribute('title')).toBe('Daily only');
+    });
+
+    it('aggregate_row_null_score_shows_em_dash_with_score_not_available_tooltip', () => {
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          categoryScores={{ sentiment: null }}
+        />,
+      );
+      const cell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
+      expect(cell).toHaveTextContent('—');
+      expect(cell.getAttribute('title')).toBe('Score not available');
+    });
+
     it('null_indicator_score_renders_em_dash_with_tooltip', () => {
       render(
         <MatrixTable
