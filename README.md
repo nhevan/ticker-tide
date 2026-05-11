@@ -34,6 +34,8 @@ config/tickers.json
 
 The web tier is a Vite + React + TypeScript SPA. FastAPI (`src/web/app.py`) serves a pure JSON API under `/api/*` and static-serves `web/dist/` with a SPA catch-all. Auth uses same-origin cookie sessions — no CORS. The frontend is built by GitHub Actions (`build-frontend` CI job) and rsynced to EC2 before deploy. Node 20 LTS is required at build time; EC2 only needs Python.
 
+**Live dashboard:** https://quant.nhevan.com (Caddy reverse-proxies the subdomain to `127.0.0.1:8765` on EC2; see OPERATIONS.md §Caddy reverse proxy).
+
 ## Quick Start
 
 **Prerequisites:**

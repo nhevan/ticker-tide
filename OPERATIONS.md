@@ -120,7 +120,7 @@ python -c "import secrets; print(secrets.token_urlsafe(64))"
 
 `deploy.sh` will refuse to proceed if either is missing (both are listed in `REQUIRED_KEYS`).
 
-A Caddy block reverse-proxying the web subdomain (e.g. `web.yourdomain.com`) to `127.0.0.1:8765` with `tls` must also exist before the first deploy — see "Caddy reverse proxy" below.
+A Caddy block reverse-proxying `quant.nhevan.com` → `localhost:8765` must also exist before the first deploy — see "Caddy reverse proxy" below.
 
 ### How it is managed
 
@@ -148,7 +148,28 @@ Never start `run_web.py` manually — the systemd service handles it.
 
 ### Caddy reverse proxy
 
-The Caddy configuration for the web subdomain is **not stored in this repo**. When restoring to a new EC2 instance, manually add a Caddy block for the web subdomain (e.g. `web.yourdomain.com`) that reverse-proxies to `127.0.0.1:8765`. Use `tls` with Let's Encrypt in the Caddyfile. The web UI requires HTTPS to set the `Secure` session cookie; plain HTTP will result in sessions not persisting.
+**Live URL:** https://quant.nhevan.com
+
+The Caddy configuration for the web subdomain is **not stored in this repo**. The production block on EC2 is:
+
+```caddy
+quant.nhevan.com {
+    encode zstd gzip
+    reverse_proxy localhost:8765
+}
+```
+
+Caddy auto-provisions HTTPS via Let's Encrypt (no explicit `tls` directive needed). Caddy's default `reverse_proxy` already forwards `X-Forwarded-*` headers, which Starlette's `SessionMiddleware` uses to set the `Secure` cookie correctly.
+
+When restoring to a new EC2 instance or adding a new subdomain:
+1. Add an `A` record at the DNS provider pointing the subdomain to the EC2 public IP.
+2. Wait for propagation: `dig +short <subdomain>.nhevan.com` should return the EC2 IP.
+3. Append the Caddy block above (substituting the subdomain) to `/etc/caddy/Caddyfile`.
+4. Validate: `sudo caddy validate --config /etc/caddy/Caddyfile`.
+5. Reload (zero-downtime): `sudo systemctl reload caddy`.
+6. Tail the journal: `sudo journalctl -u caddy -f` — look for `certificate obtained successfully`.
+
+Port 80 must be open in the EC2 security group for the HTTP-01 ACME challenge.
 
 ### New table: `web_login_attempts`
 
