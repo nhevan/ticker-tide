@@ -1,14 +1,17 @@
 /**
  * Indicator agreement matrix table.
  *
- * Renders one row per indicator (from INDICATOR_CATEGORY_MAP) and one column
- * per scoring category. The own-category cell is coloured green/red/grey based
- * on whether the indicator score agrees with the signal direction. All
- * off-category cells are always grey.
+ * Always renders all 9 category columns regardless of timeframe so daily,
+ * weekly, and monthly matrices stay structurally consistent. Cells that
+ * aren't applicable show a generic `—` label with a hover tooltip explaining
+ * why (off-timeframe category, missing score, or no patterns in window).
  *
- * Below the indicator rows, optional pattern rows are rendered for each item in
- * recentPatterns. The categories prop drives which columns are displayed, so
- * monthly (5 columns, no candlestick) renders correctly without a code change.
+ * The `categories` prop now means "categories actually scored at this
+ * timeframe" — it drives the off-timeframe tooltip path, not the column set.
+ *
+ * Below the indicator rows, pattern rows render for each item in
+ * recentPatterns. Two placeholder rows (Candlestick, Structural) appear when
+ * there are zero patterns for that category.
  */
 
 import { INDICATOR_CATEGORY_MAP, INDICATOR_DISPLAY_LABELS } from '@/lib/scoring/categoryMap';
@@ -27,10 +30,9 @@ interface MatrixTableProps {
   /** Direction derived from the signal: 1 = bullish, -1 = bearish, 0 = neutral. */
   signalDirection: 1 | -1 | 0;
   /**
-   * Category columns to render. Drives both the column headers and the per-row
-   * cell iteration. Pass DailyCategory[] for daily (9 cols), WeeklyCategory[] for
-   * weekly (6 cols), or MonthlyCategory[] for monthly (5 cols, no candlestick).
-   * Defaults to the full 9-category set for backward compatibility.
+   * Categories actually scored at this timeframe (from section.categories).
+   * Columns outside this set render as off-timeframe (`—` with tooltip).
+   * Defaults to the full 9-category daily set for backward compatibility.
    */
   categories?: DailyCategory[] | WeeklyCategory[] | MonthlyCategory[];
   /** Timeframe label — controls pattern-cell text format. */
@@ -39,11 +41,14 @@ interface MatrixTableProps {
   recentPatterns?: Pattern[];
 }
 
-/** Default full category list (daily). Used when categories prop is omitted. */
-const DEFAULT_CATEGORIES: DailyCategory[] = [
+/** All 9 categories. Always rendered as columns; off-timeframe cells get a tooltip. */
+const ALL_CATEGORIES: Category[] = [
   'trend', 'momentum', 'volume', 'volatility',
   'candlestick', 'structural', 'sentiment', 'fundamental', 'macro',
 ];
+
+/** Default scored-categories list (daily — all 9). Used when prop is omitted. */
+const DEFAULT_SCORED_CATEGORIES: DailyCategory[] = ALL_CATEGORIES as DailyCategory[];
 
 /** Column header labels for each category. */
 const CATEGORY_HEADERS: Record<Category, string> = {
@@ -58,60 +63,76 @@ const CATEGORY_HEADERS: Record<Category, string> = {
   macro: 'Macro',
 };
 
+/** Pattern categories that get a placeholder row when no real patterns exist. */
+const PATTERN_CATEGORIES: Array<'candlestick' | 'structural'> = ['candlestick', 'structural'];
+
 type CellTone = 'green' | 'red' | 'grey';
 
+/** Tailwind background class for each tone. */
+const TONE_CLASS: Record<CellTone, string> = {
+  green: 'bg-emerald-500/20',
+  red: 'bg-rose-500/20',
+  grey: 'bg-muted',
+};
+
 /**
- * Determine the colour tone for a cell at the intersection of an indicator row
- * and a category column.
+ * Tooltip text for an off-timeframe column at this timeframe.
+ *
+ * @param category - The category whose own-category cell is off-timeframe.
+ * @returns Short reason string for the hover tooltip.
+ */
+function offTimeframeReason(category: Category): string {
+  if (category === 'sentiment' || category === 'fundamental' || category === 'macro') {
+    return 'Daily only';
+  }
+  if (category === 'candlestick') {
+    return 'Daily and weekly only';
+  }
+  return 'Not scored at this timeframe';
+}
+
+/** Discriminated state for a single matrix cell. */
+type CellState =
+  | { kind: 'off-category' }
+  | { kind: 'off-timeframe'; tooltip: string }
+  | { kind: 'missing'; tooltip: string }
+  | { kind: 'valid'; tone: CellTone; text: string };
+
+/**
+ * Resolve the cell state for an indicator row × category column intersection.
  *
  * @param indicatorKey - The indicator's map key (e.g. "rsi_14").
  * @param columnCategory - The category this column represents.
  * @param score - The indicator's numeric score, or null if unavailable.
  * @param signalDirection - The signal direction: 1, -1, or 0.
- * @returns 'green', 'red', or 'grey'.
+ * @param scored - Set of categories actually scored at this timeframe.
+ * @returns CellState describing how to render the cell.
  */
-function resolveCellTone(
+function resolveIndicatorCellState(
   indicatorKey: string,
   columnCategory: Category,
   score: number | null,
   signalDirection: 1 | -1 | 0,
-): CellTone {
+  scored: Set<string>,
+): CellState {
   const indicatorCategory = INDICATOR_CATEGORY_MAP[indicatorKey];
   if (indicatorCategory !== columnCategory) {
-    return 'grey';
+    return { kind: 'off-category' };
   }
-  if (score === null || score === 0 || signalDirection === 0) {
-    return 'grey';
+  if (!scored.has(columnCategory)) {
+    return { kind: 'off-timeframe', tooltip: offTimeframeReason(columnCategory) };
   }
-  return Math.sign(score) === signalDirection ? 'green' : 'red';
-}
-
-/**
- * Determine the colour tone for a pattern row cell.
- *
- * @param patternCategory - The pattern's own category (e.g. "candlestick").
- * @param columnCategory - The category this column represents.
- * @param direction - The pattern's direction ("bullish", "bearish", "neutral").
- * @param signalDirection - The overall signal direction: 1, -1, or 0.
- * @returns 'green', 'red', or 'grey'.
- */
-function resolvePatternCellTone(
-  patternCategory: string,
-  columnCategory: Category,
-  direction: string,
-  signalDirection: 1 | -1 | 0,
-): CellTone {
-  if (patternCategory !== columnCategory) {
-    return 'grey';
+  if (score === null) {
+    return { kind: 'missing', tooltip: 'Score not available' };
   }
-  if (signalDirection === 0) {
-    return 'grey';
+  if (score === 0 || signalDirection === 0) {
+    return { kind: 'valid', tone: 'grey', text: '' };
   }
-  if (direction !== 'bullish' && direction !== 'bearish') {
-    return 'grey';
-  }
-  const directionSign = direction === 'bullish' ? 1 : -1;
-  return directionSign === signalDirection ? 'green' : 'red';
+  return {
+    kind: 'valid',
+    tone: Math.sign(score) === signalDirection ? 'green' : 'red',
+    text: '',
+  };
 }
 
 /**
@@ -137,12 +158,52 @@ function patternCellText(
   return confirmed ? '✓' : '';
 }
 
-/** Tailwind background class for each tone. */
-const TONE_CLASS: Record<CellTone, string> = {
-  green: 'bg-emerald-500/20',
-  red: 'bg-rose-500/20',
-  grey: 'bg-muted',
-};
+/**
+ * Resolve the cell state for a real pattern row × category column intersection.
+ */
+function resolvePatternCellState(
+  pattern: Pattern,
+  columnCategory: Category,
+  signalDirection: 1 | -1 | 0,
+  scored: Set<string>,
+  timeframe: 'daily' | 'weekly' | 'monthly',
+): CellState {
+  if (pattern.pattern_category !== columnCategory) {
+    return { kind: 'off-category' };
+  }
+  if (!scored.has(columnCategory)) {
+    return { kind: 'off-timeframe', tooltip: offTimeframeReason(columnCategory) };
+  }
+  if (signalDirection === 0) {
+    return { kind: 'valid', tone: 'grey', text: patternCellText(timeframe, pattern.days_ago, pattern.confirmed) };
+  }
+  if (pattern.direction !== 'bullish' && pattern.direction !== 'bearish') {
+    return { kind: 'valid', tone: 'grey', text: patternCellText(timeframe, pattern.days_ago, pattern.confirmed) };
+  }
+  const directionSign = pattern.direction === 'bullish' ? 1 : -1;
+  return {
+    kind: 'valid',
+    tone: directionSign === signalDirection ? 'green' : 'red',
+    text: patternCellText(timeframe, pattern.days_ago, pattern.confirmed),
+  };
+}
+
+/**
+ * Resolve the cell state for a placeholder pattern row × column intersection.
+ */
+function resolvePlaceholderCellState(
+  placeholderCategory: 'candlestick' | 'structural',
+  columnCategory: Category,
+  scored: Set<string>,
+): CellState {
+  if (placeholderCategory !== columnCategory) {
+    return { kind: 'off-category' };
+  }
+  if (!scored.has(columnCategory)) {
+    return { kind: 'off-timeframe', tooltip: offTimeframeReason(columnCategory) };
+  }
+  return { kind: 'missing', tooltip: 'No patterns detected in window' };
+}
 
 /**
  * Format a raw indicator value for display.
@@ -158,12 +219,54 @@ function formatValue(value: number | string | null | undefined): string {
 
 const INDICATOR_KEYS = Object.keys(INDICATOR_CATEGORY_MAP);
 
+interface CellViewProps {
+  state: CellState;
+  testid: string;
+}
+
+/** Render a single matrix cell from its resolved state. */
+function CellView({ state, testid }: CellViewProps) {
+  if (state.kind === 'off-category') {
+    return (
+      <td
+        className={`py-1 px-1 text-center ${TONE_CLASS.grey}`}
+        data-testid={testid}
+        data-tone="grey"
+      >
+        &nbsp;
+      </td>
+    );
+  }
+  if (state.kind === 'off-timeframe' || state.kind === 'missing') {
+    return (
+      <td
+        className={`py-1 px-1 text-center ${TONE_CLASS.grey} text-muted-foreground`}
+        data-testid={testid}
+        data-tone="grey"
+        title={state.tooltip}
+      >
+        —
+      </td>
+    );
+  }
+  return (
+    <td
+      className={`py-1 px-1 text-center ${TONE_CLASS[state.tone]}`}
+      data-testid={testid}
+      data-tone={state.tone}
+    >
+      {state.text || <>&nbsp;</>}
+    </td>
+  );
+}
+
 /**
  * Render an indicator agreement matrix for a single timeframe.
  *
  * Shows an empty-state message when both indicators and indicatorScores are
- * absent or empty. Below indicator rows, renders optional pattern rows from
- * recentPatterns.
+ * absent or empty. Below indicator rows, renders pattern rows from
+ * recentPatterns. Always renders placeholder rows for any pattern category
+ * (candlestick, structural) that has zero real patterns.
  *
  * @param props - See MatrixTableProps.
  */
@@ -172,13 +275,15 @@ export function MatrixTable({
   indicators,
   indicatorScores,
   signalDirection,
-  categories = DEFAULT_CATEGORIES,
+  categories = DEFAULT_SCORED_CATEGORIES,
   timeframe = 'daily',
   recentPatterns = [],
 }: MatrixTableProps) {
   const hasData =
     (indicators !== undefined && Object.keys(indicators).length > 0) ||
     (indicatorScores !== undefined && Object.keys(indicatorScores).length > 0);
+
+  const scored = new Set<string>(categories as readonly string[]);
 
   return (
     <div className="rounded-lg border p-4">
@@ -193,9 +298,9 @@ export function MatrixTable({
               <tr className="text-muted-foreground">
                 <th className="py-1 pr-3 text-left font-normal">Indicator</th>
                 <th className="py-1 pr-3 text-right font-normal">Value</th>
-                {categories.map((cat) => (
+                {ALL_CATEGORIES.map((cat) => (
                   <th key={cat} className="py-1 px-1 text-center font-normal">
-                    {CATEGORY_HEADERS[cat as Category]}
+                    {CATEGORY_HEADERS[cat]}
                   </th>
                 ))}
               </tr>
@@ -212,55 +317,58 @@ export function MatrixTable({
                     <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
                       {formatValue(rawValue)}
                     </td>
-                    {categories.map((cat) => {
-                      const tone = resolveCellTone(indicatorKey, cat as Category, score, signalDirection);
-                      return (
-                        <td
-                          key={cat}
-                          className={`py-1 px-1 text-center ${TONE_CLASS[tone]}`}
-                          data-testid={`cell-${indicatorKey}-${cat}`}
-                          data-tone={tone}
-                        >
-                          &nbsp;
-                        </td>
-                      );
-                    })}
+                    {ALL_CATEGORIES.map((cat) => (
+                      <CellView
+                        key={cat}
+                        testid={`cell-${indicatorKey}-${cat}`}
+                        state={resolveIndicatorCellState(indicatorKey, cat, score, signalDirection, scored)}
+                      />
+                    ))}
                   </tr>
                 );
               })}
 
-              {recentPatterns.map((pattern, index) => (
-                <tr key={`${pattern.pattern_name}-${index}`} className="border-t border-border/40">
-                  <td className="py-1 pr-3 text-left text-foreground">
-                    {humanizePatternName(pattern.pattern_name)}
-                  </td>
-                  <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
-                    {pattern.strength.toFixed(2)}
-                  </td>
-                  {categories.map((cat) => {
-                    const isOwnCategory = cat === pattern.pattern_category;
-                    const tone = resolvePatternCellTone(
-                      pattern.pattern_category,
-                      cat as Category,
-                      pattern.direction,
-                      signalDirection,
-                    );
-                    const cellText = isOwnCategory
-                      ? patternCellText(timeframe, pattern.days_ago, pattern.confirmed)
-                      : '';
-                    return (
-                      <td
-                        key={cat}
-                        className={`py-1 px-1 text-center ${TONE_CLASS[tone]}`}
-                        data-testid={`pattern-cell-${pattern.pattern_name}-${index}-${cat}`}
-                        data-tone={tone}
-                      >
-                        {cellText || <>&nbsp;</>}
+              {PATTERN_CATEGORIES.flatMap((patternCat) => {
+                const reals = recentPatterns
+                  .map((pattern, index) => ({ pattern, index }))
+                  .filter(({ pattern }) => pattern.pattern_category === patternCat);
+
+                if (reals.length > 0) {
+                  return reals.map(({ pattern, index }) => (
+                    <tr key={`pattern-${patternCat}-${pattern.pattern_name}-${index}`} className="border-t border-border/40">
+                      <td className="py-1 pr-3 text-left text-foreground">
+                        {humanizePatternName(pattern.pattern_name)}
                       </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                      <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
+                        {pattern.strength.toFixed(2)}
+                      </td>
+                      {ALL_CATEGORIES.map((cat) => (
+                        <CellView
+                          key={cat}
+                          testid={`pattern-cell-${pattern.pattern_name}-${index}-${cat}`}
+                          state={resolvePatternCellState(pattern, cat, signalDirection, scored, timeframe)}
+                        />
+                      ))}
+                    </tr>
+                  ));
+                }
+
+                return [
+                  <tr key={`pattern-placeholder-${patternCat}`} className="border-t border-border/40">
+                    <td className="py-1 pr-3 text-left text-muted-foreground italic">
+                      {CATEGORY_HEADERS[patternCat]}
+                    </td>
+                    <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">—</td>
+                    {ALL_CATEGORIES.map((cat) => (
+                      <CellView
+                        key={cat}
+                        testid={`pattern-placeholder-cell-${patternCat}-${cat}`}
+                        state={resolvePlaceholderCellState(patternCat, cat, scored)}
+                      />
+                    ))}
+                  </tr>,
+                ];
+              })}
             </tbody>
           </table>
         </div>

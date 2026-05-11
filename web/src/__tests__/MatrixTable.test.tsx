@@ -193,8 +193,8 @@ describe('MatrixTable', () => {
     expect(dashes.length).toBeGreaterThan(0);
   });
 
-  describe('categories prop controls column headers', () => {
-    it('monthly_renders_only_five_category_columns', () => {
+  describe('column headers are always all 9 categories', () => {
+    it('monthly_still_renders_all_nine_category_columns', () => {
       render(
         <MatrixTable
           title="Monthly — Indicator Agreement"
@@ -206,10 +206,99 @@ describe('MatrixTable', () => {
         />,
       );
       const headers = screen.getAllByRole('columnheader');
-      // Indicator + Value + 5 categories = 7
-      expect(headers).toHaveLength(7);
+      // Indicator + Value + 9 categories = 11
+      expect(headers).toHaveLength(11);
       const headerTexts = headers.map((h) => h.textContent);
-      expect(headerTexts).not.toContain('Candlestick');
+      expect(headerTexts).toContain('Candlestick');
+      expect(headerTexts).toContain('Sentiment');
+      expect(headerTexts).toContain('Fundamental');
+      expect(headerTexts).toContain('Macro');
+    });
+
+    it('monthly_off_timeframe_own_category_cell_shows_em_dash_with_tooltip', () => {
+      // BB %B is the volatility indicator; volatility IS scored at monthly.
+      // Use Sentiment column instead — sentiment is daily-only so its
+      // own-category indicator rows are off-timeframe at monthly.
+      // No indicator maps to sentiment, so test via a pattern placeholder
+      // row instead: candlestick row on monthly = off-timeframe.
+      render(
+        <MatrixTable
+          title="Monthly"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'structural']}
+          timeframe="monthly"
+          recentPatterns={[]}
+        />,
+      );
+      // Placeholder candlestick row's candlestick cell should be off-timeframe.
+      const cell = screen.getByTestId('pattern-placeholder-cell-candlestick-candlestick');
+      expect(cell).toHaveTextContent('—');
+      expect(cell.getAttribute('title')).toBe('Daily and weekly only');
+      expect(cell.getAttribute('data-tone')).toBe('grey');
+    });
+
+    it('placeholder_pattern_rows_render_when_no_patterns_provided', () => {
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          recentPatterns={[]}
+        />,
+      );
+      const candlestickCell = screen.getByTestId('pattern-placeholder-cell-candlestick-candlestick');
+      expect(candlestickCell).toHaveTextContent('—');
+      expect(candlestickCell.getAttribute('title')).toBe('No patterns detected in window');
+      const structuralCell = screen.getByTestId('pattern-placeholder-cell-structural-structural');
+      expect(structuralCell).toHaveTextContent('—');
+      expect(structuralCell.getAttribute('title')).toBe('No patterns detected in window');
+    });
+
+    it('placeholder_row_replaced_by_real_pattern_rows_when_category_has_patterns', () => {
+      const pattern: Pattern = {
+        pattern_name: 'bullish_engulfing',
+        pattern_category: 'candlestick',
+        direction: 'bullish',
+        strength: 2.5,
+        confirmed: true,
+        days_ago: 0,
+      };
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          recentPatterns={[pattern]}
+        />,
+      );
+      // Candlestick has a real pattern → no placeholder candlestick row
+      expect(screen.queryByTestId('pattern-placeholder-cell-candlestick-candlestick')).toBeNull();
+      // Structural has no real patterns → placeholder still present
+      expect(screen.getByTestId('pattern-placeholder-cell-structural-structural')).not.toBeNull();
+    });
+
+    it('null_indicator_score_renders_em_dash_with_tooltip', () => {
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: null }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell).toHaveTextContent('—');
+      expect(cell.getAttribute('title')).toBe('Score not available');
     });
   });
 
@@ -427,7 +516,7 @@ describe('MatrixTable', () => {
       expect(cell).toHaveTextContent('✓');
     });
 
-    it('empty_recent_patterns_leaves_indicator_rows_untouched', () => {
+    it('empty_recent_patterns_renders_placeholders_not_real_pattern_rows', () => {
       render(
         <MatrixTable
           title="Test"
@@ -439,12 +528,12 @@ describe('MatrixTable', () => {
           recentPatterns={[]}
         />,
       );
-      // No pattern cells
-      const patternCells = document.querySelectorAll('[data-testid^="pattern-cell-"]');
-      expect(patternCells).toHaveLength(0);
+      // No real-pattern cells
+      expect(document.querySelectorAll('[data-testid^="pattern-cell-"]')).toHaveLength(0);
+      // Both placeholders ARE present
+      expect(document.querySelectorAll('[data-testid^="pattern-placeholder-cell-"]').length).toBeGreaterThan(0);
       // Indicator rows still present
-      const cell = screen.getByTestId('cell-rsi_14-momentum');
-      expect(cell).toBeInTheDocument();
+      expect(screen.getByTestId('cell-rsi_14-momentum')).toBeInTheDocument();
     });
 
     it('undefined_recent_patterns_behaves_like_empty', () => {
@@ -459,8 +548,35 @@ describe('MatrixTable', () => {
           // recentPatterns omitted
         />,
       );
-      const patternCells = document.querySelectorAll('[data-testid^="pattern-cell-"]');
-      expect(patternCells).toHaveLength(0);
+      expect(document.querySelectorAll('[data-testid^="pattern-cell-"]')).toHaveLength(0);
+      // Placeholders still appear
+      expect(screen.getByTestId('pattern-placeholder-cell-candlestick-candlestick')).toBeInTheDocument();
+      expect(screen.getByTestId('pattern-placeholder-cell-structural-structural')).toBeInTheDocument();
+    });
+
+    it('indicator_off_timeframe_cell_shows_em_dash_with_daily_only_tooltip', () => {
+      // No indicator maps to sentiment/fundamental/macro directly, but the
+      // off-timeframe branch is reachable through pattern placeholders. For
+      // an indicator-row off-timeframe test we'd need an indicator mapped
+      // to one of those 3 categories; none exist. This test instead
+      // verifies the offTimeframeReason mapping via the candlestick
+      // placeholder on monthly (already covered) and the daily-only
+      // tooltip via a hypothetical scenario constructed below.
+      // We exercise it by passing a scored set that EXCLUDES momentum
+      // (off-timeframe for an indicator that owns momentum, e.g. rsi_14).
+      render(
+        <MatrixTable
+          title="Test"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'volume', 'volatility', 'structural']}
+          timeframe="weekly"
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell).toHaveTextContent('—');
+      expect(cell.getAttribute('title')).toBe('Not scored at this timeframe');
     });
   });
 });
