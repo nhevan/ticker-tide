@@ -84,6 +84,10 @@ Never start `run_bot.py` manually in a tmux session on EC2 — the systemd servi
 
 The read-only web UI (`scripts/run_web.py`) runs as a systemd service on EC2, bound to `127.0.0.1:8765` behind Caddy (HTTPS reverse proxy). Single worker only — the in-memory LLM debounce assumes a single-worker process.
 
+FastAPI is now a pure JSON API (`/api/*`). A Vite + React SPA (built by GitHub Actions `build-frontend` job) is served from `web/dist/` with a SPA catch-all. The frontend build is rsynced to EC2 as part of the CI `deploy` job before `deploy.sh` runs.
+
+**Frontend build artifacts:** `web/dist/` is produced by the `build-frontend` CI job and rsynced to EC2 `web/dist_new/` then atomically renamed to `web/dist`. `deploy.sh` checks for `web/dist/index.html` at startup and aborts if missing.
+
 ### Status and control
 
 ```bash
@@ -99,11 +103,40 @@ sudo systemctl restart ticker-tide-web
 tail -f /home/ec2-user/ticker-tide/logs/web.log
 ```
 
+### First-time deployment prerequisites
+
+Before the first deploy, the EC2 `.env` must contain:
+
+```
+WEB_PASSWORD=<shared password>
+WEB_SECRET_KEY=<long random string for cookie signing>
+```
+
+Generate a secret key with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+`deploy.sh` will refuse to proceed if either is missing (both are listed in `REQUIRED_KEYS`).
+
+A Caddy block reverse-proxying the web subdomain (e.g. `web.yourdomain.com`) to `127.0.0.1:8765` with `tls` must also exist before the first deploy — see "Caddy reverse proxy" below.
+
 ### How it is managed
 
-Every push to `main` triggers the GitHub Actions deploy workflow, which:
-1. SSHes into EC2 and runs `./deploy.sh` (installs/updates the systemd service)
-2. Runs a dedicated **"Restart Web service"** step that calls `sudo systemctl restart ticker-tide-web` — visible as its own step in the Actions UI.
+Every push to `main` triggers the GitHub Actions deploy workflow (two-job sequence):
+1. **`build-frontend`** — installs Node 20, runs `npm ci`, runs Vitest, runs `npm run build`, uploads `web/dist/` as artifact.
+2. **`deploy`** — downloads the artifact, rsyncs `web/dist/` to EC2 `web/dist_new/`, atomically moves to `web/dist`, then SSHes into EC2 and runs `./deploy.sh`, and finishes by restarting both `ticker-tide-bot` and `ticker-tide-web`.
+
+`deploy.sh` checks for `web/dist/index.html` and **aborts the deploy** if missing.
+
+### Troubleshooting: 503 on all non-API routes
+
+If all page loads return `{"detail": "Frontend not built."}`:
+1. Check GitHub Actions — did the `build-frontend` job succeed?
+2. Check that `web/dist/index.html` exists on EC2: `ls ~/ticker-tide/web/dist/`
+3. Check the rsync step output in the `deploy` job for any errors.
+4. If `dist/` is absent entirely, the `dist_new/` → `dist/` atomic rename may have failed — check disk space and permissions.
 
 `deploy.sh` also handles the service on **manual deploys**: installs `deploy/ticker-tide-web.service` to `/etc/systemd/system/`, runs `systemctl enable` + `systemctl restart`. The service:
 - Auto-starts on EC2 reboot

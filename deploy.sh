@@ -167,6 +167,17 @@ else
     fi
 fi
 
+# ─── Step 7a: Verify frontend build is present ─────────────────────────────────
+echo ""
+echo -e "${BOLD}🌐 Checking frontend build...${RESET}"
+if [ ! -f "${PROJECT_DIR}/web/dist/index.html" ]; then
+    echo -e "${RED}ERROR: web/dist/index.html missing — aborting deploy${RESET}" >&2
+    echo -e "${RED}   The frontend must be built by the CI build-frontend job before deploy.${RESET}" >&2
+    echo -e "${RED}   Check GitHub Actions 'build-frontend' logs for details.${RESET}" >&2
+    exit 1
+fi
+echo -e "${GREEN}✅ Frontend build present (web/dist/index.html)${RESET}"
+
 # ─── Step 7: Create data directories ───────────────────────────────────────────
 echo ""
 echo -e "${BOLD}📂 Creating data directories...${RESET}"

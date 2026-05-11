@@ -3,19 +3,19 @@
 > Auto-updated by agents. Tracks current work and recent history so context carries across sessions.
 
 ## Current Task
-_No active task — daily-report-empty-body bug fixed and ready for review._
+_No active task._
 
 ## Recent History
 <!-- Most recent first, keep last 3-5 items -->
 
 | When | What | Status |
 |---|---|---|
+| 2026-05-11 | **Vite + React SPA migration.** Burned Jinja templates and static files. FastAPI is now a pure JSON API (`/api/*`). Frontend is Vite + React + TS + Tailwind + shadcn + TanStack Query + React Router scaffolded under `web/`. CI gating: `build-frontend` job gates `deploy`. Endpoint `/api/llm` preserved as POST. Hardcoded `web/dist` structural convention (not a config key). No PriceChart day 1. No Playwright day 1. 24/24 Python web tests pass (rate-limit + LLM debounce + `/api/tickers` and `/api/dates` auth coverage added during code review); 24/24 Vitest tests pass; `npm run build` produces `web/dist/`. | ✅ Done |
+| 2026-05-08 | **Web UI committed + pushed (`cec94ef`).** Bundles the original FastAPI/Jinja read-only signal browser (auth + 3 cards + Ask AI) and the 3 daily-card enrichments (key_signals "Why" bullets, earnings row, signal-flip badge). 115/115 web tests pass. Deploy is automatic on push: GitHub Actions runs `deploy.sh` which installs `deploy/ticker-tide-web.service` and restarts `ticker-tide-web`. First-time prerequisites: `WEB_PASSWORD` + `WEB_SECRET_KEY` in `.env`, and a Caddy block reverse-proxying the web subdomain to `127.0.0.1:8765` (Caddyfile is **not** in repo). See OPERATIONS.md "Web UI Service" for full ops + DESIGN.md §14 for architecture. | ✅ Done |
 | 2026-05-08 | **Fixed daily Telegram report body always saying "No significant signals today." when `include_ai_reasoning=false`.** Added `invoke_claude` flag to `reason_all_qualifying_tickers`; `main.py` now calls unconditionally. Removed dead try/except that was masking DB errors. New tests in `test_main.py` (1A rewritten, 1B deleted, 1C+1D added) and `test_ai_reasoner.py` (1E added). All 387 notifier tests pass. | ✅ Done |
 | 2026-05-06 | **Sitting 2 — `/why` wiring complete.** Extended `send_telegram_message` with `reply_markup` keyword; added `handle_why_command` + `_WHY_TICKER_PATTERN` + `_WHY_USAGE_HINT` to `why_command.py`; new `handle_why_command_wrapper` and `handle_why_callback_wrapper` in `bot.py`; inline "🔍 Why this signal?" button attached to `/detail` msg #3 final chunk; 31 new tests; all three source phases (progress, why_command, bot) shipped atomically in one commit. | ✅ Done |
 | 2026-05-05 | **Sitting 1 — `/why` schema + scorer + backend.** Added `scores_daily.key_signals_data` column via `run_migrations` infrastructure in `src/common/db.py`. Extracted `INDICATOR_CATEGORY_MAP` + `PATTERN_CATEGORY_MAP` as module-level constants in `category_scorer.py`. Added `PATTERN_RULE_DESCRIPTIONS` to `pattern_scorer.py`; `PROFILE_FREE_INDICATORS` + `FIXED_LADDER` to `indicator_scorer.py`. New `src/scorer/contribution.py` builds the per-indicator/per-pattern contribution payload. `src/scorer/main.py` calls the builder after `apply_adaptive_weights` and persists JSON via `save_score_to_db`. New `src/notifier/why_command.py` with `dispatch_why` + three formatters (`format_why_default`, `format_why_all`, `format_why_drilldown`) + `load_why_payload` + `resolve_name_token`. Added `why_top_n: 5` and `why_list_max_entries: 50` to `config/notifier.json`. Docs: DESIGN.md §11.1, DEVELOPMENT.md, CONFIG.md. | ✅ Done |
 | 2026-05-05 | **Plan B — Restructure `/detail` msg #2 into 5 structured sections.** Replaced single free-form AI prose with: VERDICT (AI), TIMEFRAME SUMMARY (deterministic table + AI 1-line), REASONING (AI), CONFIDENCE (deterministic, with calibration sign-flip flag), LEVELS & TRIGGERS (existing builders). 22 new tests + 4 updated. 62 total detail-command tests green. 4 new config keys in `config/notifier.json`. `verify_pipeline.py`: 0 FAIL. Docs: DESIGN.md §"AI vs deterministic content boundary", CONFIG.md. | ✅ Done |
-| 2026-05-05 | **Plan A — Fix `/detail` scoring chain display bug.** Regime-adaptive 3-way weights now flow through `scorer_cfg` parameter. 7 new tests + 3 updated, all 40 detail tests green. Docs: DESIGN.md §"Regime-Adaptive 3-Way Timeframe Merge". | ✅ Done |
-| 2026-05-05 | **Simplified Telegram signal report.** Added `telegram.include_ai_reasoning` boolean flag. When `false`, Claude API call is skipped and reasoning sections are omitted. 65/65 notifier tests pass. Docs: CONFIG.md, DESIGN.md §13.2+§13.4. | ✅ Done |
 
 ## Key Decisions
 <!-- Recent trade-offs and choices that affect future work -->
@@ -36,6 +36,7 @@ _No active task — daily-report-empty-body bug fixed and ready for review._
 
 ## Next Up
 <!-- Known upcoming tasks or follow-ups -->
+- **Playwright E2E follow-up** — add browser-level end-to-end tests for login flow, snapshot load, and Ask AI (explicitly out of scope for the Vite migration PR).
 - **~2027-04-29 (365 days post-v2 flip)**: re-run the calibrator acceptance gate with a fresh baseline. By then the 365-day training window will be fully v2-scored, so the readout will no longer be contaminated by mixed-semantics training rows.
 - **Investigate the lone verify_pipeline warning**: `monthly_divergence_count: 0 divergences_monthly rows in last 12 months`. Pre-existing, unrelated to v2.
 - Monitor anti-predictive tickers and BEARISH asymmetry (previously flagged improvement area).

@@ -24,9 +24,21 @@ config/tickers.json
         │
         ▼
   NOTIFIER ── Claude API ──► Telegram
+
+  ─────────────── Web tier (read-only, always-on) ───────────
+  Browser ◄──► Vite/React SPA (web/dist/) ◄──► FastAPI JSON API
+               (same-origin, cookie auth)       (src/web/app.py)
+                                                       │
+                                                 SQLite DB (read)
 ```
 
+The web tier is a Vite + React + TypeScript SPA. FastAPI (`src/web/app.py`) serves a pure JSON API under `/api/*` and static-serves `web/dist/` with a SPA catch-all. Auth uses same-origin cookie sessions — no CORS. The frontend is built by GitHub Actions (`build-frontend` CI job) and rsynced to EC2 before deploy. Node 20 LTS is required at build time; EC2 only needs Python.
+
 ## Quick Start
+
+**Prerequisites:**
+- Python 3.9+
+- Node 20 LTS (build-time only — not needed on EC2 at runtime)
 
 ```bash
 git clone <repo-url> /home/ec2-user/ticker-tide
@@ -35,6 +47,17 @@ cd /home/ec2-user/ticker-tide
 ```
 
 `deploy.sh` creates `.venv`, installs dependencies, initialises the database, and runs all tests. If `.env` does not exist it is created from `.env.example`.
+
+**Web UI local development:**
+
+```bash
+# Backend (FastAPI JSON API on :8765)
+source .venv/bin/activate
+python scripts/run_web.py
+
+# Frontend dev server (Vite on :5173 with /api proxy to :8765)
+cd web && npm install && npm run dev
+```
 
 ```bash
 nano .env   # set POLYGON_API_KEY, FINNHUB_API_KEY, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID, WEB_PASSWORD, WEB_SECRET_KEY
@@ -153,17 +176,26 @@ scripts/
 ```
 src/web/
 ├── __init__.py
-├── app.py                     # FastAPI application factory (create_app)
+├── app.py                     # FastAPI JSON API factory (create_app)
 ├── auth.py                    # password check, login rate limit, session helpers
 ├── queries.py                 # read-only DB queries (snapshot, sparkline, tickers)
-├── llm.py                     # LLM context builders + prompt generators
-├── templates/
-│   ├── base.html
-│   ├── login.html
-│   └── index.html             # three-card signal browser
-└── static/
-    ├── app.css
-    └── app.js
+└── llm.py                     # LLM context builders + prompt generators
+
+web/                           # Vite + React + TypeScript SPA
+├── src/
+│   ├── main.tsx               # entry point (QueryClientProvider + BrowserRouter)
+│   ├── App.tsx                # route tree (/login, /, *)
+│   ├── pages/
+│   │   ├── LoginPage.tsx
+│   │   └── DashboardPage.tsx
+│   ├── components/            # shared components (TimeframeCard, AskAI, etc.)
+│   │   └── ui/                # shadcn-style primitives (button, card, input, badge, skeleton)
+│   ├── lib/
+│   │   ├── api/               # client.ts, endpoints.ts, types.ts
+│   │   └── hooks/             # useMe, useSnapshot, useTickers, useDateRange, useLlm
+│   └── styles/globals.css
+├── public/                    # favicon.ico, robots.txt (copied to dist/ verbatim)
+└── dist/                      # Vite build output (gitignored; produced by CI)
 ```
 
 The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, and indicator profiles at all three timeframes (daily, weekly, monthly). `scores_weekly` and `scores_monthly` carry per-closed-period score breakdowns. See DESIGN.md §12b for the calibrator acceptance gate and OPERATIONS.md "Flipping weekly_score_method" for the v1↔v2 procedure.
@@ -185,15 +217,20 @@ The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, 
 | `mplfinance` | 4-panel technical chart generation for /detail command |
 | `fastapi` | Web UI HTTP framework |
 | `uvicorn` | ASGI server for the web UI (single worker) |
-| `jinja2` | HTML template rendering |
 | `itsdangerous` / `starlette` SessionMiddleware | Signed cookie sessions for web auth |
-| `python-multipart` | Form body parsing for login POST |
 | `sqlite3` | Database (stdlib, WAL mode) |
 | `pytest` / `pytest-mock` | Tests |
 
 ## CI/CD — Automated Deployment
 
-Every push to `main` triggers `.github/workflows/deploy.yml`, which SSHes into the EC2 instance and runs `./deploy.sh`.
+Every push to `main` triggers `.github/workflows/deploy.yml`. The workflow has two jobs:
+
+1. **`build-frontend`** — runs on ubuntu-latest, installs Node 20 LTS, runs `npm ci --prefix web`, runs Vitest tests, runs `npm run build --prefix web`, uploads `web/dist/` as a GitHub Actions artifact.
+2. **`deploy`** — `needs: [build-frontend]`, downloads the artifact to `web/dist/`, rsyncs it to EC2 `web/dist_new/`, atomically renames to `web/dist`, then SSHes into EC2 and runs `./deploy.sh`.
+
+`deploy.sh` aborts with a clear error if `web/dist/index.html` is missing (e.g. a skipped CI step). The `deploy` job only runs when `build-frontend` succeeds, so a failing frontend build hard-gates the deploy.
+
+Every push to `main` also triggers `.github/workflows/deploy.yml`, which SSHes into the EC2 instance and runs `./deploy.sh`.
 
 `deploy.sh` is idempotent and handles:
 - `git pull origin main` — fetch latest code

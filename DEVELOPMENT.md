@@ -114,7 +114,7 @@ Tests mock all external API calls (`pytest-mock`). No API keys are needed to run
 | `src/notifier/why_command.py` | Backend formatters for `/why` (default, all, drill-down modes): `dispatch_why`, `format_why_default`, `format_why_all`, `format_why_drilldown`, `load_why_payload`, `resolve_name_token`. Public entry point used by the bot wrappers: `handle_why_command(db_conn, chat_id, message_text, bot_token, configs)`. Callback data format is `"why:{TICKER}"`, validated in `bot.py` by `_WHY_TICKER_PATTERN` regex; `await query.answer()` is in a `finally` block so the Telegram loading spinner is always dismissed even on error. |
 | `src/notifier/tickers_command.py` | `/tickers` Telegram bot command handler; logs invocations to `telegram_message_log` |
 | `src/notifier/scatter_command.py` | `/scatter` bot command handler; queries `scores_daily` + `ohlcv_daily` to compute N-day forward excess returns (vs SPY), plots calibrated_score (predicted) vs actual excess return scatter chart with IC annotation (Spearman rank correlation via `compute_ic()`), sends PNG via Telegram |
-| `src/web/app.py` | `create_app(db_path, config)` FastAPI application factory. Sets up `SessionMiddleware`, mounts static files, registers all routes: `GET /login`, `POST /login`, `POST /logout`, `GET /`, `GET /api/tickers`, `GET /api/dates`, `GET /api/snapshot`, `POST /api/llm`. Per-(session, ticker, date, timeframe) in-memory LLM debounce stored in a closure dict (not module-level, so each `create_app()` call is isolated — important for tests). Single worker required; debounce is process-local. |
+| `src/web/app.py` | `create_app(db_path, config, dist_dir=None)` FastAPI JSON API factory. Sets up `SessionMiddleware`, registers JSON routes under `/api/*`, conditionally mounts `/assets` StaticFiles (only when `dist_dir/assets` exists), adds explicit `/favicon.ico` + `/robots.txt` handlers, and registers the SPA catch-all last. Catch-all returns 503 JSON when `dist/index.html` is absent; returns 404 JSON for `/api/*` paths that don't match any route. `dist_dir` defaults to `None` (useful in tests — pass a `tmp_path` to exercise static-serve). Per-(session, ticker, date, timeframe) in-memory LLM debounce stored in closure dict (isolated per `create_app()` call). Single worker required; debounce is process-local. |
 | `src/web/auth.py` | `is_correct_password(submitted, expected)` — constant-time comparison via `secrets.compare_digest`. `record_login_attempt(conn, ip)` — writes UTC timestamp to `web_login_attempts`. `check_rate_limit(conn, ip, config)` — counts rows within window. `prune_old_login_attempts(conn)` — deletes rows older than 1 hour (called on each login attempt). |
 | `src/web/queries.py` | `fetch_active_tickers(conn)`, `fetch_date_range(conn, ticker)`, `fetch_snapshot(conn, ticker, date, config)`. `fetch_snapshot` returns a 3-key dict (`daily`, `weekly`, `monthly`) each with `data_available`, `categories` (UI contract array), `scores`, `indicators`, `patterns`, `sparkline`, and period metadata. Sparkline applies strict `<= picked_date` bound. Monthly categories array permanently excludes `"candlestick"` (decay-window mismatch). Daily section additionally includes three enrichment fields (daily-only): `key_signals` (top-N why-bullets from `scores_daily.key_signals` via `_extract_key_signals()`), `earnings` (`{next, last_surprise}` from `earnings_calendar` via `_fetch_earnings()`), and `signal_flip` (most-recent flip within lookback window from `signal_flips` via `_fetch_signal_flip()`). |
 | `src/web/llm.py` | `build_daily_context(conn, ticker, score_row, date)` — wraps `build_ticker_context()` from `ai_reasoner.py` (full context: indicators, patterns, news, fundamentals, macro). `build_timeframe_context(conn, ticker, date, timeframe)` — weekly/monthly only; reads `indicators_{weekly,monthly}` and `patterns_{weekly,monthly}` directly; does NOT include news/fundamentals/macro (daily-only scope). `analyze_daily()` / `analyze_timeframe()` — prompt builders + `call_claude()` via thin config adapter. `call_claude_for_web()` — single dispatch entry point used by `/api/llm`. |
@@ -137,8 +137,89 @@ fetcher           ← api_client, yfinance_client, validators, events, progress,
 calculator        ← config, db, events, progress  (ta library for indicators)
 scorer            ← config, db, events, progress, calculator output tables
 notifier          ← config, db, events, progress, anthropic, telegram
-web               ← common/db, notifier/ai_reasoner (build_ticker_context + call_claude), fastapi, jinja2
+web (backend)     ← common/db, notifier/ai_reasoner (build_ticker_context + call_claude), fastapi
+web (frontend)    ← React, TanStack Query, React Router, Recharts, Tailwind (built by Vite)
 ```
+
+---
+
+## Frontend Local Development
+
+### Prerequisites
+
+- Node 20 LTS (build-time only; not needed at runtime on EC2)
+- npm (bundled with Node)
+
+### Setup
+
+```bash
+cd web && npm install
+```
+
+### Dev server
+
+```bash
+# Terminal 1: FastAPI JSON API (port 8765)
+source .venv/bin/activate
+python scripts/run_web.py
+
+# Terminal 2: Vite dev server (port 5173, proxies /api/* to :8765)
+cd web && npm run dev
+```
+
+Open `http://localhost:5173`. Hot-module replacement works out of the box.
+
+### Tests, build, and lint
+
+```bash
+cd web
+
+# Run Vitest tests (unit + component)
+npm run test
+
+# One-shot run (no watch mode)
+npm run test -- --run
+
+# Production build → web/dist/
+npm run build
+
+# Lint (ESLint 9 flat config)
+npm run lint
+```
+
+### Component and file locations
+
+| Location | Purpose |
+|---|---|
+| `web/src/pages/` | Route-level page components (`LoginPage`, `DashboardPage`) |
+| `web/src/components/` | Shared domain components (`TimeframeCard`, `AskAI`, `CategoryBars`, etc.) |
+| `web/src/components/ui/` | shadcn-style primitives (`button`, `card`, `input`, `badge`, `skeleton`) |
+| `web/src/lib/api/` | `client.ts` (fetch wrapper), `endpoints.ts` (typed functions), `types.ts` (shapes) |
+| `web/src/lib/hooks/` | TanStack Query hooks (`useMe`, `useSnapshot`, `useTickers`, `useDateRange`, `useLlm`) |
+| `web/src/styles/globals.css` | Tailwind directives + shadcn CSS variables |
+| `web/public/` | `favicon.ico`, `robots.txt` — Vite copies to `dist/` root verbatim |
+| `web/dist/` | Vite build output (gitignored; produced by CI `build-frontend` job) |
+
+### Adding a shadcn component
+
+```bash
+cd web
+npx shadcn-ui@latest add <component>
+# e.g.: npx shadcn-ui@latest add dialog
+```
+
+Shadcn components land in `web/src/components/ui/`.
+
+### Adding a new API endpoint (4 steps)
+
+1. **Backend route** in `src/web/app.py` — add above the catch-all comment.
+2. **Typed function** in `web/src/lib/api/endpoints.ts` — use `apiFetch<T>()`.
+3. **TanStack hook** in `web/src/lib/hooks/` — `useQuery` for GET, `useMutation` for POST.
+4. **Consume hook** in the relevant page or component.
+
+### `web/dist` convention
+
+`dist_dir` is hardcoded to `web/dist` relative to repo root in `scripts/run_web.py`. It is intentionally NOT a config key. Do not add it to `config/web.json`. Override is available only via the `dist_dir` parameter to `create_app()` for tests.
 
 ---
 

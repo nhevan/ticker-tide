@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 # Add project root to sys.path for consistent imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -100,11 +101,18 @@ def main() -> None:
 
     from src.web.app import create_app
 
-    app = create_app(db_path=db_path, config=web_config)
+    # dist_dir is a structural convention: web/dist relative to the repo root.
+    # It is intentionally NOT a config key (see CONFIG.md). Pass it explicitly
+    # so create_app() can enable static-serve and the SPA catch-all route.
+    dist_dir = (
+        (Path(os.path.abspath(__file__)).parent.parent / "web" / "dist").as_posix()
+    )
+
+    app = create_app(db_path=db_path, config=web_config, dist_dir=dist_dir)
 
     logger.info(
         f"Starting Ticker Tide web UI: host=127.0.0.1, port={port}, "
-        f"workers=1, db={db_path!r}"
+        f"workers=1, db={db_path!r}, dist_dir={dist_dir!r}"
     )
 
     uvicorn.run(

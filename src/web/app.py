@@ -1,9 +1,17 @@
 """
-FastAPI application factory for the read-only stock signal web UI.
+FastAPI application factory for the Ticker Tide signal browser.
 
-Provides the main app with auth middleware, login/logout routes, and API
-endpoints for tickers, date ranges, snapshots, and LLM analysis.
-Single-worker only — the in-memory LLM debounce is process-local.
+Pure JSON API under /api/*. Serves a Vite-built React SPA from web/dist/
+with a catch-all route for client-side routing. Single-worker only — the
+in-memory LLM debounce and login rate-limit are process-local.
+
+Route registration order (MUST be preserved):
+  1. /api/* routes
+  2. /assets StaticFiles mount (conditional on dist/assets existing)
+  3. /favicon.ico and /robots.txt explicit handlers
+  4. Catch-all /{full_path:path}  ← registered LAST
+
+# Catch-all MUST be the last route registered. Add new routes ABOVE this line.
 """
 
 from __future__ import annotations
@@ -16,10 +24,10 @@ import sqlite3
 import time
 from typing import Any, Optional
 
-from fastapi import FastAPI, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from src.common.db import create_all_tables, get_connection
@@ -34,22 +42,43 @@ from src.web.queries import fetch_active_tickers, fetch_date_range, fetch_snapsh
 
 logger = logging.getLogger(__name__)
 
-# Path to the templates and static directories relative to this file
-_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
-_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+# ---------------------------------------------------------------------------
+# Request body models
+# ---------------------------------------------------------------------------
 
 
-def create_app(db_path: str, config: dict) -> FastAPI:
+class LoginBody(BaseModel):
+    """Request body for POST /api/login."""
+
+    password: str
+
+
+# ---------------------------------------------------------------------------
+# Application factory
+# ---------------------------------------------------------------------------
+
+
+def create_app(
+    db_path: str,
+    config: dict,
+    dist_dir: Optional[str] = None,
+) -> FastAPI:
     """
     Create and configure the FastAPI application.
 
-    Sets up SessionMiddleware, static file serving, template rendering,
-    and all routes. Accepts db_path and config as parameters to allow
-    dependency injection in tests.
+    Sets up SessionMiddleware, JSON API routes, and optional static-file
+    serving from a Vite build output directory. When dist_dir is None or
+    points to a non-existent path, all non-API routes return 503 JSON.
+
+    Accepts dist_dir as a parameter to allow dependency injection in tests
+    without relying on filesystem conventions.
 
     Parameters:
         db_path: Absolute path to the SQLite database file.
         config: Web config dict loaded from config/web.json.
+        dist_dir: Path to the Vite build output directory (web/dist). When
+            None, the catch-all route returns 503 for all non-API requests.
 
     Returns:
         Configured FastAPI application instance.
@@ -65,8 +94,8 @@ def create_app(db_path: str, config: dict) -> FastAPI:
     finally:
         _bootstrap_conn.close()
 
-    # In-memory LLM debounce: maps (session_id, ticker, date, timeframe) → last_call_time
-    # Stored in app state so each create_app() call gets a fresh dict (important for tests)
+    # In-memory LLM debounce: maps (session_id, ticker, date, timeframe) → last_call_time.
+    # Stored in app state so each create_app() call gets a fresh dict (important for tests).
     llm_debounce: dict[tuple, float] = {}
 
     app = FastAPI(title="Ticker Tide Web UI")
@@ -79,12 +108,7 @@ def create_app(db_path: str, config: dict) -> FastAPI:
         https_only=False,  # TestClient uses HTTP; production Uvicorn behind Caddy is HTTPS
     )
 
-    templates = Jinja2Templates(directory=_TEMPLATES_DIR)
-
-    if os.path.isdir(_STATIC_DIR):
-        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
-
-    # ── Auth helpers ──────────────────────────────────────────────────────────
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _is_authenticated(request: Request) -> bool:
         """Return True if the session contains a valid auth marker."""
@@ -94,26 +118,24 @@ def create_app(db_path: str, config: dict) -> FastAPI:
         """Open a per-request SQLite connection."""
         return get_connection(db_path)
 
-    # ── Routes ────────────────────────────────────────────────────────────────
+    # ── /api/login ────────────────────────────────────────────────────────────
 
-    @app.get("/login", response_class=HTMLResponse)
-    async def get_login(request: Request) -> Response:
-        """Render the login page."""
-        return templates.TemplateResponse(request, "login.html", {"error": None})
-
-    @app.post("/login")
-    async def post_login(
-        request: Request,
-        password: str = Form(...),
-    ) -> Response:
+    @app.post("/api/login")
+    async def api_login(body: LoginBody, request: Request) -> Response:
         """
-        Handle login form submission.
+        Authenticate with a JSON password body.
 
-        Checks rate limit, validates password, sets session on success.
+        Checks rate limit, validates password, sets session cookie on success.
         Records and prunes login attempts on every call.
 
+        Parameters:
+            body: JSON body with 'password' field.
+            request: FastAPI request object for session and IP extraction.
+
         Returns:
-            Redirect to / on success, or login page with error on failure.
+            200 {"ok": true} with Set-Cookie on success.
+            401 {"detail": "Invalid password."} on failure.
+            429 {"detail": ...} when rate-limited.
         """
         client_ip = request.client.host if request.client else "unknown"
         conn = _open_db()
@@ -127,43 +149,62 @@ def create_app(db_path: str, config: dict) -> FastAPI:
                     status_code=429,
                 )
             record_login_attempt(conn, client_ip)
-            if is_correct_password(password, web_password):
+            if is_correct_password(body.password, web_password):
                 request.session["authenticated"] = True
                 logger.info(f"Successful login: ip={client_ip!r}")
-                return RedirectResponse(url="/", status_code=302)
+                return JSONResponse({"ok": True})
             logger.warning(f"Failed login attempt: ip={client_ip!r}")
-            return templates.TemplateResponse(
-                request, "login.html", {"error": "Incorrect password."}, status_code=401
-            )
+            return JSONResponse({"detail": "Invalid password."}, status_code=401)
         finally:
             conn.close()
 
-    @app.post("/logout")
-    async def post_logout(request: Request) -> Response:
-        """Clear the session and redirect to login."""
+    # ── /api/logout ───────────────────────────────────────────────────────────
+
+    @app.post("/api/logout")
+    async def api_logout(request: Request) -> Response:
+        """
+        Clear the session cookie.
+
+        Parameters:
+            request: FastAPI request object for session access.
+
+        Returns:
+            200 {"ok": true}
+        """
         request.session.clear()
-        return RedirectResponse(url="/login", status_code=302)
+        return JSONResponse({"ok": True})
 
-    @app.get("/", response_class=HTMLResponse)
-    async def get_index(request: Request) -> Response:
-        """Render the main index page if authenticated, else redirect to login."""
+    # ── /api/me ───────────────────────────────────────────────────────────────
+
+    @app.get("/api/me")
+    async def api_me(request: Request) -> Response:
+        """
+        Return the current authentication state.
+
+        Parameters:
+            request: FastAPI request object for session access.
+
+        Returns:
+            200 {"authenticated": true} if logged in.
+            401 {"detail": "Not authenticated."} otherwise.
+        """
         if not _is_authenticated(request):
-            return RedirectResponse(url="/login", status_code=302)
-        conn = _open_db()
-        try:
-            tickers = fetch_active_tickers(conn)
-        finally:
-            conn.close()
-        return templates.TemplateResponse(request, "index.html", {"tickers": tickers})
+            return JSONResponse({"detail": "Not authenticated."}, status_code=401)
+        return JSONResponse({"authenticated": True})
 
-    # ── API routes ────────────────────────────────────────────────────────────
+    # ── /api/tickers ─────────────────────────────────────────────────────────
 
     @app.get("/api/tickers")
     async def api_tickers(request: Request) -> Response:
         """
         Return the alphabetized list of active ticker symbols.
 
-        Returns 401 if not authenticated.
+        Parameters:
+            request: FastAPI request object for session access.
+
+        Returns:
+            200 list[str] if authenticated.
+            401 {"detail": "Not authenticated."} otherwise.
         """
         if not _is_authenticated(request):
             return JSONResponse({"detail": "Not authenticated."}, status_code=401)
@@ -174,12 +215,20 @@ def create_app(db_path: str, config: dict) -> FastAPI:
         finally:
             conn.close()
 
+    # ── /api/dates ────────────────────────────────────────────────────────────
+
     @app.get("/api/dates")
     async def api_dates(request: Request, ticker: str) -> Response:
         """
         Return min and max available dates for a ticker from scores_daily.
 
-        Returns 401 if not authenticated.
+        Parameters:
+            request: FastAPI request object for session access.
+            ticker: Ticker symbol query parameter.
+
+        Returns:
+            200 {"min": str, "max": str} if authenticated.
+            401 {"detail": "Not authenticated."} otherwise.
         """
         if not _is_authenticated(request):
             return JSONResponse({"detail": "Not authenticated."}, status_code=401)
@@ -190,18 +239,27 @@ def create_app(db_path: str, config: dict) -> FastAPI:
         finally:
             conn.close()
 
+    # ── /api/snapshot ─────────────────────────────────────────────────────────
+
     @app.get("/api/snapshot")
     async def api_snapshot(request: Request, ticker: str, date: str) -> Response:
         """
         Return the full three-card snapshot for a ticker and picked date.
 
-        Returns 401 if not authenticated, 404 if ticker has no data.
+        Parameters:
+            request: FastAPI request object for session access.
+            ticker: Ticker symbol query parameter.
+            date: Date string (YYYY-MM-DD) query parameter.
+
+        Returns:
+            200 snapshot dict if authenticated and data exists.
+            401 {"detail": "Not authenticated."} if not logged in.
+            404 {"detail": ...} if ticker has no data.
         """
         if not _is_authenticated(request):
             return JSONResponse({"detail": "Not authenticated."}, status_code=401)
         conn = _open_db()
         try:
-            # Validate ticker exists by checking date range
             date_range = fetch_date_range(conn, ticker)
             if date_range["min"] is None:
                 return JSONResponse(
@@ -213,20 +271,32 @@ def create_app(db_path: str, config: dict) -> FastAPI:
         finally:
             conn.close()
 
+    # ── /api/llm ──────────────────────────────────────────────────────────────
+
     @app.post("/api/llm")
     async def api_llm(request: Request) -> Response:
         """
         Generate LLM analysis for a ticker/date/timeframe combination.
 
-        Applies a per-(session, ticker, date, timeframe) debounce of 60 seconds.
-        Returns 401 if not authenticated, 429 on debounce, 503 on Claude failure.
+        Applies a per-(session, ticker, date, timeframe) debounce. Returns 401
+        if not authenticated, 429 on debounce, 503 on Claude failure.
+
+        Parameters:
+            request: FastAPI request object for session and body access.
+
+        Returns:
+            200 {"text": str} on success.
+            400 {"detail": ...} on bad input.
+            401 {"detail": "Not authenticated."} if not logged in.
+            429 {"detail": ...} within debounce window.
+            503 {"detail": ...} on Claude API failure.
         """
         if not _is_authenticated(request):
             return JSONResponse({"detail": "Not authenticated."}, status_code=401)
 
         try:
             body = await request.json()
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
 
         ticker = body.get("ticker", "")
@@ -266,7 +336,6 @@ def create_app(db_path: str, config: dict) -> FastAPI:
 
         conn = _open_db()
         try:
-            # Load daily score row for daily context (needed by build_ticker_context)
             score_row_db = conn.execute(
                 "SELECT * FROM scores_daily WHERE ticker = ? AND date = ?",
                 (ticker, date_str),
@@ -298,5 +367,82 @@ def create_app(db_path: str, config: dict) -> FastAPI:
             return JSONResponse({"text": analysis_text})
         finally:
             conn.close()
+
+    # ── Static file serving ───────────────────────────────────────────────────
+    # Route registration order: /assets mount → explicit root assets → catch-all.
+    # All static-serve routes are conditional on dist_dir being present.
+
+    _dist_dir: str = dist_dir or ""
+
+    # Mount /assets only when the assets subdirectory actually exists at startup.
+    # Vite outputs hashed files to dist/assets/; the mount serves them with
+    # immutable-friendly default headers. The directory check prevents a startup
+    # crash when the frontend has not been built yet.
+    _assets_dir = os.path.join(_dist_dir, "assets") if _dist_dir else ""
+    if _assets_dir and os.path.isdir(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+    @app.get("/favicon.ico")
+    async def get_favicon() -> Response:
+        """
+        Serve favicon.ico from the Vite build output.
+
+        Returns:
+            200 FileResponse if dist/favicon.ico exists.
+            404 JSON if absent.
+        """
+        path = os.path.join(_dist_dir, "favicon.ico") if _dist_dir else ""
+        if path and os.path.isfile(path):
+            return FileResponse(path)
+        return JSONResponse({"detail": "Not found."}, status_code=404)
+
+    @app.get("/robots.txt")
+    async def get_robots() -> Response:
+        """
+        Serve robots.txt from the Vite build output.
+
+        Returns:
+            200 FileResponse if dist/robots.txt exists.
+            404 JSON if absent.
+        """
+        path = os.path.join(_dist_dir, "robots.txt") if _dist_dir else ""
+        if path and os.path.isfile(path):
+            return FileResponse(path)
+        return JSONResponse({"detail": "Not found."}, status_code=404)
+
+    # Catch-all MUST be the last route registered. Add new routes ABOVE this line.
+    @app.get("/{full_path:path}")
+    async def spa_catchall(full_path: str) -> Response:
+        """
+        Serve index.html for all unmatched GET paths (SPA client-side routing).
+
+        Paths under /api/ that reached the catch-all have no matching route —
+        return 404 JSON so API clients receive a proper not-found response
+        rather than the SPA HTML or a 503.
+
+        Returns 503 JSON when the Vite build output is missing, so ops can
+        diagnose a failed build-frontend CI step without a cryptic 404.
+        Cache-Control: no-cache is set so browsers always revalidate index.html,
+        ensuring new deployments are picked up without a hard refresh.
+
+        Parameters:
+            full_path: The unmatched path segment (captured by FastAPI).
+
+        Returns:
+            404 JSON for unmatched /api/* paths.
+            200 FileResponse (text/html) when dist/index.html exists.
+            503 {"detail": "Frontend not built."} when the dist directory is absent.
+        """
+        # API paths that reached the catch-all have no matching route.
+        if full_path.startswith("api/") or full_path == "api":
+            return JSONResponse({"detail": "Not found."}, status_code=404)
+
+        index_path = os.path.join(_dist_dir, "index.html") if _dist_dir else ""
+        if index_path and os.path.isfile(index_path):
+            return FileResponse(
+                index_path,
+                headers={"Cache-Control": "no-cache"},
+            )
+        return JSONResponse({"detail": "Frontend not built."}, status_code=503)
 
     return app

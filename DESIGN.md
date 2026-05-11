@@ -1407,17 +1407,36 @@ A read-only, desktop-only signal browser for the developer and up to 3-4 trusted
 
 ### 14.1 Architecture
 
-**Stack:** FastAPI + Jinja2 + vanilla JS (no build step). Uvicorn single worker (required — in-memory LLM debounce is process-local). Bound to `127.0.0.1:port` behind Caddy (HTTPS reverse proxy). Config: `config/web.json`.
+```
+Browser ←→ Vite/React SPA (web/dist/ static files)
+              ↕ same-origin fetch with cookie
+         FastAPI JSON API (src/web/app.py)
+              ↕
+         SQLite DB (read-only from web tier)
+```
+
+**Stack:** FastAPI + Vite/React/TypeScript SPA. Uvicorn single worker (required — in-memory LLM debounce is process-local). Bound to `127.0.0.1:port` behind Caddy (HTTPS reverse proxy). Config: `config/web.json`.
 
 **Auth:** Shared password (`WEB_PASSWORD` env var), constant-time compare via `secrets.compare_digest`. Cookie session via Starlette `SessionMiddleware` signed with `WEB_SECRET_KEY`. 7-day TTL. `HttpOnly`, `SameSite=Lax`. IP from `request.client.host` (Uvicorn `--proxy-headers` populates from trusted X-Forwarded-For). Login rate limit: 5 attempts/IP/60s via `web_login_attempts` SQLite table; prune rows older than 1 hour on each login attempt.
 
-**Routes:**
-- `GET /login`, `POST /login`, `POST /logout` — auth flow
-- `GET /` — main index page (requires auth; redirects to /login if not)
-- `GET /api/tickers` — alphabetized list of active tickers (401 if not auth)
-- `GET /api/dates?ticker=X` — `{min, max}` from `scores_daily` (401 if not auth)
-- `GET /api/snapshot?ticker=X&date=Y` — three-card snapshot dict (401 if not auth, 404 if no data)
-- `POST /api/llm` — LLM analysis for a ticker/date/timeframe (401, 429 on debounce, 503 on Claude failure)
+**Auth routes (JSON):**
+- `POST /api/login { password }` → `200 { ok: true }` + Set-Cookie, or `401 { detail }`, or `429 { detail }`
+- `POST /api/logout` → `200 { ok: true }`, clears cookie
+- `GET /api/me` → `200 { authenticated: true }`, or `401 { detail }`
+
+**API routes (auth-gated, return 401 when not logged in):**
+- `GET /api/tickers` — alphabetized list of active tickers
+- `GET /api/dates?ticker=X` — `{min, max}` from `scores_daily`
+- `GET /api/snapshot?ticker=X&date=Y` — three-card snapshot dict (404 if no data)
+- `POST /api/llm { ticker, date, timeframe }` — LLM analysis (429 on debounce, 503 on Claude failure)
+
+**Static-serve (SPA):**
+- `GET /assets/*` — `StaticFiles` mount serving Vite-hashed assets from `web/dist/assets/`
+- `GET /favicon.ico` — `FileResponse(dist/favicon.ico)` or 404
+- `GET /robots.txt` — `FileResponse(dist/robots.txt)` or 404
+- `GET /{full_path:path}` — catch-all (registered LAST): serves `dist/index.html` with `Cache-Control: no-cache` for SPA routing; returns `503 { detail: "Frontend not built." }` when `dist/` is absent; returns `404` for unmatched `/api/*` paths
+
+No CORS. Same-origin requests only. `dist_dir` is hardcoded to `web/dist` relative to repo root (not a config key).
 
 ### 14.2 Snapshot Data Contract
 
