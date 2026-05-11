@@ -143,9 +143,9 @@ describe('DashboardPage', () => {
     } as unknown as ReturnType<typeof useSnapshot>);
 
     renderDashboard();
-    expect(screen.getByText('Daily')).toBeInTheDocument();
-    expect(screen.getByText('Weekly')).toBeInTheDocument();
-    expect(screen.getByText('Monthly')).toBeInTheDocument();
+    expect(screen.getAllByText('Daily').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Weekly').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Monthly').length).toBeGreaterThan(0);
   });
 
   it('renders signal badge for BULLISH signal', () => {

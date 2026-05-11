@@ -108,7 +108,11 @@ export function DashboardPage() {
 
         {showCards && snapshot && !snapshotLoading && (
           <>
-            <VerdictBlock ticker={loadedTicker} date={loadedDate} />
+            <VerdictBlock
+              ticker={loadedTicker}
+              date={loadedDate}
+              snapshot={snapshot}
+            />
             <div className="grid gap-4 md:grid-cols-3">
                 <TimeframeCard
                 title="Daily"
