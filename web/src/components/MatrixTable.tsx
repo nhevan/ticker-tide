@@ -19,6 +19,12 @@ import type { Category } from '@/lib/scoring/categoryMap';
 import { humanizePatternName } from '@/lib/scoring/patternLabels';
 import type { CategoryScores, Pattern } from '@/lib/api/types';
 import type { DailyCategory, WeeklyCategory, MonthlyCategory } from '@/lib/api/types';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 interface MatrixTableProps {
   /** Section title displayed above the table. */
@@ -285,14 +291,19 @@ function CellView({ state, testid }: CellViewProps) {
   }
   if (state.kind === 'off-timeframe' || state.kind === 'missing') {
     return (
-      <td
-        className={`py-1 px-1 text-center ${TONE_CLASS.grey} text-muted-foreground`}
-        data-testid={testid}
-        data-tone="grey"
-        title={state.tooltip}
-      >
-        —
-      </td>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <td
+            className={`py-1 px-1 text-center ${TONE_CLASS.grey} text-muted-foreground cursor-help`}
+            data-testid={testid}
+            data-tone="grey"
+            title={state.tooltip}
+          >
+            —
+          </td>
+        </TooltipTrigger>
+        <TooltipContent>{state.tooltip}</TooltipContent>
+      </Tooltip>
     );
   }
   return (
@@ -333,6 +344,7 @@ export function MatrixTable({
   const scored = new Set<string>(categories as readonly string[]);
 
   return (
+    <TooltipProvider delayDuration={150}>
     <div className="rounded-lg border p-4">
       <h3 className="mb-3 text-sm font-semibold text-foreground">{title}</h3>
 
@@ -444,5 +456,6 @@ export function MatrixTable({
         </div>
       )}
     </div>
+    </TooltipProvider>
   );
 }
