@@ -11,6 +11,9 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import './styles/globals.css';
 
+const savedTheme = localStorage.getItem('theme') ?? 'dark';
+document.documentElement.classList.toggle('dark', savedTheme === 'dark');
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
