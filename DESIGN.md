@@ -1490,8 +1490,12 @@ No CORS. Same-origin requests only. `dist_dir` is hardcoded to `web/dist` relati
 | `earnings` | `{next, last_surprise}` from `earnings_calendar` (see §14.6) | absent | absent |
 | `signal_flip` | most-recent flip within lookback window from `signal_flips` (see §14.6) | absent | absent |
 | `indicator_scores` | `dict[str, float \| null]` — per-indicator signed scores from `indicator_scores_{daily,weekly,monthly}`. Returns `{}` on unmigrated databases (catches `sqlite3.OperationalError` so the API never 500s before migration). Used by the dashboard indicator-agreement matrix. | present | present |
+| `patterns` | Exact-date / exact-period pattern list (existing field; consumed by `PatternsList.tsx`; unchanged). | present | present |
+| `recent_patterns` | List of pattern dicts within the scorer's canonical recency window. Keyed to `_CANDLESTICK_WINDOW_DAYS` (7d) and `_STRUCTURAL_WINDOW_DAYS` (28d), imported directly from `src/scorer/pattern_scorer.py` so the matrix recency window stays in lockstep with score decay. Daily rows include a `days_ago: int` key (clamped to ≥0); weekly/monthly rows omit it. Monthly section fetches structural patterns only (candlestick excluded — decay-window mismatch). Capped at `pattern_row_limit` rows per category (config key `web.json: pattern_row_limit`, default 5). | present | present |
 
 The `categories` array is the UI rendering contract. The UI renders only bars listed in this array. The `scores` dict may contain `candlestick` for monthly (always None) — the UI ignores it because `"candlestick"` is absent from the monthly `categories` array.
+
+`_fetch_recent_patterns` (in `src/web/queries.py`) queries the `patterns_{daily,weekly,monthly}` tables within the scorer's canonical recency windows. The recency constants (`_CANDLESTICK_WINDOW_DAYS`, `_STRUCTURAL_WINDOW_DAYS`) are imported directly from `src/scorer/pattern_scorer.py` — this import keeps the matrix display window in lockstep with the scoring decay logic: if the decay window changes in the scorer, the matrix automatically reflects the same boundary on the next request.
 
 ### 14.3 LLM Analysis
 

@@ -11,8 +11,14 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
+
+# Imported directly from the scorer to keep the matrix's recency window
+# in lockstep with score_candlestick_patterns / score_structural_patterns.
+# Private-prefixed names are accepted here as the canonical source of truth.
+from src.scorer.pattern_scorer import _CANDLESTICK_WINDOW_DAYS, _STRUCTURAL_WINDOW_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +34,14 @@ _WEEKLY_CATEGORIES = [
 _MONTHLY_CATEGORIES = [
     "trend", "momentum", "volume", "volatility", "structural",
 ]
+
+# ── Recent-patterns helper constants ─────────────────────────────────────────
+_ALLOWED_PATTERN_TABLES: set[str] = {"patterns_daily", "patterns_weekly", "patterns_monthly"}
+_ALLOWED_PERIOD_COLUMNS: set[str] = {"date", "week_start", "month_start"}
+_WINDOW_BY_CATEGORY: dict[str, int] = {
+    "candlestick": _CANDLESTICK_WINDOW_DAYS,
+    "structural": _STRUCTURAL_WINDOW_DAYS,
+}
 
 
 def fetch_active_tickers(conn: sqlite3.Connection) -> list[str]:
@@ -83,17 +97,25 @@ def fetch_snapshot(
 
     Resolves daily, weekly, and monthly data independently. Each section
     includes data_available, categories (the UI rendering contract), scores,
-    indicators, patterns, sparkline, and period metadata.
+    indicators, patterns, recent_patterns, sparkline, and period metadata.
 
     For daily: exact match on scores_daily.date.
     For weekly: most-recent scores_weekly.week_start <= picked_date.
     For monthly: most-recent scores_monthly.month_start <= picked_date.
 
+    Section shape (all three timeframes):
+        patterns: list[dict]  — exact-date / exact-period patterns (existing field,
+                               consumed by PatternsList.tsx; unchanged).
+        recent_patterns: list[dict]  — patterns within the scorer's canonical recency
+                               window, with tone metadata. Daily rows include a
+                               'days_ago' int key; weekly/monthly rows do not.
+
     Parameters:
         conn: Open SQLite connection with row_factory=sqlite3.Row.
         ticker: Ticker symbol (e.g. 'AAPL').
         picked_date: ISO date string (YYYY-MM-DD) selected by the user.
-        config: Web config dict containing the 'sparkline' section.
+        config: Web config dict containing the 'sparkline' section and
+                'pattern_row_limit'.
 
     Returns:
         Dict with keys 'daily', 'weekly', 'monthly', each a section dict.
@@ -105,15 +127,23 @@ def fetch_snapshot(
 
     why_limit = config.get("why_bullets", {}).get("limit", 3)
     signal_flip_lookback = config.get("signal_flip_lookback_days", 14)
+    pattern_row_limit = int(config.get("pattern_row_limit", 5))
 
     return {
         "daily": _build_daily_section(
             conn, ticker, picked_date, daily_days,
             why_limit=why_limit,
             signal_flip_lookback_days=signal_flip_lookback,
+            pattern_row_limit=pattern_row_limit,
         ),
-        "weekly": _build_weekly_section(conn, ticker, picked_date, weekly_weeks),
-        "monthly": _build_monthly_section(conn, ticker, picked_date, monthly_months),
+        "weekly": _build_weekly_section(
+            conn, ticker, picked_date, weekly_weeks,
+            pattern_row_limit=pattern_row_limit,
+        ),
+        "monthly": _build_monthly_section(
+            conn, ticker, picked_date, monthly_months,
+            pattern_row_limit=pattern_row_limit,
+        ),
     }
 
 
@@ -124,15 +154,17 @@ def _build_daily_section(
     sparkline_days: int,
     why_limit: int = 3,
     signal_flip_lookback_days: int = 14,
+    pattern_row_limit: int = 5,
 ) -> dict[str, Any]:
     """
     Build the daily card data for a ticker and exact date.
 
     Returns a dict with data_available=False if no row exists for that date.
     When available, includes all 9 categories, scores, indicators, patterns,
-    sparkline, signal, confidence, calibrated_score, resolved_period,
-    key_signals (top N why-bullets), earnings (next + last_surprise),
-    and signal_flip (most recent flip within the lookback window).
+    recent_patterns, sparkline, signal, confidence, calibrated_score,
+    resolved_period, key_signals (top N why-bullets), earnings
+    (next + last_surprise), and signal_flip (most recent flip within the
+    lookback window).
 
     Parameters:
         conn: Open SQLite connection.
@@ -141,6 +173,8 @@ def _build_daily_section(
         sparkline_days: Number of trading days to include in the sparkline.
         why_limit: Maximum number of key_signals items to include (from config).
         signal_flip_lookback_days: Number of days to look back for a signal flip.
+        pattern_row_limit: Max pattern rows returned per category for
+            recent_patterns (from config["pattern_row_limit"]).
 
     Returns:
         Daily section dict.
@@ -160,6 +194,12 @@ def _build_daily_section(
     score_dict = dict(score_row)
     indicators = _fetch_daily_indicators(conn, ticker, picked_date)
     patterns = _fetch_daily_patterns(conn, ticker, picked_date)
+    recent_patterns = _fetch_recent_patterns(
+        conn, ticker, picked_date,
+        table_name="patterns_daily", period_column="date",
+        allowed_categories=("candlestick", "structural"),
+        top_n=pattern_row_limit, compute_days_ago=True,
+    )
     sparkline = _fetch_daily_sparkline(conn, ticker, picked_date, sparkline_days)
     key_signals = _extract_key_signals(score_dict, limit=why_limit)
     earnings = _fetch_earnings(conn, ticker, picked_date)
@@ -174,6 +214,7 @@ def _build_daily_section(
         "scores": _extract_daily_scores(score_dict),
         "indicators": indicators,
         "patterns": patterns,
+        "recent_patterns": recent_patterns,
         "sparkline": sparkline,
         "signal": score_dict.get("signal"),
         "confidence": score_dict.get("confidence"),
@@ -192,6 +233,7 @@ def _build_weekly_section(
     ticker: str,
     picked_date: str,
     sparkline_weeks: int,
+    pattern_row_limit: int = 5,
 ) -> dict[str, Any]:
     """
     Build the weekly card data for a ticker as of the picked date.
@@ -204,6 +246,8 @@ def _build_weekly_section(
         ticker: Ticker symbol.
         picked_date: Upper-bound date (YYYY-MM-DD).
         sparkline_weeks: Number of weekly bars to include in the sparkline.
+        pattern_row_limit: Max pattern rows returned per category for
+            recent_patterns (from config["pattern_row_limit"]).
 
     Returns:
         Weekly section dict.
@@ -229,6 +273,12 @@ def _build_weekly_section(
 
     indicators = _fetch_weekly_indicators(conn, ticker, week_start)
     patterns = _fetch_weekly_patterns(conn, ticker, week_start)
+    recent_patterns = _fetch_recent_patterns(
+        conn, ticker, week_start,  # CRITICAL: resolved period, NOT picked_date
+        table_name="patterns_weekly", period_column="week_start",
+        allowed_categories=("candlestick", "structural"),
+        top_n=pattern_row_limit, compute_days_ago=False,
+    )
     sparkline = _fetch_weekly_sparkline(conn, ticker, picked_date, sparkline_weeks)
     period_label = _format_weekly_period_label(week_start)
     indicator_scores = _fetch_weekly_indicator_scores(conn, ticker, week_start)
@@ -239,6 +289,7 @@ def _build_weekly_section(
         "scores": _extract_timeframe_scores(score_dict),
         "indicators": indicators,
         "patterns": patterns,
+        "recent_patterns": recent_patterns,
         "sparkline": sparkline,
         "composite_score": score_dict.get("composite_score"),
         "resolved_period": week_start,
@@ -253,6 +304,7 @@ def _build_monthly_section(
     ticker: str,
     picked_date: str,
     sparkline_months: int,
+    pattern_row_limit: int = 5,
 ) -> dict[str, Any]:
     """
     Build the monthly card data for a ticker as of the picked date.
@@ -261,12 +313,16 @@ def _build_monthly_section(
     Sets is_fallback=True when resolved_period < picked_date.
     Candlestick is intentionally excluded from the categories array even though
     candlestick_score exists as a column (always NULL for monthly — decay mismatch).
+    recent_patterns for monthly includes only structural patterns (candlestick
+    excluded by design — decay-window mismatch).
 
     Parameters:
         conn: Open SQLite connection.
         ticker: Ticker symbol.
         picked_date: Upper-bound date (YYYY-MM-DD).
         sparkline_months: Number of monthly bars to include in the sparkline.
+        pattern_row_limit: Max pattern rows returned per category for
+            recent_patterns (from config["pattern_row_limit"]).
 
     Returns:
         Monthly section dict.
@@ -292,6 +348,12 @@ def _build_monthly_section(
 
     indicators = _fetch_monthly_indicators(conn, ticker, month_start)
     patterns = _fetch_monthly_patterns(conn, ticker, month_start)
+    recent_patterns = _fetch_recent_patterns(
+        conn, ticker, month_start,  # CRITICAL: resolved period, NOT picked_date
+        table_name="patterns_monthly", period_column="month_start",
+        allowed_categories=("structural",),  # monthly excludes candlestick
+        top_n=pattern_row_limit, compute_days_ago=False,
+    )
     sparkline = _fetch_monthly_sparkline(conn, ticker, picked_date, sparkline_months)
     period_label = _format_monthly_period_label(month_start)
     indicator_scores = _fetch_monthly_indicator_scores(conn, ticker, month_start)
@@ -302,6 +364,7 @@ def _build_monthly_section(
         "scores": _extract_timeframe_scores(score_dict),
         "indicators": indicators,
         "patterns": patterns,
+        "recent_patterns": recent_patterns,
         "sparkline": sparkline,
         "composite_score": score_dict.get("composite_score"),
         "resolved_period": month_start,
@@ -516,6 +579,87 @@ def _fetch_monthly_indicators(
         (ticker, month_start),
     ).fetchone()
     return dict(row) if row else {}
+
+
+# ── Recent-patterns helper ───────────────────────────────────────────────────
+
+def _fetch_recent_patterns(
+    conn: sqlite3.Connection,
+    ticker: str,
+    period_date: str,
+    table_name: str,
+    period_column: str,
+    allowed_categories: Sequence[str],
+    top_n: int,
+    compute_days_ago: bool,
+) -> list[dict]:
+    """
+    Fetch recent pattern rows for the matrix table.
+
+    For each category in allowed_categories that has an entry in
+    _WINDOW_BY_CATEGORY, fetches up to top_n rows from table_name where
+    period_column is within (period_date - window_days) and period_date,
+    ordered by (period_column DESC, strength DESC). Unknown categories
+    (no window defined) are silently skipped.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        period_date: ISO date string (YYYY-MM-DD) used as the upper bound
+            and as the reference for days_ago computation. For weekly /
+            monthly sections, callers MUST pass the resolved week_start /
+            month_start, not the user's picked_date.
+        table_name: Must be one of _ALLOWED_PATTERN_TABLES.
+        period_column: Must be one of _ALLOWED_PERIOD_COLUMNS.
+        allowed_categories: Sequence of pattern categories to fetch.
+            Categories without a window in _WINDOW_BY_CATEGORY are skipped.
+        top_n: Maximum rows returned per category.
+        compute_days_ago: If True, each returned dict includes a
+            "days_ago" int key (clamped to ≥0); if False, the key is omitted.
+
+    Returns:
+        List of pattern dicts. Empty list if no matches.
+
+    Raises:
+        ValueError: if table_name or period_column is not in the allowlist.
+    """
+    if table_name not in _ALLOWED_PATTERN_TABLES:
+        raise ValueError(f"Invalid table_name: {table_name!r}")
+    if period_column not in _ALLOWED_PERIOD_COLUMNS:
+        raise ValueError(f"Invalid period_column: {period_column!r}")
+
+    period_date_obj = date.fromisoformat(period_date)
+    out: list[dict] = []
+    for category in allowed_categories:
+        window_days = _WINDOW_BY_CATEGORY.get(category)
+        if window_days is None:
+            continue
+        min_date = (period_date_obj - timedelta(days=window_days)).isoformat()
+        sql = (
+            f"SELECT pattern_name, pattern_category, direction, strength, confirmed, "
+            f"{period_column} AS period_date "
+            f"FROM {table_name} "
+            f"WHERE ticker = ? AND pattern_category = ? "
+            f"AND {period_column} <= ? AND {period_column} >= ? "
+            f"ORDER BY {period_column} DESC, strength DESC "
+            f"LIMIT ?"
+        )
+        rows = conn.execute(
+            sql, (ticker, category, period_date, min_date, top_n)
+        ).fetchall()
+        for row in rows:
+            row_dict: dict = {
+                "pattern_name": row["pattern_name"],
+                "pattern_category": row["pattern_category"],
+                "direction": row["direction"],
+                "strength": row["strength"],
+                "confirmed": bool(row["confirmed"]),
+            }
+            if compute_days_ago:
+                row_period_obj = date.fromisoformat(row["period_date"])
+                row_dict["days_ago"] = max(0, (period_date_obj - row_period_obj).days)
+            out.append(row_dict)
+    return out
 
 
 # ── Pattern fetch helpers ─────────────────────────────────────────────────────

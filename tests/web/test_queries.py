@@ -21,6 +21,10 @@ from src.web.queries import (
     _extract_key_signals,
     _fetch_earnings,
     _fetch_signal_flip,
+    _fetch_recent_patterns,
+    _build_daily_section,
+    _build_weekly_section,
+    _build_monthly_section,
 )
 
 # ---------------------------------------------------------------------------
@@ -1009,3 +1013,348 @@ class TestSnapshotIndicatorScores:
 
         snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
         assert snapshot["monthly"]["indicator_scores"] == {}
+
+
+# ---------------------------------------------------------------------------
+# _insert_pattern_with_category helper — used only by recent-patterns tests
+# ---------------------------------------------------------------------------
+
+def _insert_pattern_with_category(
+    conn: sqlite3.Connection,
+    table: str,
+    ticker: str,
+    period_col: str,
+    period_value: str,
+    pattern_name: str,
+    pattern_category: str,
+    direction: str,
+    strength: float,
+    confirmed: bool = True,
+) -> None:
+    """Insert a pattern row with explicit pattern_category. Used only by recent-patterns tests."""
+    conn.execute(
+        f"INSERT INTO {table} (ticker, {period_col}, pattern_name, pattern_category, "
+        f"direction, strength, confirmed) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (ticker, period_value, pattern_name, pattern_category, direction, strength, int(confirmed)),
+    )
+    conn.commit()
+
+
+def _default_config_with_pattern_limit() -> dict:
+    """Return a web config dict that also includes pattern_row_limit."""
+    cfg = _default_config()
+    cfg["pattern_row_limit"] = 5
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# TestFetchRecentPatterns — unit tests for _fetch_recent_patterns helper
+# ---------------------------------------------------------------------------
+
+class TestFetchRecentPatterns:
+    """Tests for _fetch_recent_patterns()."""
+
+    def test_fetch_recent_patterns_daily_within_window(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Insert candlestick at period_date, period_date-6d, period_date-8d; 7d window returns first two."""
+        period_date = "2026-05-08"
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-08",
+            "hammer", "candlestick", "bullish", 2.0,
+        )
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-02",
+            "doji", "candlestick", "neutral", 1.5,
+        )
+        # 8 days before period_date — outside 7-day window
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-04-30",
+            "shooting_star", "candlestick", "bearish", 3.0,
+        )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", period_date,
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick",),
+            top_n=5, compute_days_ago=False,
+        )
+        returned_names = {row["pattern_name"] for row in result}
+        assert "hammer" in returned_names
+        assert "doji" in returned_names
+        assert "shooting_star" not in returned_names
+
+    def test_fetch_recent_patterns_boundary(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Boundary: candlestick at period_date-7d is INCLUDED; at period_date-8d is EXCLUDED."""
+        period_date = "2026-05-08"
+        # Exactly 7 days before → INCLUDED (window is [period_date - 7d, period_date])
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-01",
+            "engulfing_7d", "candlestick", "bullish", 2.0,
+        )
+        # 8 days before → EXCLUDED
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-04-30",
+            "engulfing_8d", "candlestick", "bullish", 2.0,
+        )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", period_date,
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick",),
+            top_n=5, compute_days_ago=False,
+        )
+        returned_names = {row["pattern_name"] for row in result}
+        assert "engulfing_7d" in returned_names
+        assert "engulfing_8d" not in returned_names
+
+    def test_fetch_recent_patterns_caps_per_category_at_five(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """7 candlestick + 6 structural all within window; each category capped at 5."""
+        period_date = "2026-05-08"
+        for i in range(7):
+            _insert_pattern_with_category(
+                conn, "patterns_daily", "AAPL", "date", period_date,
+                f"cdl_{i}", "candlestick", "bullish", float(i + 1),
+            )
+        for i in range(6):
+            _insert_pattern_with_category(
+                conn, "patterns_daily", "AAPL", "date", period_date,
+                f"struct_{i}", "structural", "bullish", float(i + 1),
+            )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", period_date,
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick", "structural"),
+            top_n=5, compute_days_ago=False,
+        )
+        candlestick_rows = [row for row in result if row["pattern_category"] == "candlestick"]
+        structural_rows = [row for row in result if row["pattern_category"] == "structural"]
+        assert len(candlestick_rows) == 5
+        assert len(structural_rows) == 5
+
+    def test_fetch_recent_patterns_sort_order(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Sort order: date DESC then strength DESC within date."""
+        period_date = "2026-05-08"
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", period_date,
+            "high_strength", "candlestick", "bullish", 99.0,
+        )
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", period_date,
+            "low_strength", "candlestick", "bullish", 10.0,
+        )
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-07",
+            "older_pattern", "candlestick", "bullish", 99.0,
+        )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", period_date,
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick",),
+            top_n=5, compute_days_ago=False,
+        )
+        assert len(result) == 3
+        assert result[0]["pattern_name"] == "high_strength"
+        assert result[1]["pattern_name"] == "low_strength"
+        assert result[2]["pattern_name"] == "older_pattern"
+
+    def test_fetch_recent_patterns_empty_returns_empty_list(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """No rows seeded → empty list returned."""
+        result = _fetch_recent_patterns(
+            conn, "AAPL", "2026-05-08",
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick", "structural"),
+            top_n=5, compute_days_ago=True,
+        )
+        assert result == []
+
+    def test_fetch_recent_patterns_computes_days_ago(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Insert at 2026-05-04, call with period_date='2026-05-08'; days_ago == 4."""
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-04",
+            "hammer", "candlestick", "bullish", 2.0,
+        )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", "2026-05-08",
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick",),
+            top_n=5, compute_days_ago=True,
+        )
+        assert len(result) == 1
+        assert result[0]["days_ago"] == 4
+
+    def test_fetch_recent_patterns_clamps_future_days_ago(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Future-dated row (period_date in the past relative to pattern) → days_ago clamped to 0."""
+        # Insert a pattern with date AFTER period_date (anomalous data)
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-10",
+            "hammer", "candlestick", "bullish", 2.0,
+        )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", "2026-05-10",
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick",),
+            top_n=5, compute_days_ago=True,
+        )
+        # The row AT period_date has days_ago=0
+        assert result[0]["days_ago"] == 0
+
+    def test_fetch_recent_patterns_excludes_null_category(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Rows with pattern_category=NULL must be excluded."""
+        conn.execute(
+            "INSERT INTO patterns_daily (ticker, date, pattern_name, direction, strength) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("AAPL", "2026-05-08", "null_cat_pattern", "bullish", 2.0),
+        )
+        conn.commit()
+        result = _fetch_recent_patterns(
+            conn, "AAPL", "2026-05-08",
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("candlestick",),
+            top_n=5, compute_days_ago=True,
+        )
+        assert result == []
+
+    def test_fetch_recent_patterns_unknown_category_skipped(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Unknown category (not in _WINDOW_BY_CATEGORY) → returns [], no exception."""
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-08",
+            "some_pattern", "trend", "bullish", 2.0,
+        )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", "2026-05-08",
+            table_name="patterns_daily", period_column="date",
+            allowed_categories=("trend",),
+            top_n=5, compute_days_ago=True,
+        )
+        assert result == []
+
+    def test_fetch_recent_patterns_invalid_table_name_raises(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Invalid table_name raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid table_name"):
+            _fetch_recent_patterns(
+                conn, "AAPL", "2026-05-08",
+                table_name="users", period_column="date",
+                allowed_categories=("candlestick",),
+                top_n=5, compute_days_ago=True,
+            )
+
+    def test_fetch_recent_patterns_invalid_period_column_raises(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Invalid period_column raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid period_column"):
+            _fetch_recent_patterns(
+                conn, "AAPL", "2026-05-08",
+                table_name="patterns_daily", period_column="bad_col",
+                allowed_categories=("candlestick",),
+                top_n=5, compute_days_ago=True,
+            )
+
+    def test_fetch_recent_patterns_weekly_omits_days_ago(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """compute_days_ago=False → 'days_ago' key absent from returned dicts."""
+        _insert_pattern_with_category(
+            conn, "patterns_weekly", "AAPL", "week_start", "2026-05-05",
+            "breakout", "structural", "bullish", 2.0,
+        )
+        result = _fetch_recent_patterns(
+            conn, "AAPL", "2026-05-08",
+            table_name="patterns_weekly", period_column="week_start",
+            allowed_categories=("structural",),
+            top_n=5, compute_days_ago=False,
+        )
+        assert len(result) == 1
+        assert "days_ago" not in result[0]
+
+    def test_build_daily_section_includes_recent_patterns(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """_build_daily_section result must include 'recent_patterns' as a list."""
+        _insert_daily_score(conn, "AAPL", "2026-05-08")
+        _insert_pattern_with_category(
+            conn, "patterns_daily", "AAPL", "date", "2026-05-08",
+            "hammer", "candlestick", "bullish", 2.0,
+        )
+        result = _build_daily_section(
+            conn, "AAPL", "2026-05-08", sparkline_days=15,
+            pattern_row_limit=5,
+        )
+        assert "recent_patterns" in result
+        assert isinstance(result["recent_patterns"], list)
+        pattern_names = [p["pattern_name"] for p in result["recent_patterns"]]
+        assert "hammer" in pattern_names
+
+    def test_build_weekly_section_includes_recent_patterns(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """_build_weekly_section result must include 'recent_patterns' as a list."""
+        _insert_weekly_score(conn, "AAPL", "2026-05-05")
+        _insert_pattern_with_category(
+            conn, "patterns_weekly", "AAPL", "week_start", "2026-05-05",
+            "breakout", "structural", "bullish", 3.0,
+        )
+        result = _build_weekly_section(
+            conn, "AAPL", "2026-05-08", sparkline_weeks=6,
+            pattern_row_limit=5,
+        )
+        assert "recent_patterns" in result
+        assert isinstance(result["recent_patterns"], list)
+        pattern_names = [p["pattern_name"] for p in result["recent_patterns"]]
+        assert "breakout" in pattern_names
+
+    def test_build_monthly_section_includes_recent_patterns(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Monthly allows structural only; candlestick in patterns_monthly must NOT appear."""
+        _insert_monthly_score(conn, "AAPL", "2026-05-01")
+        _insert_pattern_with_category(
+            conn, "patterns_monthly", "AAPL", "month_start", "2026-05-01",
+            "double_bottom", "structural", "bullish", 3.0,
+        )
+        # This candlestick row should NOT appear — monthly excludes candlestick
+        _insert_pattern_with_category(
+            conn, "patterns_monthly", "AAPL", "month_start", "2026-05-01",
+            "hammer", "candlestick", "bullish", 2.0,
+        )
+        result = _build_monthly_section(
+            conn, "AAPL", "2026-05-08", sparkline_months=6,
+            pattern_row_limit=5,
+        )
+        assert "recent_patterns" in result
+        pattern_names = [p["pattern_name"] for p in result["recent_patterns"]]
+        assert "double_bottom" in pattern_names
+        assert "hammer" not in pattern_names
+
+    def test_existing_patterns_field_still_exact_date(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Regression: existing 'patterns' field still present and unchanged; no days_ago key."""
+        _insert_daily_score(conn, "AAPL", "2026-05-08")
+        _insert_daily_patterns(conn, "AAPL", "2026-05-08")
+        result = _build_daily_section(
+            conn, "AAPL", "2026-05-08", sparkline_days=15,
+            pattern_row_limit=5,
+        )
+        assert "patterns" in result
+        assert len(result["patterns"]) >= 1
+        # The existing patterns field rows must not have a days_ago key
+        for pattern in result["patterns"]:
+            assert "days_ago" not in pattern

@@ -131,18 +131,27 @@ export function DashboardPage() {
                 indicators={snapshot.daily.indicators}
                 indicatorScores={snapshot.daily.indicator_scores}
                 signalDirection={scoreToDirection(snapshot.daily.composite_score)}
+                categories={snapshot.daily.categories}
+                timeframe="daily"
+                recentPatterns={snapshot.daily.recent_patterns}
               />
               <MatrixTable
                 title="Weekly — Indicator Agreement"
                 indicators={snapshot.weekly.indicators}
                 indicatorScores={snapshot.weekly.indicator_scores}
                 signalDirection={scoreToDirection(snapshot.weekly.composite_score)}
+                categories={snapshot.weekly.categories}
+                timeframe="weekly"
+                recentPatterns={snapshot.weekly.recent_patterns}
               />
               <MatrixTable
                 title="Monthly — Indicator Agreement"
                 indicators={snapshot.monthly.indicators}
                 indicatorScores={snapshot.monthly.indicator_scores}
                 signalDirection={scoreToDirection(snapshot.monthly.composite_score)}
+                categories={snapshot.monthly.categories}
+                timeframe="monthly"
+                recentPatterns={snapshot.monthly.recent_patterns}
               />
             </div>
             <div className="grid gap-4 md:grid-cols-3">

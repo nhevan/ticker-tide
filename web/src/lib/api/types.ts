@@ -50,6 +50,7 @@ export interface Pattern {
   direction: string;
   strength: number;
   confirmed: boolean;
+  days_ago?: number;
 }
 
 /** Next upcoming earnings data. */
@@ -90,6 +91,7 @@ export interface DailySection {
   indicators?: Record<string, number | string | null>;
   indicator_scores?: Record<string, number | null>;
   patterns?: Pattern[];
+  recent_patterns?: Pattern[];
   sparkline?: SparklinePoint[];
   signal?: string | null;
   confidence?: number | null;
@@ -103,7 +105,7 @@ export interface DailySection {
 /** Weekly or monthly snapshot card data. */
 export interface TimeframeSection {
   data_available: boolean;
-  categories: string[];
+  categories: WeeklyCategory[] | MonthlyCategory[];
   resolved_period: string | null;
   resolved_period_label: string | null;
   is_fallback: boolean;
@@ -111,6 +113,7 @@ export interface TimeframeSection {
   indicators?: Record<string, number | string | null>;
   indicator_scores?: Record<string, number | null>;
   patterns?: Pattern[];
+  recent_patterns?: Pattern[];
   sparkline?: SparklinePoint[];
   composite_score?: number | null;
 }

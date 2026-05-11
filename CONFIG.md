@@ -560,13 +560,14 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `ai_reasoner.target_words` | int | `150` | Target word count in the prompt instruction to Claude |
 | `why_bullets.limit` | int | `3` | Maximum number of key_signals items to show in the "Why" section of the daily card. Items come from `scores_daily.key_signals` (JSON list, 7 items in production). |
 | `signal_flip_lookback_days` | int | `14` | Number of calendar days to look back from the picked date when searching for a recent signal flip. The badge is shown only when a flip exists within this window. |
+| `pattern_row_limit` | int | `5` | Maximum number of pattern rows returned per category in the `recent_patterns` field of each snapshot section. Controls how many candlestick and structural pattern rows appear in the dashboard indicator-agreement matrix below the indicator rows. |
 | `verdict.max_lines` | int | `5` | Hard cap on the number of lines returned for the dashboard verdict block. Enforced both in the Claude prompt and as a post-processing trim in `_enforce_verdict_line_cap()`. |
 
 **`dist_dir` is intentionally NOT a config key.** The frontend build output path is a structural convention hardcoded to `web/dist` relative to the repo root. Override is available only via the `dist_dir` parameter to `create_app` for tests. Do not add this to `config/web.json`.
 
 **Re-run required after change:**
 - `login_rate_limit.*`, `llm_rate_limit.*`, `sparkline.*`, `ai_reasoner.*` — None; applies on next web UI request.
-- `why_bullets.*`, `signal_flip_lookback_days`, `verdict.*` — None; web-only read layer, applies on next snapshot load. No pipeline phase re-run needed. (Changing `verdict.max_lines` does not invalidate already-cached `dashboard_verdicts` rows — old rows render at their stored line count until regenerated.)
+- `why_bullets.*`, `signal_flip_lookback_days`, `pattern_row_limit`, `verdict.*` — None; web-only read layer, applies on next snapshot load. No pipeline phase re-run needed. (Changing `verdict.max_lines` does not invalidate already-cached `dashboard_verdicts` rows — old rows render at their stored line count until regenerated.)
 - `port` — `sudo systemctl restart ticker-tide-web`
 
 ---
@@ -610,4 +611,5 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `web.json ai_reasoner.*` | None — applies on next LLM request |
 | `web.json why_bullets.*` | None — applies on next snapshot load |
 | `web.json signal_flip_lookback_days` | None — applies on next snapshot load |
+| `web.json pattern_row_limit` | None — applies on next snapshot load |
 | `web.json verdict.max_lines` | None — applies on next verdict generation (does not retroactively re-trim cached rows) |
