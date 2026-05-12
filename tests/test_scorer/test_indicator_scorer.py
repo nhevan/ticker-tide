@@ -4,6 +4,9 @@ Tests for src/scorer/indicator_scorer.py — individual indicator scoring.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.scorer.indicator_scorer import (
@@ -375,6 +378,60 @@ class TestScoreAllIndicatorsRegimeAware:
         indicators = {"stoch_k": 85.0}
         result = score_all_indicators(indicators, close=100.0, profiles={}, config={}, regime="ranging")
         assert result["stoch_k"] < 0, f"Expected bearish Stoch no-profile ranging, got {result['stoch_k']}"
+
+    def test_stoch_k_fallback_thresholds_match_config(self) -> None:
+        """
+        Drift-guard: the hardcoded `stoch_k >= 80` and `stoch_k <= 20` hard-cap
+        branches in the fallback path of score_all_indicators must match
+        config/scorer.json indicator_thresholds.stoch_k. A planned follow-on
+        refactor will read these from config; until then this test fails fast
+        if either side drifts.
+
+        Verified at three points to catch both directions of drift:
+          1. At the configured overbought boundary → score = -60.0 (hard cap).
+          2. At the configured oversold boundary → score = +60.0 (hard cap).
+          3. Just below the overbought boundary → score != -60.0 (linear branch).
+             Without (3), narrowing the scorer's literal (e.g. >=80 to >=85)
+             would not be caught at the boundary point alone.
+        """
+        config_path = Path(__file__).parent.parent.parent / "config" / "scorer.json"
+        with config_path.open() as fp:
+            config = json.load(fp)
+        thresholds = config["indicator_thresholds"]["stoch_k"]
+        overbought = thresholds["overbought"]
+        oversold = thresholds["oversold"]
+
+        # (1) At the configured overbought threshold, no-profile + ranging → -60.0.
+        result_ob = score_all_indicators(
+            {"stoch_k": overbought}, close=100.0, profiles={}, config={}, regime="ranging"
+        )
+        assert result_ob["stoch_k"] == -60.0, (
+            f"Config overbought={overbought} but scorer fallback produced "
+            f"{result_ob['stoch_k']} (expected -60.0). The scorer's hardcoded "
+            f"overbought literal must equal config.indicator_thresholds.stoch_k.overbought."
+        )
+
+        # (2) At the configured oversold threshold, no-profile + ranging → +60.0.
+        result_os = score_all_indicators(
+            {"stoch_k": oversold}, close=100.0, profiles={}, config={}, regime="ranging"
+        )
+        assert result_os["stoch_k"] == 60.0, (
+            f"Config oversold={oversold} but scorer fallback produced "
+            f"{result_os['stoch_k']} (expected +60.0). The scorer's hardcoded "
+            f"oversold literal must equal config.indicator_thresholds.stoch_k.oversold."
+        )
+
+        # (3) Just below the overbought boundary → linear branch, NOT the -60.0 cap.
+        # Catches narrowing drift (e.g. scorer literal moves from >=80 to >=85
+        # while config stays at 80).
+        result_below = score_all_indicators(
+            {"stoch_k": overbought - 0.001}, close=100.0, profiles={}, config={}, regime="ranging"
+        )
+        assert result_below["stoch_k"] != -60.0, (
+            f"At stoch_k=overbought-ε ({overbought - 0.001}) the scorer hit the "
+            f"-60.0 hard cap, meaning the scorer's overbought literal is below "
+            f"config.indicator_thresholds.stoch_k.overbought={overbought}."
+        )
 
     def test_trending_cci_high_is_bullish_with_profile(self) -> None:
         """In trending regime, CCI=150 (overbought) → bullish score."""

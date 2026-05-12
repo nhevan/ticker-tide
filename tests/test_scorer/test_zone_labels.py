@@ -246,3 +246,27 @@ class TestZoneLabelForStochK:
         assert score > 0, (
             f"Expected positive score for oversold stoch_k in ranging regime, got {score}"
         )
+
+    def test_overbought_label_agrees_with_ranging_score_sign(self) -> None:
+        """
+        Symmetric to the oversold test: in the ranging regime, a stoch_k value
+        in the overbought zone produces a negative score from score_with_percentile
+        (mean-reversion convention: high %K = bearish). Trending sign-flip happens
+        in the scorer; zone labels are regime-agnostic.
+
+        Note: the label assertion uses the fallback dict (None profile, value=90
+        above overbought=80) — that path is already exercised by the fallback
+        zone tests; the new payload here is the sign-agreement assertion.
+        """
+        value = 90.0
+        label = zone_label_for_stoch_k(value, None, _STOCH_THRESHOLDS)
+        assert label == "overbought", f"Expected 'overbought' label, got {label!r}"
+        # Profile where value=90 lands in the overbought band (p80 ≤ 90 < p95).
+        overbought_profile = {
+            "p5": 5.0, "p20": 20.0, "p50": 50.0, "p80": 80.0, "p95": 97.0,
+            "mean": 50.0, "std": 25.0,
+        }
+        score = score_with_percentile(value, overbought_profile, higher_is_bullish=False)
+        assert score < 0, (
+            f"Expected negative score for overbought stoch_k in ranging regime, got {score}"
+        )
