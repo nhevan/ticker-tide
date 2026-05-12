@@ -13,6 +13,7 @@ import { RsiTrendChart } from '@/components/RsiTrendChart';
 import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import { RsiMappingChart } from '@/components/RsiMappingChart';
 import { MomentumShareBar } from '@/components/MomentumShareBar';
+import { CategoryWeightBar } from '@/components/CategoryWeightBar';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -217,10 +218,25 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
 
               {/* Step 6 — Category weight × expansion */}
               <StepCard stepNumber={6} heading="Category weight × expansion">
-                Momentum weight in{' '}
-                <span className="font-medium">{regime}</span> regime ={' '}
-                {rsiItem.category_weight.toFixed(3)} × expansion{' '}
-                {contributions.expansion_factor.toFixed(2)}.
+                {/* activeName hardcoded here because this panel only renders for rsi_14,
+                    whose home category is momentum; the component itself supports any
+                    active category. expansion comes from current config (rules) which
+                    may differ slightly from the persisted contributions.expansion_factor
+                    used in step 7 if config has drifted since the last scoring run. */}
+                {rules?.regime_weights && rules.regime_weights[regime] ? (
+                  <CategoryWeightBar
+                    weights={rules.regime_weights[regime]}
+                    regime={regime}
+                    expansion={rules.score_expansion_factor}
+                    activeName="momentum"
+                  />
+                ) : (
+                  <>
+                    Momentum weight in <span className="font-medium">{regime}</span> regime ={' '}
+                    {rsiItem.category_weight.toFixed(3)} × expansion{' '}
+                    {contributions.expansion_factor.toFixed(2)}.
+                  </>
+                )}
               </StepCard>
 
               {/* Step 7 — Net contribution */}
