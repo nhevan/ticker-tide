@@ -1610,9 +1610,27 @@ Process-static endpoint. Returns:
 - `rsi.scoring_method`, `fallback_zones`, `profile_zones` — documentation-only strings describing the zone label contract.
 - `regime_weights` — `adaptive_weights` block from `config/scorer.json` (all three regimes × all categories).
 - `score_expansion_factor` — from `config/scorer.json`.
+- `timeframe_weights` — `timeframe_weights` block from `config/scorer.json` (trending/ranging/volatile × daily/weekly/monthly floats). Used by `computeTimeframeHeaderContributions` on the frontend to compute redistributed per-timeframe header weights.
 - `approximation_caveat` — fixed string explaining the decomposition limitation.
 
 Requires authentication. Served from `create_app()` closure; value is constant for the process lifetime. After editing `config/scorer.json`, restart the web service.
+
+### 15.4a Matrix section header math chain
+
+Each of the three `MatrixTable` sections (daily, weekly, monthly) now displays a mini math chain next to the title:
+
+```
+60% × +20.5 = ▲ 12.3
+```
+
+**Architecture:** `DashboardPage` calls `computeTimeframeHeaderContributions(snapshot, scoringRules)` via `useMemo` once per render. The function (in `web/src/lib/scoring/timeframeHeaderContribution.ts`) reads `snapshot.daily.regime` to look up config weights, then redistributes available-timeframe weights proportionally (unavailable = non-finite pre-blend score). Each `MatrixTable` receives its own `headerContribution?: { weight, score } | null` prop. The component calls `renderHeaderContribution()` (a private helper in `MatrixTable.tsx`) which formats and returns the React element, or `null` when the input is null/undefined or score is non-finite.
+
+**Score fields used:**
+- Daily: `snapshot.daily.daily_score` (= `scores_daily.daily_score`, the pre-blend daily-only score). **Not** `composite_score` (`final_score`), which is the post-blend merged result.
+- Weekly: `snapshot.weekly.composite_score` (= `scores_weekly.composite_score`, per-timeframe pre-blend).
+- Monthly: `snapshot.monthly.composite_score` (= `scores_monthly.composite_score`, per-timeframe pre-blend).
+
+`snapshot.daily.daily_score` is surfaced by `_build_daily_section` in `queries.py` as a new field alongside the existing `composite_score`.
 
 ### 15.5 MACD line 7-step trace
 

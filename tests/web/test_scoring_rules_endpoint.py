@@ -54,6 +54,11 @@ _TEST_SCORER_CONFIG = {
                      "candlestick": 0.0, "structural": 0.0, "sentiment": 0.0,
                      "fundamental": 0.05, "macro": 0.30},
     },
+    "timeframe_weights": {
+        "trending": {"daily": 0.10, "weekly": 0.50, "monthly": 0.40},
+        "ranging":  {"daily": 0.60, "weekly": 0.30, "monthly": 0.10},
+        "volatile": {"daily": 0.25, "weekly": 0.45, "monthly": 0.30},
+    },
     "scoring": {
         "score_expansion_factor": 1.5,
     },
@@ -170,3 +175,33 @@ class TestScoringRulesEndpoint:
             "extreme_oversold", "oversold", "below_mid",
             "above_mid", "overbought", "extreme_overbought"
         ]
+
+    def test_timeframe_weights_all_three_regime_keys_present(self, client: TestClient) -> None:
+        """timeframe_weights block is present with trending/ranging/volatile keys."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert "timeframe_weights" in data
+        for regime in ("trending", "ranging", "volatile"):
+            assert regime in data["timeframe_weights"]
+
+    def test_timeframe_weights_ranging_daily_value(self, client: TestClient) -> None:
+        """timeframe_weights[ranging][daily] must equal 0.60 (from test scorer config)."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["timeframe_weights"]["ranging"]["daily"] == 0.60
+
+    def test_timeframe_weights_trending_weekly_value(self, client: TestClient) -> None:
+        """timeframe_weights[trending][weekly] must equal 0.50 (from test scorer config)."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["timeframe_weights"]["trending"]["weekly"] == 0.50
+
+    def test_timeframe_weights_each_regime_has_daily_weekly_monthly(self, client: TestClient) -> None:
+        """Each regime in timeframe_weights must have daily, weekly, and monthly keys."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        for regime in ("trending", "ranging", "volatile"):
+            entry = data["timeframe_weights"][regime]
+            assert "daily" in entry
+            assert "weekly" in entry
+            assert "monthly" in entry

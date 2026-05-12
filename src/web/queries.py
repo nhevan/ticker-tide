@@ -309,6 +309,7 @@ def _build_daily_section(
         "confidence": score_dict.get("confidence"),
         "calibrated_score": score_dict.get("calibrated_score"),
         "composite_score": score_dict.get("final_score"),
+        "daily_score": score_dict.get("daily_score"),
         "resolved_period": picked_date,
         "key_signals": key_signals,
         "earnings": earnings,

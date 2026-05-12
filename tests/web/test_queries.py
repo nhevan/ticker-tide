@@ -61,15 +61,15 @@ def _insert_tickers(conn: sqlite3.Connection) -> None:
 
 
 def _insert_daily_score(conn: sqlite3.Connection, ticker: str, date: str) -> None:
-    """Insert a minimal scores_daily row."""
+    """Insert a minimal scores_daily row including daily_score (pre-blend)."""
     conn.execute(
         """INSERT OR REPLACE INTO scores_daily(
-            ticker, date, signal, confidence, final_score, regime,
+            ticker, date, signal, confidence, final_score, daily_score, regime,
             trend_score, momentum_score, volume_score, volatility_score,
             candlestick_score, structural_score, sentiment_score,
             fundamental_score, macro_score, calibrated_score
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (ticker, date, "BULLISH", 72.5, 55.0, "trending",
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (ticker, date, "BULLISH", 72.5, 55.0, 42.0, "trending",
          40.0, 30.0, 20.0, -10.0, 25.0, 15.0, 5.0, 8.0, -3.0, 1.42),
     )
     conn.commit()
@@ -274,6 +274,21 @@ class TestFetchSnapshotDaily:
         _insert_daily_score(conn, "AAPL", "2026-04-25")
         snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
         assert snapshot["daily"]["resolved_period"] == "2026-04-25"
+
+    def test_daily_includes_daily_score_pre_blend(self, conn: sqlite3.Connection) -> None:
+        """daily_score (pre-blend) must be surfaced in the daily section dict."""
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        daily = snapshot["daily"]
+        assert "daily_score" in daily
+        assert abs(daily["daily_score"] - 42.0) < 0.01
+
+    def test_daily_score_distinct_from_composite_score(self, conn: sqlite3.Connection) -> None:
+        """daily_score (42.0) must differ from composite_score/final_score (55.0)."""
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        daily = snapshot["daily"]
+        assert daily["daily_score"] != daily["composite_score"]
 
 
 # ---------------------------------------------------------------------------

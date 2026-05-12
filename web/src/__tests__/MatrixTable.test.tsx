@@ -1121,4 +1121,128 @@ describe('MatrixTable', () => {
       expect(screen.queryByRole('button', { name: /Stoch K/i })).not.toBeInTheDocument();
     });
   });
+
+  describe('header math chain (headerContribution prop)', () => {
+    it('renders weight × score = contribution when headerContribution is provided with finite values', () => {
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          headerContribution={{ weight: 0.60, score: 20.5 }}
+        />,
+      );
+      // Weight as percentage
+      expect(screen.getByText(/60%/)).toBeInTheDocument();
+      // Score with sign
+      expect(screen.getByText(/20\.5/)).toBeInTheDocument();
+      // Contribution = 0.60 × 20.5 = 12.3
+      expect(screen.getByText(/12\.3/)).toBeInTheDocument();
+    });
+
+    it('renders ▲ glyph when contribution is positive', () => {
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          headerContribution={{ weight: 0.60, score: 20.5 }}
+        />,
+      );
+      expect(screen.getByRole('heading', { level: 3 }).textContent).toContain('▲');
+    });
+
+    it('renders ▼ glyph when contribution is negative', () => {
+      render(
+        <MatrixTable
+          title="Monthly — Indicator Agreement"
+          indicators={{ rsi_14: 35 }}
+          indicatorScores={{ rsi_14: -40 }}
+          signalDirection={-1}
+          headerContribution={{ weight: 0.40, score: -8.3 }}
+        />,
+      );
+      expect(screen.getByRole('heading', { level: 3 }).textContent).toContain('▼');
+    });
+
+    it('renders muted 0.0 when contribution evaluates to zero (score is 0)', () => {
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 50 }}
+          indicatorScores={{ rsi_14: 0 }}
+          signalDirection={0}
+          headerContribution={{ weight: 0.60, score: 0 }}
+        />,
+      );
+      const heading = screen.getByRole('heading', { level: 3 });
+      // Should show "0.0" and no directional glyph in the header
+      expect(heading.textContent).toContain('0.0');
+      expect(heading.textContent).not.toContain('▲');
+      expect(heading.textContent).not.toContain('▼');
+    });
+
+    it('hides header math when headerContribution is null', () => {
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          headerContribution={null}
+        />,
+      );
+      const heading = screen.getByRole('heading', { level: 3 });
+      // No percentage sign, no arrow glyphs
+      expect(heading.textContent).not.toContain('%');
+      expect(heading.textContent).not.toContain('▲');
+      expect(heading.textContent).not.toContain('▼');
+    });
+
+    it('hides header math when headerContribution is undefined (prop omitted)', () => {
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          // headerContribution omitted
+        />,
+      );
+      const heading = screen.getByRole('heading', { level: 3 });
+      expect(heading.textContent).not.toContain('%');
+      expect(heading.textContent).not.toContain('▲');
+      expect(heading.textContent).not.toContain('▼');
+    });
+
+    it('hides header math when headerContribution.score is NaN', () => {
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          headerContribution={{ weight: 0.60, score: NaN }}
+        />,
+      );
+      const heading = screen.getByRole('heading', { level: 3 });
+      expect(heading.textContent).not.toContain('%');
+    });
+
+    it('hides header math when headerContribution.score is Infinity', () => {
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          headerContribution={{ weight: 0.60, score: Infinity }}
+        />,
+      );
+      const heading = screen.getByRole('heading', { level: 3 });
+      expect(heading.textContent).not.toContain('%');
+    });
+  });
 });

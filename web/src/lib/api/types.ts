@@ -127,6 +127,12 @@ export interface ScoringRules {
   };
   regime_weights: Record<string, Record<string, number>>;
   score_expansion_factor: number;
+  /**
+   * Per-regime timeframe blend weights from config/scorer.json.
+   * Keyed by regime name (trending/ranging/volatile), each entry has
+   * daily/weekly/monthly floats that sum to 1.0 (before redistribution).
+   */
+  timeframe_weights: Record<string, { daily: number; weekly: number; monthly: number }>;
   approximation_caveat: string;
 }
 
@@ -150,6 +156,12 @@ export interface DailySection {
   signal_flip?: SignalFlip | null;
   /** Market regime from scores_daily (e.g. "trending", "ranging", "volatile"). */
   regime?: string | null;
+  /**
+   * Pre-blend daily-only score from scores_daily.daily_score.
+   * Distinct from composite_score (final_score) which is the post-blend merged result.
+   * Used as the per-timeframe score input for the header math chain.
+   */
+  daily_score?: number | null;
   /** Per-ticker RSI percentile profile, or null if no profile exists. */
   rsi_profile?: RsiProfile | null;
   /** Per-ticker MACD line z-score profile (mean + std), or null if absent. */

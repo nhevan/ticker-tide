@@ -6,7 +6,7 @@
  * Fetches /api/dates when ticker changes to constrain the date picker.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { TimeframeCard } from '@/components/TimeframeCard';
@@ -20,6 +20,7 @@ import { useDateRange } from '@/lib/hooks/useDateRange';
 import { useSnapshot } from '@/lib/hooks/useSnapshot';
 import { useScoringRules } from '@/lib/hooks/useScoringRules';
 import { ApiError } from '@/lib/api/client';
+import { computeTimeframeHeaderContributions } from '@/lib/scoring/timeframeHeaderContribution';
 
 /**
  * Map a numeric composite score to a numeric direction for the indicator matrix.
@@ -72,6 +73,21 @@ export function DashboardPage() {
   } = useSnapshot(loadedTicker, loadedDate);
 
   const { data: scoringRules } = useScoringRules();
+
+  /**
+   * Compute redistributed per-timeframe header contributions once per
+   * render whenever snapshot or scoringRules changes. Each entry holds
+   * the weight and pre-blend score for that timeframe's section header.
+   * All nulls when regime is absent, scoringRules is loading, or a
+   * timeframe has no finite score.
+   */
+  const headerContributions = useMemo(
+    () =>
+      snapshot
+        ? computeTimeframeHeaderContributions(snapshot, scoringRules)
+        : { daily: null, weekly: null, monthly: null },
+    [snapshot, scoringRules],
+  );
 
   function handleLoad() {
     if (!inputTicker || !inputDate) return;
@@ -147,6 +163,7 @@ export function DashboardPage() {
                 categoryScores={snapshot.daily.scores}
                 snapshot={snapshot}
                 scoringRules={scoringRules}
+                headerContribution={headerContributions.daily}
               />
               <MatrixTable
                 title="Weekly — Indicator Agreement"
@@ -158,6 +175,7 @@ export function DashboardPage() {
                 recentPatterns={snapshot.weekly.recent_patterns}
                 categoryScores={snapshot.weekly.scores}
                 snapshot={snapshot}
+                headerContribution={headerContributions.weekly}
               />
               <MatrixTable
                 title="Monthly — Indicator Agreement"
@@ -168,6 +186,7 @@ export function DashboardPage() {
                 timeframe="monthly"
                 recentPatterns={snapshot.monthly.recent_patterns}
                 categoryScores={snapshot.monthly.scores}
+                headerContribution={headerContributions.monthly}
               />
             </div>
             <div className="grid gap-4 md:grid-cols-3">

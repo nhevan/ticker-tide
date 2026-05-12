@@ -34,6 +34,13 @@ import {
 interface MatrixTableProps {
   /** Section title displayed above the table. */
   title: string;
+  /**
+   * Optional pre-computed contribution for this timeframe section header.
+   * When provided and both weight and score are finite, renders the Variant C
+   * math chain: "60% × +20.5 = ▲ 12.3" next to the title.
+   * Hidden when null, undefined, or when score is non-finite.
+   */
+  headerContribution?: { weight: number; score: number } | null;
   /** Raw indicator values keyed by indicator name. */
   indicators: Record<string, number | string | null> | undefined;
   /** Per-indicator scores keyed by indicator name. */
@@ -100,6 +107,49 @@ const PATTERN_CATEGORIES: Array<'candlestick' | 'structural'> = ['candlestick', 
 const AGGREGATE_CATEGORIES: Array<'sentiment' | 'fundamental' | 'macro'> = [
   'sentiment', 'fundamental', 'macro',
 ];
+
+/**
+ * Render the Variant C header math chain for a timeframe section title.
+ *
+ * Format: "60% × +20.5 = ▲ 12.3"
+ * Zero contribution renders muted "0.0" with no directional glyph.
+ * Returns null when contribution is null/undefined or when score is non-finite.
+ *
+ * @param contribution - Weight/score pair from computeTimeframeHeaderContributions.
+ * @returns ReactNode with the formatted math chain, or null.
+ */
+function renderHeaderContribution(
+  contribution: { weight: number; score: number } | null | undefined,
+): ReactNode {
+  if (!contribution) return null;
+  const { weight, score } = contribution;
+  if (!Number.isFinite(score) || !Number.isFinite(weight)) return null;
+
+  const value = weight * score;
+  const weightPct = `${Math.round(weight * 100)}%`;
+  const scoreSign = score >= 0 ? '+' : '−';
+  const scoreAbs = Math.abs(score).toFixed(1);
+
+  if (value === 0) {
+    return (
+      <span className="ml-2 text-[11px] font-normal text-muted-foreground tabular-nums">
+        {weightPct} × <span className="text-foreground">{scoreSign}{scoreAbs}</span> ={' '}
+        <span className="text-muted-foreground">0.0</span>
+      </span>
+    );
+  }
+
+  const glyph = value > 0 ? '▲' : '▼';
+  const tone = value > 0 ? 'text-[hsl(var(--up))]' : 'text-[hsl(var(--down))]';
+  const mag = Math.abs(value).toFixed(1);
+
+  return (
+    <span className="ml-2 text-[11px] font-normal text-muted-foreground tabular-nums">
+      {weightPct} × <span className="text-foreground">{scoreSign}{scoreAbs}</span> ={' '}
+      <span className={`${tone} font-semibold`}>{glyph} {mag}</span>
+    </span>
+  );
+}
 
 /**
  * Format a signed composite-point contribution for display in a matrix cell.
@@ -387,6 +437,7 @@ export function MatrixTable({
   categoryScores,
   snapshot,
   scoringRules,
+  headerContribution,
 }: MatrixTableProps) {
   const [expandedIndicator, setExpandedIndicator] = useState<string | null>(null);
 
@@ -440,7 +491,10 @@ export function MatrixTable({
   return (
     <TooltipProvider delayDuration={150}>
     <div className="rounded-lg border p-4">
-      <h3 className="mb-3 text-sm font-semibold text-foreground">{title}</h3>
+      <h3 className="mb-3 text-sm font-semibold text-foreground">
+        {title}
+        {renderHeaderContribution(headerContribution)}
+      </h3>
 
       {!hasData ? (
         <p className="text-sm text-muted-foreground">Indicator scores not available</p>
