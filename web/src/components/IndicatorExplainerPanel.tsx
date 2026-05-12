@@ -78,8 +78,9 @@ function StepCard({
  * Each is independently guarded with `Number.isFinite` because the DB columns
  * are nullable (NaN → NULL is applied during indicator persistence).
  */
-function MacdLinePanel({ snapshot }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
+function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
   const daily = snapshot.daily;
+  const regime = daily.regime ?? 'ranging';
   const macdRaw = daily.indicators?.macd_line;
   const signalRaw = daily.indicators?.macd_signal;
   const histRaw = daily.indicators?.macd_histogram;
@@ -128,7 +129,23 @@ function MacdLinePanel({ snapshot }: { snapshot: Snapshot; rules: ScoringRules |
       <StepCard stepNumber={3} heading="Scoring path" unavailable />
       <StepCard stepNumber={4} heading="MACD line score" unavailable />
       <StepCard stepNumber={5} heading="Magnitude share in trend" unavailable />
-      <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+
+      {/* Step 6 — Category weight × expansion.
+          Reuses CategoryWeightBar verbatim (already generic over any category).
+          activeName="trend" because macd_line's home category is trend. */}
+      {rules?.regime_weights && rules.regime_weights[regime] ? (
+        <StepCard stepNumber={6} heading="Category weight × expansion">
+          <CategoryWeightBar
+            weights={rules.regime_weights[regime]}
+            regime={regime}
+            expansion={rules.score_expansion_factor}
+            activeName="trend"
+          />
+        </StepCard>
+      ) : (
+        <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+      )}
+
       <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />
     </div>
   );
