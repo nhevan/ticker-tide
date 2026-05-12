@@ -20,7 +20,10 @@ import type { Category } from '@/lib/scoring/categoryMap';
 import { humanizePatternName } from '@/lib/scoring/patternLabels';
 import type { CategoryScores, Pattern, Snapshot, ScoringRules } from '@/lib/api/types';
 import type { DailyCategory, WeeklyCategory, MonthlyCategory } from '@/lib/api/types';
-import { IndicatorExplainerPanel } from '@/components/IndicatorExplainerPanel';
+import {
+  IndicatorExplainerPanel,
+  INDICATORS_WITH_EXPLAINER,
+} from '@/components/IndicatorExplainerPanel';
 import {
   Tooltip,
   TooltipContent,
@@ -423,8 +426,11 @@ export function MatrixTable({
     return map;
   }, [snapshot?.daily?.contributions_payload, snapshot?.weekly?.contributions_payload, timeframe]);
 
-  /** Toggle the explainer panel for an indicator row. Same row collapses; different row replaces. */
+  /** Toggle the explainer panel for an indicator row. Same row collapses; different row replaces.
+   *  Indicators without a real explainer (i.e. not in INDICATORS_WITH_EXPLAINER) are no-ops at
+   *  the function boundary — belt-and-suspenders even though the JSX also gates the onClick. */
   function handleIndicatorClick(indicatorKey: string): void {
+    if (!INDICATORS_WITH_EXPLAINER.has(indicatorKey)) return;
     setExpandedIndicator((prev) => (prev === indicatorKey ? null : indicatorKey));
   }
 
@@ -457,26 +463,46 @@ export function MatrixTable({
                 const score = indicatorScores?.[indicatorKey] ?? null;
                 const rawValue = indicators?.[indicatorKey];
                 const isExpanded = expandedIndicator === indicatorKey;
+                const hasExplainer = INDICATORS_WITH_EXPLAINER.has(indicatorKey);
+                const labelText = INDICATOR_DISPLAY_LABELS[indicatorKey] ?? indicatorKey;
                 return (
                   <Fragment key={indicatorKey}>
-                    <tr
-                      className="border-t border-border/40 hover:bg-muted/40"
-                      aria-expanded={isExpanded}
-                    >
-                      <td
-                        className="py-1 pr-3 text-left text-foreground cursor-pointer underline-offset-4 hover:underline"
-                        onClick={() => handleIndicatorClick(indicatorKey)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            handleIndicatorClick(indicatorKey);
-                          }
-                        }}
-                      >
-                        {INDICATOR_DISPLAY_LABELS[indicatorKey] ?? indicatorKey}
-                      </td>
+                    <tr className="border-t border-border/40 hover:bg-muted/40">
+                      {hasExplainer ? (
+                        <td
+                          className="py-1 pr-3 text-left text-foreground cursor-pointer underline-offset-4 hover:underline"
+                          onClick={() => handleIndicatorClick(indicatorKey)}
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={isExpanded}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              handleIndicatorClick(indicatorKey);
+                            }
+                          }}
+                        >
+                          {labelText}
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            width="10"
+                            height="10"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className={`inline-block flex-shrink-0 ml-1.5 align-[-1px] text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                          >
+                            <polyline points="9 6 15 12 9 18" />
+                          </svg>
+                        </td>
+                      ) : (
+                        <td className="py-1 pr-3 text-left text-foreground">
+                          {labelText}
+                        </td>
+                      )}
                       <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
                         {formatValue(rawValue)}
                       </td>

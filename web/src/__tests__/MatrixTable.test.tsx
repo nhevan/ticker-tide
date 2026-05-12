@@ -8,7 +8,7 @@
 
 import React from 'react';
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MatrixTable } from '@/components/MatrixTable';
 import type { Pattern, Snapshot, ContributionItem } from '@/lib/api/types';
 
@@ -1074,6 +1074,51 @@ describe('MatrixTable', () => {
       const cell = screen.getByTestId('cell-rsi_14-momentum');
       expect(cell.textContent).not.toContain('▲');
       expect(cell.textContent).not.toContain('▼');
+    });
+  });
+
+  describe('explainer affordance — chevron + click behaviour', () => {
+    it('rsi_14 row is clickable (role="button") and toggles aria-expanded on click', () => {
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+        />,
+      );
+      const cell = screen.getByRole('button', { name: /RSI 14/i });
+      expect(cell.getAttribute('aria-expanded')).toBe('false');
+      fireEvent.click(cell);
+      expect(cell.getAttribute('aria-expanded')).toBe('true');
+      fireEvent.click(cell);
+      expect(cell.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('macd_line row is clickable (role="button") — parity with RSI', () => {
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ macd_line: 0.42, macd_signal: 0.31, macd_histogram: 0.11 }}
+          indicatorScores={{ macd_line: 55 }}
+          signalDirection={1}
+        />,
+      );
+      expect(screen.getByRole('button', { name: /MACD line/i })).toBeInTheDocument();
+    });
+
+    it('non-explainer rows (e.g. stoch_k) render no role="button" and no click affordance', () => {
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ stoch_k: 50 }}
+          indicatorScores={{ stoch_k: 10 }}
+          signalDirection={1}
+        />,
+      );
+      // The Stoch K label is rendered, but the <td> does NOT become a button.
+      expect(screen.getByText('Stoch K')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Stoch K/i })).not.toBeInTheDocument();
     });
   });
 });

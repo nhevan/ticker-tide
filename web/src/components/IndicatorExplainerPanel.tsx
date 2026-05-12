@@ -512,6 +512,10 @@ export function IndicatorExplainerPanel({
   snapshot,
   rules,
 }: IndicatorExplainerPanelProps) {
+  // NOTE: keep the dispatch branches below in sync with INDICATORS_WITH_EXPLAINER.
+  // The Set gates whether the matrix row is clickable; the dispatch decides which
+  // panel actually renders. Add a new indicator to BOTH or the UI silently breaks
+  // in one direction (clickable row that shows the placeholder, or invisible panel).
   if (indicator === 'rsi_14') {
     return <RsiPanel snapshot={snapshot} rules={rules} />;
   }
@@ -520,3 +524,16 @@ export function IndicatorExplainerPanel({
   }
   return <PlaceholderPanel indicator={indicator} />;
 }
+
+/**
+ * Set of indicator keys that have a real explainer panel (i.e. not the
+ * "coming soon" PlaceholderPanel). Consumers use this to gate visual
+ * affordances and click handlers — only rows for these indicators should
+ * appear clickable in the matrix.
+ *
+ * Keep in sync with the dispatch in IndicatorExplainerPanel above.
+ */
+export const INDICATORS_WITH_EXPLAINER: ReadonlySet<string> = new Set([
+  'rsi_14',
+  'macd_line',
+]);
