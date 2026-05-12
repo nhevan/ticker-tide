@@ -19,6 +19,7 @@ from typing import Any, Optional
 # in lockstep with score_candlestick_patterns / score_structural_patterns.
 # Private-prefixed names are accepted here as the canonical source of truth.
 from src.scorer.pattern_scorer import _CANDLESTICK_WINDOW_DAYS, _STRUCTURAL_WINDOW_DAYS
+from src.scorer.zone_labels import zone_label_for_rsi
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ def fetch_snapshot(
     ticker: str,
     picked_date: str,
     config: dict,
+    scorer_config: Optional[dict] = None,
 ) -> dict[str, Any]:
     """
     Build the full three-card snapshot dict for a ticker and picked date.
@@ -110,12 +112,21 @@ def fetch_snapshot(
                                window, with tone metadata. Daily rows include a
                                'days_ago' int key; weekly/monthly rows do not.
 
+    The daily section also includes RSI explainer fields:
+        regime: str | None — market regime from scores_daily.
+        rsi_profile: dict | None — percentile profile for rsi_14 from indicator_profiles.
+        rsi_zone_label: str | None — zone label from zone_label_for_rsi().
+        contributions_payload: dict | None — parsed key_signals_data JSON, or None for
+                               legacy rows where that column is NULL.
+
     Parameters:
         conn: Open SQLite connection with row_factory=sqlite3.Row.
         ticker: Ticker symbol (e.g. 'AAPL').
         picked_date: ISO date string (YYYY-MM-DD) selected by the user.
         config: Web config dict containing the 'sparkline' section and
                 'pattern_row_limit'.
+        scorer_config: Scorer config dict used for RSI zone label computation.
+                       When None, an empty dict is used (fallback thresholds apply).
 
     Returns:
         Dict with keys 'daily', 'weekly', 'monthly', each a section dict.
@@ -124,10 +135,12 @@ def fetch_snapshot(
     daily_days = sparkline_cfg.get("daily_days", 15)
     weekly_weeks = sparkline_cfg.get("weekly_weeks", 6)
     monthly_months = sparkline_cfg.get("monthly_months", 6)
+    rsi_sparkline_days = sparkline_cfg.get("rsi_sparkline_days", 100)
 
     why_limit = config.get("why_bullets", {}).get("limit", 3)
     signal_flip_lookback = config.get("signal_flip_lookback_days", 14)
     pattern_row_limit = int(config.get("pattern_row_limit", 5))
+    resolved_scorer_config = scorer_config if scorer_config is not None else {}
 
     return {
         "daily": _build_daily_section(
@@ -135,6 +148,8 @@ def fetch_snapshot(
             why_limit=why_limit,
             signal_flip_lookback_days=signal_flip_lookback,
             pattern_row_limit=pattern_row_limit,
+            scorer_config=resolved_scorer_config,
+            rsi_sparkline_days=rsi_sparkline_days,
         ),
         "weekly": _build_weekly_section(
             conn, ticker, picked_date, weekly_weeks,
@@ -155,6 +170,8 @@ def _build_daily_section(
     why_limit: int = 3,
     signal_flip_lookback_days: int = 14,
     pattern_row_limit: int = 5,
+    scorer_config: Optional[dict] = None,
+    rsi_sparkline_days: int = 100,
 ) -> dict[str, Any]:
     """
     Build the daily card data for a ticker and exact date.
@@ -163,8 +180,17 @@ def _build_daily_section(
     When available, includes all 9 categories, scores, indicators, patterns,
     recent_patterns, sparkline, signal, confidence, calibrated_score,
     resolved_period, key_signals (top N why-bullets), earnings
-    (next + last_surprise), and signal_flip (most recent flip within the
-    lookback window).
+    (next + last_surprise), signal_flip (most recent flip within the
+    lookback window), and RSI explainer fields.
+
+    RSI explainer fields added:
+        regime: market regime string from scores_daily, or None.
+        rsi_profile: dict with p5/p20/p50/p80/p95/mean/std for rsi_14 from
+                     indicator_profiles, or None if no profile exists.
+        rsi_zone_label: zone label string from zone_label_for_rsi(), or None
+                        if rsi_14 is not available.
+        contributions_payload: parsed key_signals_data JSON dict, or None for
+                               legacy rows where that column is NULL.
 
     Parameters:
         conn: Open SQLite connection.
@@ -175,10 +201,18 @@ def _build_daily_section(
         signal_flip_lookback_days: Number of days to look back for a signal flip.
         pattern_row_limit: Max pattern rows returned per category for
             recent_patterns (from config["pattern_row_limit"]).
+        scorer_config: Scorer config dict for RSI zone computation. When None,
+                       an empty dict is used (zone_label_for_rsi uses fallback thresholds).
+        rsi_sparkline_days: Number of trading days to include in the RSI sparkline
+                            (bounded by <= picked_date). Rows with rsi_14 IS NULL are
+                            excluded. Returns [] when no data exists.
 
     Returns:
-        Daily section dict.
+        Daily section dict. Includes rsi_sparkline: list[dict[str, Any]] — always
+        present (may be empty list), never None.
     """
+    resolved_scorer_config = scorer_config if scorer_config is not None else {}
+
     score_row = conn.execute(
         "SELECT * FROM scores_daily WHERE ticker = ? AND date = ?",
         (ticker, picked_date),
@@ -201,12 +235,38 @@ def _build_daily_section(
         top_n=pattern_row_limit, compute_days_ago=True,
     )
     sparkline = _fetch_daily_sparkline(conn, ticker, picked_date, sparkline_days)
+    rsi_sparkline = _fetch_rsi_sparkline(conn, ticker, picked_date, rsi_sparkline_days)
     key_signals = _extract_key_signals(score_dict, limit=why_limit)
     earnings = _fetch_earnings(conn, ticker, picked_date)
     signal_flip = _fetch_signal_flip(
         conn, ticker, picked_date, lookback_days=signal_flip_lookback_days
     )
     indicator_scores = _fetch_daily_indicator_scores(conn, ticker, picked_date)
+
+    # RSI explainer fields.
+    regime = score_dict.get("regime")
+    rsi_profile = _fetch_rsi_profile(conn, ticker)
+    rsi_value = indicators.get("rsi_14") if indicators else None
+    rsi_zone_label: Optional[str]
+    if rsi_value is not None:
+        rsi_thresholds = resolved_scorer_config.get(
+            "indicator_thresholds", {}
+        ).get("rsi_14", {"oversold": 30.0, "overbought": 70.0})
+        rsi_zone_label = zone_label_for_rsi(
+            float(rsi_value), rsi_profile, rsi_thresholds
+        )
+    else:
+        rsi_zone_label = None
+
+    # Parse contributions payload; treat NULL as None without raising.
+    raw_contributions = score_dict.get("key_signals_data")
+    if raw_contributions is not None:
+        try:
+            contributions_payload: Optional[dict] = json.loads(raw_contributions)
+        except (json.JSONDecodeError, ValueError):
+            contributions_payload = None
+    else:
+        contributions_payload = None
 
     return {
         "data_available": True,
@@ -216,6 +276,7 @@ def _build_daily_section(
         "patterns": patterns,
         "recent_patterns": recent_patterns,
         "sparkline": sparkline,
+        "rsi_sparkline": rsi_sparkline,
         "signal": score_dict.get("signal"),
         "confidence": score_dict.get("confidence"),
         "calibrated_score": score_dict.get("calibrated_score"),
@@ -225,6 +286,10 @@ def _build_daily_section(
         "earnings": earnings,
         "signal_flip": signal_flip,
         "indicator_scores": indicator_scores,
+        "regime": regime,
+        "rsi_profile": rsi_profile,
+        "rsi_zone_label": rsi_zone_label,
+        "contributions_payload": contributions_payload,
     }
 
 
@@ -404,6 +469,44 @@ def _fetch_daily_indicator_scores(
         return {row["indicator_name"]: row["score"] for row in rows}
     except sqlite3.OperationalError:
         return {}
+
+
+def _fetch_rsi_profile(
+    conn: sqlite3.Connection,
+    ticker: str,
+) -> Optional[dict]:
+    """
+    Fetch the rsi_14 percentile profile from indicator_profiles for a ticker.
+
+    Returns a dict with p5, p20, p50, p80, p95, mean, std keys, or None if
+    no profile row exists for this ticker and indicator.
+
+    Parameters:
+        conn:   Open SQLite connection with row_factory=sqlite3.Row.
+        ticker: Ticker symbol.
+
+    Returns:
+        Profile dict or None.
+    """
+    try:
+        row = conn.execute(
+            "SELECT p5, p20, p50, p80, p95, mean, std FROM indicator_profiles "
+            "WHERE ticker = ? AND indicator = 'rsi_14'",
+            (ticker,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    return {
+        "p5": row["p5"],
+        "p20": row["p20"],
+        "p50": row["p50"],
+        "p80": row["p80"],
+        "p95": row["p95"],
+        "mean": row["mean"],
+        "std": row["std"],
+    }
 
 
 def _fetch_weekly_indicator_scores(
@@ -792,6 +895,39 @@ def _fetch_weekly_sparkline(
         (ticker, picked_date, num_weeks),
     ).fetchall()
     return [{"date": r["week_start"], "close": r["close"]} for r in reversed(rows)]
+
+
+def _fetch_rsi_sparkline(
+    conn: sqlite3.Connection,
+    ticker: str,
+    picked_date: str,
+    num_days: int,
+) -> list[dict[str, Any]]:
+    """
+    Fetch the last num_days rsi_14 values from indicators_daily for a ticker up to
+    and including picked_date.
+
+    Applies a strict <= picked_date bound and excludes rows where rsi_14 IS NULL.
+    Returns rows in chronological (ascending) order. Returns an empty list when no
+    qualifying rows exist.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        picked_date: Upper-bound date (YYYY-MM-DD). No rows after this date are included.
+        num_days: Maximum number of rows to return.
+
+    Returns:
+        List of dicts with keys: date (str), value (float). Empty list if no data.
+    """
+    cur = conn.execute(
+        "SELECT date, rsi_14 FROM indicators_daily "
+        "WHERE ticker = ? AND date <= ? AND rsi_14 IS NOT NULL "
+        "ORDER BY date DESC LIMIT ?",
+        (ticker, picked_date, num_days),
+    )
+    rows = cur.fetchall()
+    return [{"date": r["date"], "value": float(r["rsi_14"])} for r in reversed(rows)]
 
 
 def _fetch_monthly_sparkline(

@@ -15,6 +15,7 @@ import type {
   LlmResponse,
   MeResponse,
   Snapshot,
+  ScoringRules,
   VerdictResponse,
 } from './types';
 
@@ -128,4 +129,14 @@ export async function generateVerdict(
     method: 'POST',
     body: JSON.stringify(args),
   });
+}
+
+/**
+ * Return static scoring rules and thresholds from the server.
+ *
+ * Process-static: the response does not change without a server restart.
+ * Use with staleTime: Infinity in TanStack Query.
+ */
+export async function fetchScoringRules(): Promise<ScoringRules> {
+  return apiFetch<ScoringRules>('/api/scoring-rules');
 }

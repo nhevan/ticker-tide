@@ -138,6 +138,7 @@ def create_app(
     db_path: str,
     config: dict,
     dist_dir: Optional[str] = None,
+    scorer_config: Optional[dict] = None,
 ) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -154,10 +155,14 @@ def create_app(
         config: Web config dict loaded from config/web.json.
         dist_dir: Path to the Vite build output directory (web/dist). When
             None, the catch-all route returns 503 for all non-API requests.
+        scorer_config: Scorer config dict loaded from config/scorer.json.
+            When None, an empty dict is used (RSI zone labels use fallback thresholds;
+            /api/scoring-rules returns empty regime_weights and default values).
 
     Returns:
         Configured FastAPI application instance.
     """
+    resolved_scorer_config = scorer_config if scorer_config is not None else {}
     web_password = os.environ.get("WEB_PASSWORD", "")
     secret_key = os.environ.get("WEB_SECRET_KEY", "change-me-in-production")
     session_ttl_seconds = config.get("session_ttl_hours", 168) * 3600
@@ -341,7 +346,9 @@ def create_app(
                     {"detail": f"No data found for ticker {ticker!r}."},
                     status_code=404,
                 )
-            snapshot = fetch_snapshot(conn, ticker, date, config=config)
+            snapshot = fetch_snapshot(
+                conn, ticker, date, config=config, scorer_config=resolved_scorer_config
+            )
             return JSONResponse(snapshot)
         finally:
             conn.close()
@@ -529,6 +536,51 @@ def create_app(
             )
 
         return JSONResponse({"verdict": verdict_text, "generated_at": generated_at})
+
+    # ── /api/scoring-rules ────────────────────────────────────────────────────
+
+    @app.get("/api/scoring-rules")
+    async def api_scoring_rules(request: Request) -> Response:
+        """
+        Return static scoring rules and thresholds from the scorer config.
+
+        Process-static: the response is constant for the lifetime of the process.
+        After editing config/scorer.json, restart the web service to refresh.
+
+        Parameters:
+            request: FastAPI request object for session access.
+
+        Returns:
+            200 scoring rules dict if authenticated.
+            401 {"detail": "Not authenticated."} otherwise.
+        """
+        if not _is_authenticated(request):
+            return JSONResponse({"detail": "Not authenticated."}, status_code=401)
+        logger.debug("api_scoring_rules: serving scoring rules")
+        rsi_thresholds = resolved_scorer_config.get(
+            "indicator_thresholds", {}
+        ).get("rsi_14", {"oversold": 30.0, "overbought": 70.0})
+        regime_weights = resolved_scorer_config.get("adaptive_weights", {})
+        expansion_factor = resolved_scorer_config.get("scoring", {}).get(
+            "score_expansion_factor", 1.0
+        )
+        return JSONResponse({
+            "rsi": {
+                "thresholds": rsi_thresholds,
+                "scoring_method": "percentile_blended_with_fallback",
+                "fallback_zones": ["oversold", "below_mid", "above_mid", "overbought"],
+                "profile_zones": [
+                    "extreme_oversold", "oversold", "below_mid",
+                    "above_mid", "overbought", "extreme_overbought",
+                ],
+            },
+            "regime_weights": regime_weights,
+            "score_expansion_factor": expansion_factor,
+            "approximation_caveat": (
+                "Item-level contributions do not sum to the final composite score "
+                "due to clamping at ±100, sector adjustment, and timeframe merging."
+            ),
+        })
 
     # ── Static file serving ───────────────────────────────────────────────────
     # Route registration order: /assets mount → explicit root assets → catch-all.

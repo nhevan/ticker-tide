@@ -74,6 +74,26 @@ def _load_database_config(config_path: str) -> dict:
         return json.load(fh)
 
 
+def _load_scorer_config(config_path: str) -> dict:
+    """
+    Load and return the scorer config from a JSON file.
+
+    Parameters:
+        config_path: Path to the config/scorer.json file.
+
+    Returns:
+        Scorer config dict.
+
+    Raises:
+        SystemExit: If the config file is missing or invalid JSON.
+    """
+    if not os.path.isfile(config_path):
+        logger.error(f"Scorer config not found: {config_path!r}")
+        sys.exit(1)
+    with open(config_path, "r") as fh:
+        return json.load(fh)
+
+
 def main() -> None:
     """
     Load configs, create the FastAPI app, and boot Uvicorn.
@@ -101,9 +121,11 @@ def main() -> None:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     web_config_path = os.path.join(project_root, "config", "web.json")
     db_config_path = os.path.join(project_root, "config", "database.json")
+    scorer_config_path = os.path.join(project_root, "config", "scorer.json")
 
     web_config = _load_web_config(web_config_path)
     db_config = _load_database_config(db_config_path)
+    scorer_config = _load_scorer_config(scorer_config_path)
 
     port: int = web_config.get("port", 8765)
     db_path = os.path.join(project_root, db_config.get("path", "data/signals.db"))
@@ -141,7 +163,12 @@ def main() -> None:
 
     from src.web.app import create_app
 
-    app = create_app(db_path=db_path, config=web_config, dist_dir=dist_dir)
+    app = create_app(
+        db_path=db_path,
+        config=web_config,
+        dist_dir=dist_dir,
+        scorer_config=scorer_config,
+    )
 
     uvicorn.run(
         app,

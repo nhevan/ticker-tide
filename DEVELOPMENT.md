@@ -279,6 +279,12 @@ The `patternLabels.ts` module is the single source of truth for pattern name dis
     - Add a human-readable label to `INDICATOR_DISPLAY_LABELS` in the same file.
     - The drift-guard test `tests/web/test_category_map_sync.py` will fail loudly if the Python and TypeScript maps fall out of sync.
 
+5d. **Add a zone classifier in `src/scorer/zone_labels.py`** (optional but recommended for indicators that will have their own explainer panel):
+    - Follow the `zone_label_for_rsi()` pattern: one function for the profile path (six labels using the same percentile boundaries as `score_with_percentile`) and one for the fallback path (fixed thresholds).
+    - Add a corresponding block in `src/web/queries.py` `_build_daily_section` to populate the zone label in the snapshot.
+    - Add zone label descriptions to `IndicatorExplainerPanel.tsx` and replace the placeholder with a real step trace.
+    - Add drift-guard tests in `tests/test_scorer/test_zone_labels.py` following the RSI pattern.
+
 6. **Write tests first (TDD)**:
     - `tests/test_calculator/test_indicators.py` — test that the value is computed and stored correctly
     - `tests/test_scorer/test_indicator_scorer.py` — test the score mapping

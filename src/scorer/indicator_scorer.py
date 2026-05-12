@@ -65,10 +65,6 @@ FIXED_LADDER: dict[str, list[tuple[float, str]]] = {
     ],
 }
 
-# Fixed RSI thresholds when no profile is available
-_RSI_FIXED_OVERSOLD = 30.0
-_RSI_FIXED_OVERBOUGHT = 70.0
-
 
 _VALID_PROFILE_TABLES = {
     "indicator_profiles",
@@ -293,12 +289,18 @@ def score_ema_alignment(close: float, ema_9: float, ema_21: float, ema_50: float
     return 0.0
 
 
-def score_rsi(value: float, profile: Optional[dict], higher_is_bullish: bool = False) -> float:
+def score_rsi(
+    value: float,
+    profile: Optional[dict],
+    config: dict,
+    *,
+    higher_is_bullish: bool = False,
+) -> float:
     """
     Score the RSI indicator.
 
     Uses percentile-based scoring from the stock's profile when available.
-    Falls back to fixed thresholds (70=overbought, 30=oversold) when not.
+    Falls back to thresholds from config["indicator_thresholds"]["rsi_14"] when not.
 
     The interpretation depends on market regime:
       - higher_is_bullish=False (ranging/volatile): high RSI = overbought = bearish.
@@ -307,7 +309,11 @@ def score_rsi(value: float, profile: Optional[dict], higher_is_bullish: bool = F
     Parameters:
         value: Current RSI value (0-100).
         profile: Percentile profile for RSI, or None for fixed fallback.
+        config: Scorer config dict. Must contain
+                config["indicator_thresholds"]["rsi_14"]["oversold"] and
+                config["indicator_thresholds"]["rsi_14"]["overbought"].
         higher_is_bullish: If True, high RSI is scored as bullish (trending regime).
+                           Keyword-only to prevent positional confusion with config.
                            Defaults to False (mean-reversion / ranging regime).
 
     Returns:
@@ -316,17 +322,31 @@ def score_rsi(value: float, profile: Optional[dict], higher_is_bullish: bool = F
     if profile is not None:
         return score_with_percentile(value, profile, higher_is_bullish=higher_is_bullish)
 
+    # Read thresholds from config; fall back to 30/70 if the key is absent (backward compat).
+    rsi_thresholds = config.get("indicator_thresholds", {}).get("rsi_14", {})
+    fixed_oversold = float(rsi_thresholds.get("oversold", 30.0))
+    fixed_overbought = float(rsi_thresholds.get("overbought", 70.0))
+
+    if fixed_oversold <= 0 or fixed_overbought >= 100 or fixed_oversold >= fixed_overbought:
+        logger.warning(
+            "score_rsi: degenerate thresholds oversold=%s overbought=%s — "
+            "score will be 0.0 in affected zones. Check indicator_thresholds.rsi_14 in scorer.json.",
+            fixed_oversold,
+            fixed_overbought,
+        )
+
     # Fixed fallback — compute mean-reversion score, then negate for trending regime.
-    if value <= _RSI_FIXED_OVERSOLD:
-        t = (_RSI_FIXED_OVERSOLD - value) / _RSI_FIXED_OVERSOLD
+    if value <= fixed_oversold:
+        t = (fixed_oversold - value) / fixed_oversold if fixed_oversold != 0 else 0.0
         raw = min(100.0, 50.0 + t * 50.0)
-    elif value >= _RSI_FIXED_OVERBOUGHT:
-        t = (value - _RSI_FIXED_OVERBOUGHT) / (100 - _RSI_FIXED_OVERBOUGHT)
+    elif value >= fixed_overbought:
+        t = (value - fixed_overbought) / (100 - fixed_overbought) if fixed_overbought != 100 else 0.0
         raw = max(-100.0, -(50.0 + t * 50.0))
     else:
-        # Neutral zone (30-70)
-        mid = (_RSI_FIXED_OVERSOLD + _RSI_FIXED_OVERBOUGHT) / 2
-        t = (value - mid) / ((_RSI_FIXED_OVERBOUGHT - _RSI_FIXED_OVERSOLD) / 2)
+        # Neutral zone
+        mid = (fixed_oversold + fixed_overbought) / 2
+        half_range = (fixed_overbought - fixed_oversold) / 2
+        t = (value - mid) / half_range if half_range != 0 else 0.0
         raw = max(-100.0, min(100.0, -t * 30.0))
 
     return -raw if higher_is_bullish else raw
@@ -468,7 +488,9 @@ def score_all_indicators(
 
     # RSI
     rsi = indicators.get("rsi_14")
-    result["rsi_14"] = None if rsi is None else score_rsi(rsi, profiles.get("rsi_14"), oscillator_higher_is_bullish)
+    result["rsi_14"] = None if rsi is None else score_rsi(
+        rsi, profiles.get("rsi_14"), config, higher_is_bullish=oscillator_higher_is_bullish
+    )
 
     # MACD histogram
     macd_hist = indicators.get("macd_histogram")

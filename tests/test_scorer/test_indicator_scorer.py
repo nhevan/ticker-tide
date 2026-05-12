@@ -16,6 +16,13 @@ from src.scorer.indicator_scorer import (
     score_with_zscore,
 )
 
+# Minimal scorer config that provides RSI thresholds for all score_rsi calls.
+_SCORER_CONFIG = {
+    "indicator_thresholds": {
+        "rsi_14": {"oversold": 30.0, "overbought": 70.0},
+    }
+}
+
 
 class TestScoreWithPercentile:
     def test_score_below_p5_bullish(self) -> None:
@@ -95,21 +102,21 @@ class TestScoreRSI:
         """RSI=75, p80=68, p95=78 → between p80 and p95 → bearish (-80 to -40)."""
         profile = {"p5": 25.0, "p20": 35.0, "p50": 53.0, "p80": 68.0, "p95": 78.0,
                    "mean": 52.0, "std": 12.0}
-        score = score_rsi(75.0, profile)
+        score = score_rsi(75.0, profile, _SCORER_CONFIG)
         assert -80 <= score <= -40
 
     def test_score_rsi_oversold(self) -> None:
         """RSI=25, p5=30 → below p5 → bullish (+80 to +100)."""
         profile = {"p5": 30.0, "p20": 40.0, "p50": 53.0, "p80": 67.0, "p95": 78.0,
                    "mean": 52.0, "std": 12.0}
-        score = score_rsi(25.0, profile)
+        score = score_rsi(25.0, profile, _SCORER_CONFIG)
         assert 80 <= score <= 100
 
     def test_score_rsi_neutral(self) -> None:
         """RSI=52, p50=53 → neutral (-10 to +10)."""
         profile = {"p5": 30.0, "p20": 40.0, "p50": 53.0, "p80": 67.0, "p95": 78.0,
                    "mean": 52.0, "std": 12.0}
-        score = score_rsi(52.0, profile)
+        score = score_rsi(52.0, profile, _SCORER_CONFIG)
         assert -10 <= score <= 10
 
     def test_score_rsi_uses_stock_profile(self) -> None:
@@ -120,14 +127,14 @@ class TestScoreRSI:
         # Stock B: p80=78 (70 is below p80 → not overbought for B)
         profile_b = {"p5": 30.0, "p20": 45.0, "p50": 58.0, "p80": 78.0, "p95": 88.0,
                      "mean": 58.0, "std": 12.0}
-        score_a = score_rsi(70.0, profile_a)
-        score_b = score_rsi(70.0, profile_b)
+        score_a = score_rsi(70.0, profile_a, _SCORER_CONFIG)
+        score_b = score_rsi(70.0, profile_b, _SCORER_CONFIG)
         assert score_a < score_b  # A should be more bearish than B
 
     def test_score_rsi_no_profile_uses_fixed(self) -> None:
         """No profile → fall back to fixed thresholds (70=overbought, 30=oversold)."""
-        score_overbought = score_rsi(75.0, None)
-        score_oversold = score_rsi(25.0, None)
+        score_overbought = score_rsi(75.0, None, _SCORER_CONFIG)
+        score_oversold = score_rsi(25.0, None, _SCORER_CONFIG)
         assert score_overbought < 0
         assert score_oversold > 0
 
@@ -263,34 +270,34 @@ class TestScoreRSIRegimeAware:
 
     def test_trending_overbought_rsi_is_bullish_with_profile(self) -> None:
         """RSI=75 with higher_is_bullish=True (trending) → bullish (positive score)."""
-        score = score_rsi(75.0, self._PROFILE, higher_is_bullish=True)
+        score = score_rsi(75.0, self._PROFILE, _SCORER_CONFIG, higher_is_bullish=True)
         assert score > 0, f"Trending RSI=75 should be bullish, got {score}"
 
     def test_trending_oversold_rsi_is_bearish_with_profile(self) -> None:
         """RSI=25 with higher_is_bullish=True (trending) → bearish (negative score)."""
-        score = score_rsi(25.0, self._PROFILE, higher_is_bullish=True)
+        score = score_rsi(25.0, self._PROFILE, _SCORER_CONFIG, higher_is_bullish=True)
         assert score < 0, f"Trending RSI=25 should be bearish (downtrend continuation), got {score}"
 
     def test_trending_overbought_rsi_is_bullish_no_profile(self) -> None:
         """RSI=75, no profile, higher_is_bullish=True → bullish (positive score)."""
-        score = score_rsi(75.0, None, higher_is_bullish=True)
+        score = score_rsi(75.0, None, _SCORER_CONFIG, higher_is_bullish=True)
         assert score > 0, f"Trending RSI=75 (no profile) should be bullish, got {score}"
 
     def test_trending_oversold_rsi_is_bearish_no_profile(self) -> None:
         """RSI=25, no profile, higher_is_bullish=True → bearish (negative score)."""
-        score = score_rsi(25.0, None, higher_is_bullish=True)
+        score = score_rsi(25.0, None, _SCORER_CONFIG, higher_is_bullish=True)
         assert score < 0, f"Trending RSI=25 (no profile) should be bearish, got {score}"
 
     def test_default_higher_is_bullish_false_unchanged(self) -> None:
         """Default (higher_is_bullish=False) preserves original mean-reversion behaviour."""
-        original = score_rsi(75.0, self._PROFILE)
-        explicit = score_rsi(75.0, self._PROFILE, higher_is_bullish=False)
+        original = score_rsi(75.0, self._PROFILE, _SCORER_CONFIG)
+        explicit = score_rsi(75.0, self._PROFILE, _SCORER_CONFIG, higher_is_bullish=False)
         assert original == explicit
 
     def test_trending_and_ranging_scores_are_opposite_sign(self) -> None:
         """score_rsi(75) trending and ranging should have opposite signs."""
-        ranging = score_rsi(75.0, self._PROFILE, higher_is_bullish=False)
-        trending = score_rsi(75.0, self._PROFILE, higher_is_bullish=True)
+        ranging = score_rsi(75.0, self._PROFILE, _SCORER_CONFIG, higher_is_bullish=False)
+        trending = score_rsi(75.0, self._PROFILE, _SCORER_CONFIG, higher_is_bullish=True)
         assert ranging < 0 and trending > 0
 
 
