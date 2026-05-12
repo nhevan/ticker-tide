@@ -203,7 +203,26 @@ Controls all indicator periods, pattern detection, and profile computation.
 
 ## config/scorer.json
 
-Controls regime detection, adaptive weights, signal thresholds, and confidence modifiers.
+Controls regime detection, adaptive weights, signal thresholds, confidence modifiers, and
+per-indicator fixed fallback thresholds.
+
+### Indicator thresholds
+
+Fixed fallback thresholds used when a ticker has no per-ticker percentile profile for the
+indicator. For RSI these are the classic oversold/overbought levels. Changing these values
+requires re-running the scorer: `python scripts/run_scorer.py --force`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `indicator_thresholds.rsi_14.oversold` | float | `30.0` | RSI at or below this value is scored as oversold (bullish in ranging regime) |
+| `indicator_thresholds.rsi_14.overbought` | float | `70.0` | RSI at or above this value is scored as overbought (bearish in ranging regime) |
+
+> **Note on `score_expansion_factor` and persisted payloads:** `scores_daily.key_signals_data`
+> stores per-indicator contribution payloads at scoring time, including the expansion factor
+> in effect at that moment. Changing `scoring.score_expansion_factor` in `scorer.json` and
+> then re-running `python scripts/run_scorer.py --force` will update both the scores and the
+> stored payloads so they stay consistent. Without `--force`, historical rows retain the
+> expansion factor that was active when they were originally scored.
 
 ### Regime detection
 

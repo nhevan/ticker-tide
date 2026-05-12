@@ -32,7 +32,13 @@ def _load_json(path: Path) -> dict:
 
 _web_config = _load_json(_PROJECT_ROOT / "config" / "web.json")
 _db_config = _load_json(_PROJECT_ROOT / "config" / "database.json")
+_scorer_config = _load_json(_PROJECT_ROOT / "config" / "scorer.json")
 _db_path = str(_PROJECT_ROOT / _db_config.get("path", "data/signals.db"))
 _dist_dir = str(_PROJECT_ROOT / "web" / "dist")
 
-app = create_app(db_path=_db_path, config=_web_config, dist_dir=_dist_dir)
+app = create_app(
+    db_path=_db_path,
+    config=_web_config,
+    dist_dir=_dist_dir,
+    scorer_config=_scorer_config,
+)

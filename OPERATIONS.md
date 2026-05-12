@@ -146,6 +146,21 @@ If all page loads return `{"detail": "Frontend not built."}`:
 
 Never start `run_web.py` manually — the systemd service handles it.
 
+### Updating scorer config (`config/scorer.json`)
+
+`GET /api/scoring-rules` is **process-static**: it reads `config/scorer.json` at startup and returns the same response for the lifetime of the process. Changes to `scorer.json` (including RSI thresholds, regime weights, and `score_expansion_factor`) are not reflected until the web service is restarted:
+
+```bash
+sudo systemctl restart ticker-tide-web
+```
+
+If you change `scoring.score_expansion_factor` or RSI thresholds in `scorer.json` and want the stored contribution payloads (`scores_daily.key_signals_data`) to be consistent with the new config, also re-run the scorer before restarting the web service:
+
+```bash
+python scripts/run_scorer.py --force
+sudo systemctl restart ticker-tide-web
+```
+
 ### Caddy reverse proxy
 
 **Live URL:** https://quant.nhevan.com

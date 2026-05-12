@@ -1,4 +1,7 @@
 {
+  "indicator_thresholds": {
+    "rsi_14": {"oversold": 30.0, "overbought": 70.0}
+  },
   "regime_detection": {
     "adx_trending_threshold": 25,
     "adx_ranging_threshold": 20,

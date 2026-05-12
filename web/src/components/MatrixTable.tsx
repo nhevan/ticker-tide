@@ -14,11 +14,13 @@
  * there are zero patterns for that category.
  */
 
+import { useState, Fragment } from 'react';
 import { INDICATOR_CATEGORY_MAP, INDICATOR_DISPLAY_LABELS } from '@/lib/scoring/categoryMap';
 import type { Category } from '@/lib/scoring/categoryMap';
 import { humanizePatternName } from '@/lib/scoring/patternLabels';
-import type { CategoryScores, Pattern } from '@/lib/api/types';
+import type { CategoryScores, Pattern, Snapshot, ScoringRules } from '@/lib/api/types';
 import type { DailyCategory, WeeklyCategory, MonthlyCategory } from '@/lib/api/types';
+import { IndicatorExplainerPanel } from '@/components/IndicatorExplainerPanel';
 import {
   Tooltip,
   TooltipContent,
@@ -51,6 +53,16 @@ interface MatrixTableProps {
    * that have no indicator/pattern constituents in the matrix.
    */
   categoryScores?: CategoryScores;
+  /**
+   * Full snapshot object — passed to IndicatorExplainerPanel when a row is
+   * expanded. Optional; explainer panel is suppressed when not provided.
+   */
+  snapshot?: Snapshot;
+  /**
+   * Scoring rules from /api/scoring-rules — passed to IndicatorExplainerPanel.
+   * Optional; panel renders with limited info when undefined.
+   */
+  scoringRules?: ScoringRules;
 }
 
 /** All 9 categories. Always rendered as columns; off-timeframe cells get a tooltip. */
@@ -336,12 +348,24 @@ export function MatrixTable({
   timeframe = 'daily',
   recentPatterns = [],
   categoryScores,
+  snapshot,
+  scoringRules,
 }: MatrixTableProps) {
+  const [expandedIndicator, setExpandedIndicator] = useState<string | null>(null);
+
   const hasData =
     (indicators !== undefined && Object.keys(indicators).length > 0) ||
     (indicatorScores !== undefined && Object.keys(indicatorScores).length > 0);
 
   const scored = new Set<string>(categories as readonly string[]);
+
+  /** Toggle the explainer panel for an indicator row. Same row collapses; different row replaces. */
+  function handleIndicatorClick(indicatorKey: string): void {
+    setExpandedIndicator((prev) => (prev === indicatorKey ? null : indicatorKey));
+  }
+
+  /** Total column count (label + value + 9 category columns). */
+  const totalColSpan = 2 + ALL_CATEGORIES.length;
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -368,22 +392,50 @@ export function MatrixTable({
               {INDICATOR_KEYS.map((indicatorKey) => {
                 const score = indicatorScores?.[indicatorKey] ?? null;
                 const rawValue = indicators?.[indicatorKey];
+                const isExpanded = expandedIndicator === indicatorKey;
                 return (
-                  <tr key={indicatorKey} className="border-t border-border/40">
-                    <td className="py-1 pr-3 text-left text-foreground">
-                      {INDICATOR_DISPLAY_LABELS[indicatorKey] ?? indicatorKey}
-                    </td>
-                    <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
-                      {formatValue(rawValue)}
-                    </td>
-                    {ALL_CATEGORIES.map((cat) => (
-                      <CellView
-                        key={cat}
-                        testid={`cell-${indicatorKey}-${cat}`}
-                        state={resolveIndicatorCellState(indicatorKey, cat, score, signalDirection, scored)}
-                      />
-                    ))}
-                  </tr>
+                  <Fragment key={indicatorKey}>
+                    <tr
+                      className="border-t border-border/40 hover:bg-muted/40"
+                      aria-expanded={isExpanded}
+                    >
+                      <td
+                        className="py-1 pr-3 text-left text-foreground cursor-pointer underline-offset-4 hover:underline"
+                        onClick={() => handleIndicatorClick(indicatorKey)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleIndicatorClick(indicatorKey);
+                          }
+                        }}
+                      >
+                        {INDICATOR_DISPLAY_LABELS[indicatorKey] ?? indicatorKey}
+                      </td>
+                      <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
+                        {formatValue(rawValue)}
+                      </td>
+                      {ALL_CATEGORIES.map((cat) => (
+                        <CellView
+                          key={cat}
+                          testid={`cell-${indicatorKey}-${cat}`}
+                          state={resolveIndicatorCellState(indicatorKey, cat, score, signalDirection, scored)}
+                        />
+                      ))}
+                    </tr>
+                    {isExpanded && snapshot && (
+                      <tr>
+                        <td colSpan={totalColSpan} className="p-0">
+                          <IndicatorExplainerPanel
+                            indicator={indicatorKey}
+                            snapshot={snapshot}
+                            rules={scoringRules}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
 

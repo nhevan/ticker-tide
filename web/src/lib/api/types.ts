@@ -82,6 +82,48 @@ export interface SignalFlip {
   days_ago: number | null;
 }
 
+/** RSI percentile profile from indicator_profiles. */
+export interface RsiProfile {
+  p5: number;
+  p20: number;
+  p50: number;
+  p80: number;
+  p95: number;
+  mean: number;
+  std: number;
+}
+
+/** A single indicator contribution item inside ContributionsPayload. */
+export interface ContributionItem {
+  name: string;
+  category: string;
+  /** score is the INDICATOR SCORE (−100 to +100), NOT the raw measurement. */
+  score: number;
+  /** raw_value stores the indicator score, not the raw measurement. See IndicatorExplainerPanel. */
+  raw_value: number;
+  category_weight: number;
+  contribution: number;
+}
+
+/** The contributions payload stored in scores_daily.key_signals_data. */
+export interface ContributionsPayload {
+  expansion_factor: number;
+  items: ContributionItem[];
+}
+
+/** Response shape for GET /api/scoring-rules. */
+export interface ScoringRules {
+  rsi: {
+    thresholds: { oversold: number; overbought: number };
+    scoring_method: string;
+    fallback_zones: string[];
+    profile_zones: string[];
+  };
+  regime_weights: Record<string, Record<string, number>>;
+  score_expansion_factor: number;
+  approximation_caveat: string;
+}
+
 /** Daily snapshot card data. */
 export interface DailySection {
   data_available: boolean;
@@ -100,6 +142,14 @@ export interface DailySection {
   key_signals?: string[];
   earnings?: EarningsData;
   signal_flip?: SignalFlip | null;
+  /** Market regime from scores_daily (e.g. "trending", "ranging", "volatile"). */
+  regime?: string | null;
+  /** Per-ticker RSI percentile profile, or null if no profile exists. */
+  rsi_profile?: RsiProfile | null;
+  /** Zone label string from zone_label_for_rsi(), or null if RSI unavailable. */
+  rsi_zone_label?: string | null;
+  /** Parsed key_signals_data payload, or null for legacy rows. */
+  contributions_payload?: ContributionsPayload | null;
 }
 
 /** Weekly or monthly snapshot card data. */

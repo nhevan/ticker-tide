@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useTickers } from '@/lib/hooks/useTickers';
 import { useDateRange } from '@/lib/hooks/useDateRange';
 import { useSnapshot } from '@/lib/hooks/useSnapshot';
+import { useScoringRules } from '@/lib/hooks/useScoringRules';
 import { ApiError } from '@/lib/api/client';
 
 /**
@@ -69,6 +70,8 @@ export function DashboardPage() {
     isLoading: snapshotLoading,
     error: snapshotError,
   } = useSnapshot(loadedTicker, loadedDate);
+
+  const { data: scoringRules } = useScoringRules();
 
   function handleLoad() {
     if (!inputTicker || !inputDate) return;
@@ -142,6 +145,8 @@ export function DashboardPage() {
                 timeframe="daily"
                 recentPatterns={snapshot.daily.recent_patterns}
                 categoryScores={snapshot.daily.scores}
+                snapshot={snapshot}
+                scoringRules={scoringRules}
               />
               <MatrixTable
                 title="Weekly — Indicator Agreement"
