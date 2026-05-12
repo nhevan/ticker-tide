@@ -1,16 +1,20 @@
 /**
- * RsiPercentileStrip — visual position of today's RSI on the per-ticker
- * historical distribution. Renders a gradient bar (green→muted→red),
- * percentile tick marks (p5/p20/p50/p80/p95), today's value as a primary-
- * color dot with floating numeric label, and a one-sentence caption that
- * uses the server-supplied zone label description.
+ * RsiPercentileStrip — visual position of today's indicator value on the
+ * per-ticker historical distribution. Generic over any bounded 0–100
+ * indicator; the indicator label is parameterised via the `label` prop.
+ *
+ * Renders a gradient bar (green→muted→red), percentile tick marks
+ * (p5/p20/p50/p80/p95), today's value as a primary-color dot with floating
+ * numeric label, and a one-sentence caption that uses the server-supplied
+ * zone label description.
  *
  * Theme-aware via CSS custom properties. SVG-only — no chart library.
  *
- * @param profile - The ticker's RSI percentile distribution from snapshot.daily.rsi_profile.
- * @param today - Today's raw RSI(14) reading from snapshot.daily.indicators.rsi_14.
- * @param zoneLabel - Server-computed zone label (e.g. "above_mid") from snapshot.daily.rsi_zone_label.
+ * @param profile - The ticker's percentile distribution from the snapshot.
+ * @param today - Today's raw indicator reading (0–100).
+ * @param zoneLabel - Server-computed zone label (e.g. "above_mid").
  * @param zoneDescription - Human-friendly prose fragment for the zone (passed from caller's ZONE_LABEL_DESCRIPTIONS map).
+ * @param label - Display name for the indicator used in the prose caption (defaults to 'RSI').
  * @returns The rendered strip, or null if any required numeric input is non-finite.
  */
 import { useId } from 'react';
@@ -20,6 +24,7 @@ interface RsiPercentileStripProps {
   today: number;
   zoneLabel: string | null;
   zoneDescription: string;
+  label?: string;
 }
 
 export function RsiPercentileStrip({
@@ -27,6 +32,7 @@ export function RsiPercentileStrip({
   today,
   zoneLabel,
   zoneDescription,
+  label = 'RSI',
 }: RsiPercentileStripProps) {
   // REQUIRED: defensive null/NaN guard. DB columns are nullable; TS type lies.
   // Use Number.isFinite — isNaN(null) returns false in JS and would silently pass.
@@ -119,7 +125,7 @@ export function RsiPercentileStrip({
       </svg>
       {zoneLabel && zoneDescription && (
         <div className="mt-1 text-[10px] text-muted-foreground">
-          Today's RSI of <span className="font-mono text-foreground">{today.toFixed(1)}</span> sits
+          Today's {label} of <span className="font-mono text-foreground">{today.toFixed(1)}</span> sits
           in the <span className="text-foreground">{zoneDescription.toLowerCase()}</span> region.
         </div>
       )}

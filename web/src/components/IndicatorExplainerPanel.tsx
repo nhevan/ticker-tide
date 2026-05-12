@@ -384,7 +384,7 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
   // Dummy values for steps 3–7 — replaced per task plan.
   const dummyScore = -12.4; // [PROTOTYPE]
   const dummyDenom = 168.0; // [PROTOTYPE] Σ|momentum scores|
-  const dummyRegime = (daily.regime ?? 'ranging') as string;
+  const regime = (daily.regime ?? 'ranging') as string;
   const dummyExpansion = 1.12; // [PROTOTYPE]
   const dummyMomentumWeight = 0.28; // [PROTOTYPE]
   const dummyFinalContribution = (dummyScore * Math.abs(dummyScore) / dummyDenom) * dummyMomentumWeight * dummyExpansion;
@@ -452,9 +452,24 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
         )}
       </StepCard>
 
-      {/* Step 3 — Scoring path [PROTOTYPE — dummy profile] */}
+      {/* Step 3 — Scoring path */}
       <StepCard stepNumber={3} heading="Scoring path">
-        <p>
+        {stochProfile &&
+        Number.isFinite(stochProfile.p5) &&
+        Number.isFinite(stochProfile.p20) &&
+        Number.isFinite(stochProfile.p50) &&
+        Number.isFinite(stochProfile.p80) &&
+        Number.isFinite(stochProfile.p95) &&
+        kValue !== null ? (
+          <RsiPercentileStrip
+            profile={stochProfile}
+            today={kValue}
+            zoneLabel={zoneLabel}
+            zoneDescription={STOCH_ZONE_LABEL_DESCRIPTIONS[zoneLabel ?? ''] ?? ''}
+            label="Stoch %K"
+          />
+        ) : null}
+        <p className={stochProfile && kValue !== null ? 'mt-2' : ''}>
           {stochProfile
             ? 'This ticker has a persisted percentile profile for %K, so scoring uses the '
             : 'This ticker has no persisted %K profile, so scoring falls back to the '}
@@ -467,12 +482,11 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
             : 'With a profile, scoring would use six zones around p5/p20/p50/p80/p95.'}
         </p>
         <p className="mt-1 text-muted-foreground">
-          In a <span className="font-mono">{dummyRegime}</span> regime, the oscillator's sign{' '}
-          {dummyRegime === 'ranging'
-            ? 'is treated as mean-reverting (overbought → bearish, oversold → bullish).'
-            : 'flips: in trending regimes, overbought is bullish (momentum continuation).'}
+          In a <span className="font-mono">{regime}</span> regime, the oscillator's sign{' '}
+          {regime === 'trending'
+            ? 'flips: in trending regimes, overbought is bullish (momentum continuation).'
+            : 'is treated as mean-reverting (overbought → bearish, oversold → bullish).'}
         </p>
-        <p className="mt-1 text-muted-foreground italic text-[10px]">[PROTOTYPE — profile percentiles wired in a later task]</p>
       </StepCard>
 
       {/* Step 4 — Stoch K score [PROTOTYPE — dummy score and dummy profile] */}
@@ -508,13 +522,13 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
       {/* Step 6 — Category weight × expansion [PROTOTYPE — dummy weights] */}
       <StepCard stepNumber={6} heading="Category weight × expansion">
         <p>
-          Momentum's base weight in the <span className="font-mono">{dummyRegime}</span> regime is{' '}
+          Momentum's base weight in the <span className="font-mono">{regime}</span> regime is{' '}
           <span className="font-mono font-semibold">{(dummyMomentumWeight * 100).toFixed(0)}%</span>, then scaled by the cross-section expansion factor{' '}
           <span className="font-mono font-semibold">×{dummyExpansion.toFixed(2)}</span>{' '}
           <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>.
         </p>
         <div className="mt-3">
-          <CategoryWeightBar weights={dummyCategoryWeights} regime={dummyRegime} expansion={dummyExpansion} activeName="momentum" />
+          <CategoryWeightBar weights={dummyCategoryWeights} regime={regime} expansion={dummyExpansion} activeName="momentum" />
         </div>
       </StepCard>
 
