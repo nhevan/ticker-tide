@@ -97,10 +97,16 @@ export interface RsiProfile {
 export interface ContributionItem {
   name: string;
   category: string;
+  /** Distinguishes indicator, pattern, and aggregate contributions. Python emits all three values. */
+  kind: 'indicator' | 'pattern' | 'aggregate';
   /** score is the INDICATOR SCORE (−100 to +100), NOT the raw measurement. */
   score: number;
-  /** raw_value stores the indicator score, not the raw measurement. See IndicatorExplainerPanel. */
-  raw_value: number;
+  /**
+   * Indicators: stores the indicator score, not the raw measurement (see
+   * IndicatorExplainerPanel). Patterns and aggregates: always `null` —
+   * those item kinds have no single scalar raw measurement.
+   */
+  raw_value: number | null;
   category_weight: number;
   contribution: number;
 }

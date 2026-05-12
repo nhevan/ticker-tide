@@ -567,3 +567,220 @@ def test_kind_field_assigned_correctly() -> None:
             assert item["kind"] == "indicator"
         elif item["name"] == "candlestick_pattern_score":
             assert item["kind"] == "pattern"
+
+
+# ---------------------------------------------------------------------------
+# Aggregate score items (sentiment, fundamental, macro)
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateItems:
+    """Tests for the aggregate_scores parameter emitting kind='aggregate' items."""
+
+    def test_aggregate_items_emitted_with_correct_fields(self) -> None:
+        """
+        With non-None aggregate_scores and matching regime_weights, three
+        'aggregate' items are appended with the correct name, category, kind,
+        score, category_weight, and contribution.
+        """
+        aggregate_scores = {
+            "sentiment": 60.0,
+            "fundamental": -20.0,
+            "macro": 40.0,
+        }
+        regime_weights = {
+            "trend": 0.4,
+            "momentum": 0.3,
+            "volume": 0.2,
+            "sentiment": 0.03,
+            "fundamental": 0.04,
+            "macro": 0.03,
+        }
+        expansion_factor = 2.0
+
+        result = build_contributions_payload(
+            indicator_scores={},
+            pattern_scores={},
+            regime_weights=regime_weights,
+            expansion_factor=expansion_factor,
+            aggregate_scores=aggregate_scores,
+        )
+
+        items = result["items"]
+        names = [item["name"] for item in items]
+        assert "sentiment" in names
+        assert "fundamental" in names
+        assert "macro" in names
+
+        sentiment_item = next(i for i in items if i["name"] == "sentiment")
+        assert sentiment_item["kind"] == "aggregate"
+        assert sentiment_item["category"] == "sentiment"
+        assert sentiment_item["score"] == 60.0
+        assert sentiment_item["category_weight"] == 0.03
+        assert sentiment_item["raw_value"] is None
+        expected_contribution = 60.0 * 0.03 * 2.0
+        assert abs(sentiment_item["contribution"] - expected_contribution) < 1e-9
+
+        fundamental_item = next(i for i in items if i["name"] == "fundamental")
+        assert fundamental_item["kind"] == "aggregate"
+        assert fundamental_item["score"] == -20.0
+        expected_fund = -20.0 * 0.04 * 2.0
+        assert abs(fundamental_item["contribution"] - expected_fund) < 1e-9
+
+        macro_item = next(i for i in items if i["name"] == "macro")
+        assert macro_item["kind"] == "aggregate"
+        assert macro_item["score"] == 40.0
+        expected_macro = 40.0 * 0.03 * 2.0
+        assert abs(macro_item["contribution"] - expected_macro) < 1e-9
+
+    def test_none_aggregate_score_is_skipped(self) -> None:
+        """
+        When aggregate_scores contains a None entry, that entry is skipped.
+        Non-None entries are still emitted.
+        """
+        aggregate_scores = {
+            "sentiment": None,
+            "fundamental": -20.0,
+            "macro": 40.0,
+        }
+        regime_weights = {"sentiment": 0.1, "fundamental": 0.1, "macro": 0.1}
+        expansion_factor = 1.0
+
+        result = build_contributions_payload(
+            indicator_scores={},
+            pattern_scores={},
+            regime_weights=regime_weights,
+            expansion_factor=expansion_factor,
+            aggregate_scores=aggregate_scores,
+        )
+
+        names = [item["name"] for item in result["items"]]
+        assert "sentiment" not in names
+        assert "fundamental" in names
+        assert "macro" in names
+
+    def test_zero_weight_aggregate_emits_zero_contribution(self) -> None:
+        """
+        When regime_weights[category] == 0.0, the aggregate item IS emitted
+        (truthful zero rendering, per user decision) with contribution == 0.0.
+        raw_value must be None.
+        """
+        aggregate_scores = {"sentiment": 50.0, "fundamental": -20.0, "macro": 30.0}
+        regime_weights = {
+            "sentiment": 0.0,
+            "fundamental": 0.0,
+            "macro": 0.0,
+        }
+        expansion_factor = 1.5
+
+        result = build_contributions_payload(
+            indicator_scores={},
+            pattern_scores={},
+            regime_weights=regime_weights,
+            expansion_factor=expansion_factor,
+            aggregate_scores=aggregate_scores,
+        )
+
+        items = result["items"]
+        names = [item["name"] for item in items]
+        assert "sentiment" in names
+        assert "fundamental" in names
+        assert "macro" in names
+
+        for item in items:
+            assert item["contribution"] == 0.0
+            assert item["raw_value"] is None
+
+    def test_aggregate_items_do_not_affect_indicator_and_pattern_kinds(self) -> None:
+        """
+        Indicator items still have kind='indicator', pattern items still have
+        kind='pattern', and aggregate items have kind='aggregate' — no cross-contamination.
+        """
+        aggregate_scores = {"sentiment": 30.0}
+        regime_weights = {"momentum": 0.5, "candlestick": 0.3, "sentiment": 0.2}
+        expansion_factor = 1.0
+
+        result = build_contributions_payload(
+            indicator_scores={"rsi_14": 40.0},
+            pattern_scores={"candlestick_pattern_score": 50.0},
+            regime_weights=regime_weights,
+            expansion_factor=expansion_factor,
+            aggregate_scores=aggregate_scores,
+        )
+
+        items = result["items"]
+        rsi_item = next(i for i in items if i["name"] == "rsi_14")
+        assert rsi_item["kind"] == "indicator"
+
+        pattern_item = next(i for i in items if i["name"] == "candlestick_pattern_score")
+        assert pattern_item["kind"] == "pattern"
+
+        sentiment_item = next(i for i in items if i["name"] == "sentiment")
+        assert sentiment_item["kind"] == "aggregate"
+
+    def test_sort_order_aggregates_mingle_with_indicators(self) -> None:
+        """
+        After appending aggregate items, the final list is still sorted by
+        abs(contribution) descending — aggregates mingle naturally with indicators.
+        """
+        aggregate_scores = {"macro": 80.0}
+        regime_weights = {
+            "momentum": 0.1,  # rsi_14 contribution will be small
+            "macro": 0.5,     # macro contribution will be large
+        }
+        expansion_factor = 1.0
+
+        result = build_contributions_payload(
+            indicator_scores={"rsi_14": 10.0},
+            pattern_scores={},
+            regime_weights=regime_weights,
+            expansion_factor=expansion_factor,
+            aggregate_scores=aggregate_scores,
+        )
+
+        items = result["items"]
+        abs_contributions = [abs(item["contribution"]) for item in items]
+        assert abs_contributions == sorted(abs_contributions, reverse=True)
+
+        # Macro should come before rsi_14 given the numbers above
+        names = [item["name"] for item in items]
+        assert names.index("macro") < names.index("rsi_14")
+
+    def test_empty_aggregate_scores_no_aggregate_items(self) -> None:
+        """
+        When aggregate_scores is not provided (default empty), no aggregate
+        items appear. Backward-compat: existing callers that don't pass
+        aggregate_scores still work.
+        """
+        result = build_contributions_payload(
+            indicator_scores={"rsi_14": 50.0},
+            pattern_scores={},
+            regime_weights={"momentum": 1.0},
+            expansion_factor=1.0,
+        )
+
+        names = [item["name"] for item in result["items"]]
+        assert "sentiment" not in names
+        assert "fundamental" not in names
+        assert "macro" not in names
+
+    def test_aggregate_contribution_is_float(self) -> None:
+        """Every aggregate item's contribution must be a Python float."""
+        aggregate_scores = {"sentiment": 50.0, "fundamental": -30.0, "macro": 20.0}
+        regime_weights = {"sentiment": 0.1, "fundamental": 0.1, "macro": 0.1}
+        expansion_factor = 1.0
+
+        result = build_contributions_payload(
+            indicator_scores={},
+            pattern_scores={},
+            regime_weights=regime_weights,
+            expansion_factor=expansion_factor,
+            aggregate_scores=aggregate_scores,
+        )
+
+        for item in result["items"]:
+            if item["kind"] == "aggregate":
+                assert isinstance(item["contribution"], float), (
+                    f"Aggregate item '{item['name']}' contribution is "
+                    f"{type(item['contribution'])}, expected float"
+                )

@@ -10,7 +10,7 @@ import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MatrixTable } from '@/components/MatrixTable';
-import type { Pattern } from '@/lib/api/types';
+import type { Pattern, Snapshot, ContributionItem } from '@/lib/api/types';
 
 describe('MatrixTable', () => {
   it('shows empty-state message when no data is provided', () => {
@@ -634,6 +634,302 @@ describe('MatrixTable', () => {
       const cell = screen.getByTestId('cell-rsi_14-momentum');
       expect(cell).toHaveTextContent('—');
       expect(cell.getAttribute('title')).toBe('Not scored at this timeframe');
+    });
+  });
+
+  describe('contribution display', () => {
+    /** Minimal snapshot fixture with a contributions_payload populated for indicator items. */
+    function makeSnapshotWithContributions(
+      items: ContributionItem[],
+    ): Snapshot {
+      return {
+        daily: {
+          data_available: true,
+          categories: [
+            'trend', 'momentum', 'volume', 'volatility',
+            'candlestick', 'structural', 'sentiment', 'fundamental', 'macro',
+          ],
+          resolved_period: '2026-05-12',
+          contributions_payload: {
+            expansion_factor: 1.0,
+            items,
+          },
+          rsi_sparkline: [],
+        },
+        weekly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+        monthly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+      } as Snapshot;
+    }
+
+    it('positive contribution renders up-glyph and magnitude in own-category indicator cell', () => {
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 57, raw_value: 57, category_weight: 0.2, contribution: 3.2 },
+      ]);
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).toContain('▲');
+      expect(cell.textContent).toContain('3.2');
+    });
+
+    it('negative contribution renders down-glyph and magnitude in own-category indicator cell', () => {
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: -40, raw_value: -40, category_weight: 0.2, contribution: -1.8 },
+      ]);
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 35 }}
+          indicatorScores={{ rsi_14: -40 }}
+          signalDirection={-1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).toContain('▼');
+      expect(cell.textContent).toContain('1.8');
+    });
+
+    it('zero contribution renders muted 0.0 in own-category indicator cell', () => {
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 0, raw_value: 0, category_weight: 0.2, contribution: 0 },
+      ]);
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 50 }}
+          indicatorScores={{ rsi_14: 0 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).toContain('0.0');
+    });
+
+    it('absent contribution item renders empty cell — no glyph, no number', () => {
+      // snapshot has no item for rsi_14
+      const snapshot = makeSnapshotWithContributions([]);
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent?.trim()).toBe('');
+      expect(cell.textContent).not.toContain('▲');
+      expect(cell.textContent).not.toContain('▼');
+    });
+
+    it('pattern row does NOT render any contribution glyph even when a kind=pattern item exists', () => {
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'candlestick_pattern_score', category: 'candlestick', kind: 'pattern', score: 50, raw_value: 50, category_weight: 0.1, contribution: 2.5 },
+      ]);
+      const pattern: Pattern = {
+        pattern_name: 'bullish_engulfing',
+        pattern_category: 'candlestick',
+        direction: 'bullish',
+        strength: 2.5,
+        confirmed: true,
+        days_ago: 0,
+      };
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          recentPatterns={[pattern]}
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('pattern-cell-bullish_engulfing-0-candlestick');
+      expect(cell.textContent).not.toContain('▲');
+      expect(cell.textContent).not.toContain('▼');
+    });
+
+    it('aggregate row renders contribution glyph when payload contains an aggregate item', () => {
+      // Payload contains a kind='aggregate' item for sentiment with contribution 3.4.
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'sentiment', category: 'sentiment', kind: 'aggregate', score: 50, raw_value: null, category_weight: 0.0, contribution: 3.4 },
+      ]);
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          categoryScores={{ sentiment: 25, fundamental: -10, macro: 5 }}
+          snapshot={snapshot}
+        />,
+      );
+      const sentimentCell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
+      expect(sentimentCell.textContent).toContain('▲');
+      expect(sentimentCell.textContent).toContain('3.4');
+    });
+
+    it('aggregate row renders NO glyph when payload contains no aggregate items', () => {
+      // Backward-compat: payload has only indicator items; aggregate rows stay blank.
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 57, raw_value: 57, category_weight: 0.2, contribution: 3.2 },
+      ]);
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          categoryScores={{ sentiment: 25, fundamental: -10, macro: 5 }}
+          snapshot={snapshot}
+        />,
+      );
+      const sentimentCell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
+      expect(sentimentCell.textContent).not.toContain('▲');
+      expect(sentimentCell.textContent).not.toContain('▼');
+    });
+
+    it('weekly timeframe aggregate row does NOT render contribution even if payload contains aggregate items', () => {
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'sentiment', category: 'sentiment', kind: 'aggregate', score: 50, raw_value: null, category_weight: 0.0, contribution: 3.4 },
+      ]);
+      render(
+        <MatrixTable
+          title="Weekly"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural']}
+          timeframe="weekly"
+          categoryScores={{}}
+          snapshot={snapshot}
+        />,
+      );
+      // On weekly timeframe the sentiment column is off-timeframe, so the cell shows '—'
+      const sentimentCell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
+      expect(sentimentCell.textContent).not.toContain('▲');
+      expect(sentimentCell.textContent).not.toContain('▼');
+    });
+
+    it('aggregate row zero contribution renders muted 0.0', () => {
+      // Payload has kind='aggregate' with contribution=0 → cell renders muted "0.0".
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'sentiment', category: 'sentiment', kind: 'aggregate', score: 50, raw_value: null, category_weight: 0.0, contribution: 0 },
+      ]);
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          categoryScores={{ sentiment: 25 }}
+          snapshot={snapshot}
+        />,
+      );
+      const sentimentCell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
+      expect(sentimentCell.textContent).toContain('0.0');
+    });
+
+    it('weekly timeframe does NOT render contributions even if contributions_payload present', () => {
+      const snapshot = makeSnapshotWithContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 57, raw_value: 57, category_weight: 0.2, contribution: 3.2 },
+      ]);
+      render(
+        <MatrixTable
+          title="Weekly"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural']}
+          timeframe="weekly"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).not.toContain('▲');
+      expect(cell.textContent).not.toContain('▼');
+    });
+
+    it('missing contributions_payload entirely renders empty cells without crashing', () => {
+      const snapshot: Snapshot = {
+        daily: {
+          data_available: true,
+          categories: [
+            'trend', 'momentum', 'volume', 'volatility',
+            'candlestick', 'structural', 'sentiment', 'fundamental', 'macro',
+          ],
+          resolved_period: '2026-05-12',
+          // contributions_payload intentionally absent
+          rsi_sparkline: [],
+        },
+        weekly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+        monthly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+      };
+      render(
+        <MatrixTable
+          title="Daily"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural', 'sentiment', 'fundamental', 'macro']}
+          timeframe="daily"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      // cell renders without crash; no contribution glyph
+      expect(cell.textContent).not.toContain('▲');
+      expect(cell.textContent).not.toContain('▼');
     });
   });
 });

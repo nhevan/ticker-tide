@@ -653,6 +653,11 @@ def score_ticker(
         pattern_scores=pattern_scores,
         regime_weights=regime_weights,
         expansion_factor=expansion_factor,
+        aggregate_scores={
+            "sentiment": category_scores.get("sentiment"),
+            "fundamental": category_scores.get("fundamental"),
+            "macro": category_scores.get("macro"),
+        },
     )
     contributions_json = json.dumps(contributions_payload)
 

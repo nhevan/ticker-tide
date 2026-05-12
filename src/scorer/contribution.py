@@ -1,13 +1,20 @@
 """
-Per-indicator and per-pattern contribution builder for the /why Telegram command.
+Per-indicator, per-pattern, and per-aggregate contribution builder for the
+/why Telegram command.
 
-Computes how much each indicator and pattern contributed to the final composite
-score by mirroring the magnitude-weighted averaging math in
+Computes how much each indicator, pattern, and aggregate scalar contributed to
+the final composite score by mirroring the magnitude-weighted averaging math in
 ``src/scorer/category_scorer.rollup_category`` and the adaptive-weight
 application in ``apply_adaptive_weights``.
 
-Scope: indicators + patterns only. Sentiment, fundamental, and macro scalars
-are NOT decomposed here and will not appear in the returned ``items`` list.
+Scope: indicators + patterns + sentiment/fundamental/macro aggregates.
+Aggregate scalars (sentiment, fundamental, macro) are decomposed as
+single-scalar entries using ``score × weight × expansion`` (no intra-category
+share split since the rollup is already a scalar, not a multi-item category).
+
+Note: absence of aggregate items in a payload is a valid backward-compatible
+state. Callers that do not pass ``aggregate_scores`` will produce payloads
+without aggregate items, and consumers must handle their absence gracefully.
 """
 
 from __future__ import annotations
@@ -24,24 +31,36 @@ def build_contributions_payload(
     pattern_scores: dict[str, float | None],
     regime_weights: dict[str, float],
     expansion_factor: float,
+    aggregate_scores: dict[str, float | None] | None = None,
 ) -> dict:
     """
-    Build the per-indicator + per-pattern contribution payload for /why.
+    Build the per-indicator, per-pattern, and per-aggregate contribution payload
+    for /why.
 
     Approximate decomposition — clamping at ±100, expansion_factor, and
     post-rollup sector adjustment cause the sum of contributions to diverge
     from the final composite score.
 
-    Currently covers indicator + pattern contributions only. Sentiment,
-    fundamental, and macro scalars are NOT decomposed and will not appear
-    in the returned items list.
+    Covers indicator + pattern + aggregate (sentiment, fundamental, macro)
+    contributions. Aggregate scalars are decomposed as single-scalar entries
+    using ``score × weight × expansion`` (no intra-category share split since
+    the rollup is already a scalar, not a multi-item category).
 
-    The math per item mirrors ``rollup_category`` exactly:
+    Backward-compatibility note: callers that do not pass ``aggregate_scores``
+    will produce payloads without aggregate items. Consumers must handle the
+    absence of aggregate items gracefully — it is a valid state for older rows.
+
+    The math per indicator/pattern item mirrors ``rollup_category`` exactly:
       - Group non-None scores by category.
       - For category ``c``: ``category_abs_sum = sum(abs(s) for non-None s in c)``.
       - If ``category_abs_sum == 0``: ``contribution = 0.0`` (no division by zero).
       - Else: ``contribution = (s * abs(s) / category_abs_sum) * regime_weight[c]
                                * expansion_factor``.
+
+    The math per aggregate item:
+      - ``contribution = score * regime_weights.get(name, 0.0) * expansion_factor``.
+      - None scores are skipped. Zero-weight categories ARE emitted with
+        ``contribution = 0.0`` (truthful zero rendering).
 
     Convention for ``raw_value``:
       - **Indicators**: ``raw_value = score``. The scored value (−100 to +100)
@@ -50,6 +69,8 @@ def build_contributions_payload(
         indicators through if available.
       - **Patterns**: ``raw_value = None``. Patterns don't have a single
         numeric measurement that is meaningful outside their detection context.
+      - **Aggregates**: ``raw_value = None``. The aggregate scalar is already
+        a pre-computed category score, not a raw measurement.
 
     Parameters:
         indicator_scores: Dict from ``score_all_indicators()`` mapping indicator
@@ -61,6 +82,11 @@ def build_contributions_payload(
         expansion_factor: Multiplier applied to the weighted category score
                           before the final composite clamp. Loaded from
                           ``config['scoring']['score_expansion_factor']``.
+        aggregate_scores: Optional dict mapping aggregate category names
+                          (``"sentiment"``, ``"fundamental"``, ``"macro"``) to
+                          their pre-computed scalar scores or ``None``. When
+                          omitted or empty, no aggregate items are appended —
+                          this is a valid backward-compatible state.
 
     Returns:
         Dict with shape::
@@ -72,7 +98,7 @@ def build_contributions_payload(
                 "items": [
                     {
                         "name": str,
-                        "kind": "indicator" | "pattern",
+                        "kind": "indicator" | "pattern" | "aggregate",
                         "raw_value": float | None,
                         "score": float,
                         "category": str,
@@ -118,6 +144,28 @@ def build_contributions_payload(
             )
             continue
         items.extend(_build_category_items(category, entries, regime_weight, expansion_factor))
+
+    # Append aggregate items (sentiment, fundamental, macro) as single-scalar
+    # entries. Aggregate names are guaranteed not to collide with indicator or
+    # pattern keys (categoryMap is the source of truth — sentiment/fundamental/
+    # macro are categories, not indicator keys).
+    if aggregate_scores:
+        for name, score in aggregate_scores.items():
+            if score is None:
+                continue
+            weight = regime_weights.get(name, 0.0)
+            contribution = float(score * weight * expansion_factor)
+            items.append(
+                {
+                    "name": name,
+                    "kind": "aggregate",
+                    "raw_value": None,
+                    "score": score,
+                    "category": name,
+                    "category_weight": weight,
+                    "contribution": contribution,
+                }
+            )
 
     # Sort by |contribution| descending so the biggest drivers appear first.
     items.sort(key=lambda item: abs(item["contribution"]), reverse=True)

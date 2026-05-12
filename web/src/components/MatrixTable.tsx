@@ -14,7 +14,7 @@
  * there are zero patterns for that category.
  */
 
-import { useState, Fragment } from 'react';
+import { useState, useMemo, Fragment, type ReactNode } from 'react';
 import { INDICATOR_CATEGORY_MAP, INDICATOR_DISPLAY_LABELS } from '@/lib/scoring/categoryMap';
 import type { Category } from '@/lib/scoring/categoryMap';
 import { humanizePatternName } from '@/lib/scoring/patternLabels';
@@ -97,6 +97,30 @@ const PATTERN_CATEGORIES: Array<'candlestick' | 'structural'> = ['candlestick', 
 const AGGREGATE_CATEGORIES: Array<'sentiment' | 'fundamental' | 'macro'> = [
   'sentiment', 'fundamental', 'macro',
 ];
+
+/**
+ * Format a signed composite-point contribution for display in a matrix cell.
+ *
+ * Renders Variant C format: directional glyph (▲/▼) + unsigned magnitude to
+ * 1 decimal place. Zero renders as muted "0.0" with no glyph. Called for
+ * indicator and aggregate rows at the daily timeframe; the caller is responsible
+ * for not invoking this on pattern rows.
+ *
+ * @param value - The contribution value from contributions_payload.items[].contribution.
+ * @returns A ReactNode with the formatted contribution.
+ */
+function formatContribution(value: number): ReactNode {
+  if (value === 0) return <span className="text-muted-foreground">0.0</span>;
+  const glyph = value > 0 ? '▲' : '▼';
+  const magnitude = Math.abs(value).toFixed(1);
+  return (
+    <span className="tabular-nums">
+      <span className={value > 0 ? 'text-[hsl(var(--up))]' : 'text-[hsl(var(--down))]'}>{glyph}</span>
+      {' '}
+      <span className="font-semibold">{magnitude}</span>
+    </span>
+  );
+}
 
 type CellTone = 'green' | 'red' | 'grey';
 
@@ -286,10 +310,17 @@ const INDICATOR_KEYS = Object.keys(INDICATOR_CATEGORY_MAP);
 interface CellViewProps {
   state: CellState;
   testid: string;
+  /**
+   * Optional composite-point contribution from contributions_payload.items[].
+   * Passed for indicator and aggregate rows at the daily timeframe. When present
+   * and the cell state is valid with no text, the formatted contribution is shown
+   * in place of the empty cell. Pattern rows never receive this prop.
+   */
+  contribution?: number;
 }
 
 /** Render a single matrix cell from its resolved state. */
-function CellView({ state, testid }: CellViewProps) {
+function CellView({ state, testid, contribution }: CellViewProps) {
   if (state.kind === 'off-category') {
     return (
       <td
@@ -318,13 +349,16 @@ function CellView({ state, testid }: CellViewProps) {
       </Tooltip>
     );
   }
+  const showContribution = contribution !== undefined && !state.text;
   return (
     <td
       className={`py-1 px-1 text-center ${TONE_CLASS[state.tone]}`}
       data-testid={testid}
       data-tone={state.tone}
     >
-      {state.text || <>&nbsp;</>}
+      {showContribution
+        ? formatContribution(contribution)
+        : state.text || <>&nbsp;</>}
     </td>
   );
 }
@@ -358,6 +392,27 @@ export function MatrixTable({
     (indicatorScores !== undefined && Object.keys(indicatorScores).length > 0);
 
   const scored = new Set<string>(categories as readonly string[]);
+
+  /**
+   * Map of name → composite-point contribution, built from
+   * snapshot.daily.contributions_payload.items when timeframe is 'daily'.
+   * Accepts items with kind === 'indicator' or kind === 'aggregate'; both land
+   * in the same Map keyed by item.name. Aggregate names (sentiment/fundamental/
+   * macro) are guaranteed not to collide with indicator names — categoryMap is
+   * the source of truth.
+   * Returns an empty Map for non-daily timeframes or when the payload is absent.
+   */
+  const contributionsByName = useMemo(() => {
+    if (timeframe !== 'daily') return new Map<string, number>();
+    const items = snapshot?.daily?.contributions_payload?.items ?? [];
+    const map = new Map<string, number>();
+    for (const item of items) {
+      if (item.kind !== 'indicator' && item.kind !== 'aggregate') continue;
+      if (!Number.isFinite(item.contribution)) continue;
+      map.set(item.name, item.contribution);
+    }
+    return map;
+  }, [snapshot, timeframe]);
 
   /** Toggle the explainer panel for an indicator row. Same row collapses; different row replaces. */
   function handleIndicatorClick(indicatorKey: string): void {
@@ -421,6 +476,7 @@ export function MatrixTable({
                           key={cat}
                           testid={`cell-${indicatorKey}-${cat}`}
                           state={resolveIndicatorCellState(indicatorKey, cat, score, signalDirection, scored)}
+                          contribution={contributionsByName.get(indicatorKey)}
                         />
                       ))}
                     </tr>
@@ -498,6 +554,7 @@ export function MatrixTable({
                         key={cat}
                         testid={`aggregate-cell-${aggCat}-${cat}`}
                         state={resolveAggregateCellState(aggCat, cat, score, signalDirection, scored)}
+                        contribution={contributionsByName.get(aggCat)}
                       />
                     ))}
                   </tr>
