@@ -318,55 +318,12 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
 
 // =====================================================================
 // StochKPanel — 7-step Stoch %K explainer.
-// Steps 1 & 2 wired to real backend data. Steps 3–7 use dummy values
+// Steps 1–4 wired to real backend data. Steps 5–7 still use dummy values
 // (clearly marked) — replaced per task plan.
 // =====================================================================
 
-/** [PROTOTYPE A] Mapping chart: six-zone smooth curve mirroring RSI. */
-function StochMappingChartProtoA({ value }: { value: number }) {
-  const w = 560;
-  const h = 160;
-  const pad = { l: 28, r: 16, t: 12, b: 22 };
-  const innerW = w - pad.l - pad.r;
-  const innerH = h - pad.t - pad.b;
-  const xFor = (v: number) => pad.l + (v / 100) * innerW;
-  const yFor = (s: number) => pad.t + ((30 - s) / 60) * innerH;
-  const p5 = 8, p20 = 22, p50 = 48, p80 = 76, p95 = 92;
-  const points: [number, number][] = [
-    [0, 30], [p5, 30], [p20, 15], [p50, 0], [p80, -15], [p95, -30], [100, -30],
-  ];
-  const curve = points.map(([v, s], i) => `${i === 0 ? 'M' : 'L'}${xFor(v).toFixed(1)},${yFor(s).toFixed(1)}`).join(' ');
-  const score = (() => {
-    if (value <= p5) return 30;
-    if (value <= p20) return 30 - ((value - p5) / (p20 - p5)) * 15;
-    if (value <= p50) return 15 - ((value - p20) / (p50 - p20)) * 15;
-    if (value <= p80) return 0 - ((value - p50) / (p80 - p50)) * 15;
-    if (value <= p95) return -15 - ((value - p80) / (p95 - p80)) * 15;
-    return -30;
-  })();
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-40" preserveAspectRatio="none">
-      <line x1={pad.l} x2={pad.l + innerW} y1={yFor(0)} y2={yFor(0)} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.3} />
-      <path d={curve} fill="none" stroke="hsl(var(--foreground))" strokeWidth={1.75} />
-      {[p5, p20, p50, p80, p95].map((p) => (
-        <line key={p} x1={xFor(p)} x2={xFor(p)} y1={pad.t} y2={pad.t + innerH} stroke="hsl(var(--muted-foreground))" strokeDasharray="2 3" strokeOpacity={0.25} />
-      ))}
-      <circle cx={xFor(value)} cy={yFor(score)} r={4.5} fill="hsl(var(--primary))" stroke="hsl(var(--card))" strokeWidth={1.5} />
-      <text x={xFor(value) + 6} y={yFor(score) - 6} fontSize={10} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--primary))">
-        %K {value.toFixed(1)} → {score.toFixed(1)}
-      </text>
-      <text x={pad.l - 4} y={yFor(30) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--up))" textAnchor="end">+30</text>
-      <text x={pad.l - 4} y={yFor(0) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="end">0</text>
-      <text x={pad.l - 4} y={yFor(-30) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--down))" textAnchor="end">−30</text>
-      {[0, 25, 50, 75, 100].map((v) => (
-        <text key={v} x={xFor(v)} y={pad.t + innerH + 12} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="middle">{v}</text>
-      ))}
-    </svg>
-  );
-}
-
 /** Stoch %K panel — 7-step trace mirroring RsiPanel.
- * Steps 1 & 2 use real backend data. Steps 3–7 remain on dummy values
+ * Steps 1–4 use real backend data. Steps 5–7 remain on dummy values
  * pending subsequent wiring tasks. */
 function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
   const daily = snapshot.daily;
@@ -380,6 +337,12 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
   const sparkline = daily.stoch_sparkline ?? [];
   const stochProfile = daily.stoch_k_profile ?? null;
   const zoneLabel = daily.stoch_zone_label ?? null;
+
+  // Step 4: real persisted indicator score for stoch_k.
+  const stochScore: number | null = (() => {
+    const raw = daily.indicator_scores?.stoch_k;
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+  })();
 
   // Dummy values for steps 3–7 — replaced per task plan.
   const dummyScore = -12.4; // [PROTOTYPE]
@@ -489,23 +452,37 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
         </p>
       </StepCard>
 
-      {/* Step 4 — Stoch K score [PROTOTYPE — dummy score and dummy profile] */}
-      <StepCard stepNumber={4} heading="Stochastic %K score">
-        {kValue !== null ? (
-          <>
-            <p>
-              %K {kValue.toFixed(1)} maps to a score of{' '}
-              <span className={`font-mono font-semibold ${dummyScore >= 0 ? 'text-up' : 'text-down'}`}>{dummyScore >= 0 ? '+' : ''}{dummyScore.toFixed(1)}</span>{' '}
-              <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy score and dummy profile]</span>. Mapping curve:
-            </p>
-            <div className="mt-3">
-              <StochMappingChartProtoA value={kValue} />
-            </div>
-          </>
-        ) : (
-          <p className="text-muted-foreground italic">Stochastic score unavailable for this date.</p>
-        )}
-      </StepCard>
+      {/* Step 4 — Stoch %K score (real data) */}
+      {stochScore === null ? (
+        <StepCard stepNumber={4} heading="Stochastic %K score" unavailable />
+      ) : stochProfile &&
+        kValue !== null &&
+        (regime === 'trending' || regime === 'ranging' || regime === 'volatile') &&
+        Number.isFinite(stochProfile.p5) &&
+        Number.isFinite(stochProfile.p20) &&
+        Number.isFinite(stochProfile.p50) &&
+        Number.isFinite(stochProfile.p80) &&
+        Number.isFinite(stochProfile.p95) ? (
+        <StepCard stepNumber={4} heading="Stochastic %K score">
+          <RsiMappingChart
+            profile={stochProfile}
+            today={kValue}
+            score={stochScore}
+            regime={regime as 'trending' | 'ranging' | 'volatile'}
+            label="Stoch %K"
+          />
+        </StepCard>
+      ) : (
+        <StepCard stepNumber={4} heading="Stochastic %K score">
+          <p>
+            No per-ticker profile, so scoring uses a piecewise fallback: %K ≤ 20 caps at +60
+            (oversold→bullish), %K ≥ 80 caps at −60 (overbought→bearish), and the middle
+            (20 &lt; %K &lt; 80) is a linear gradient from +18 down to −18 around the midpoint
+            (score = (50 − %K) ÷ 50 × 30). In a trending regime the sign flips. Today's score
+            = {stochScore.toFixed(1)} (range −100 to +100).
+          </p>
+        </StepCard>
+      )}
 
       {/* Step 5 — Magnitude share in momentum [PROTOTYPE — dummy items] */}
       <StepCard stepNumber={5} heading="Magnitude share in momentum">

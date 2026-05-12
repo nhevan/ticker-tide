@@ -1,11 +1,11 @@
 /**
- * RsiMappingChart — visualises how an RSI(14) value becomes its scored output.
+ * RsiMappingChart — visualises how an indicator value (default: RSI(14)) becomes its scored output.
  *
  * Renders the piecewise mapping function defined by `score_with_percentile`
  * in src/scorer/indicator_scorer.py:158-184, using the loaded ticker's
  * percentile profile (p5/p20/p50/p80/p95) as zone anchors. The active curve
  * matches the current regime; the inactive curve is shown dashed so users
- * can see the regime flip would invert the score for high/low RSI values.
+ * can see the regime flip would invert the score for high/low indicator values.
  *
  * Beneath the chart, a math breakdown table walks through the calculation
  * step-by-step: zone → position in zone (with the arithmetic shown in
@@ -13,10 +13,11 @@
  *
  * Theme-aware via CSS custom properties. SVG-only, no chart library.
  *
- * @param profile - The ticker's RSI percentile bands from snapshot.daily.rsi_profile.
- * @param today - The raw RSI(14) reading from snapshot.daily.indicators.rsi_14.
- * @param score - The persisted indicator score from snapshot.daily.indicator_scores.rsi_14.
- * @param regime - Market regime from snapshot.daily.regime. RSI sign flips only in 'trending'.
+ * @param profile - The ticker's percentile bands from the indicator profile (p5/p20/p50/p80/p95).
+ * @param today - The raw indicator reading (e.g. snapshot.daily.indicators.rsi_14 or stoch_k).
+ * @param score - The persisted indicator score from snapshot.daily.indicator_scores.
+ * @param regime - Market regime from snapshot.daily.regime. Sign flips only in 'trending'.
+ * @param label - Human-readable indicator name shown in chart prose (default: 'RSI').
  * @returns The chart + math table, or null if any required numeric input is non-finite.
  */
 interface RsiMappingChartProps {
@@ -24,9 +25,10 @@ interface RsiMappingChartProps {
   today: number;
   score: number;
   regime: 'trending' | 'ranging' | 'volatile';
+  label?: string;
 }
 
-/** Zone names ordered to match the 6 segments of the corner-point curve. */
+/** Zone names ordered to match the 6 segments of the corner-point curve (applies to any percentile-profile indicator). */
 const ZONE_NAMES = [
   'extreme_oversold',  // 0 -> p5
   'oversold',          // p5 -> p20
@@ -36,13 +38,13 @@ const ZONE_NAMES = [
   'extreme_overbought',// p95 -> 100
 ] as const;
 
-/** Build the 7 corner points of the piecewise RSI→score curve. */
+/** Build the 7 corner points of the piecewise indicator→score curve (shared by RSI, Stoch %K, and any other percentile-profile indicator). */
 function mappingCornerPoints(
   profile: { p5: number; p20: number; p50: number; p80: number; p95: number },
   trending: boolean,
 ): { x: number; y: number }[] {
-  // Ranging/volatile (higher_is_bullish=false): high RSI → bearish (negative scores).
-  // Trending (higher_is_bullish=true): high RSI → bullish (positive scores). Sign flipped.
+  // Ranging/volatile (higher_is_bullish=false): high value → bearish (negative scores).
+  // Trending (higher_is_bullish=true): high value → bullish (positive scores). Sign flipped.
   const m = trending ? -1 : 1;
   return [
     { x: 0,           y: 100 * m  },
@@ -55,7 +57,7 @@ function mappingCornerPoints(
   ];
 }
 
-export function RsiMappingChart({ profile, today, score, regime }: RsiMappingChartProps) {
+export function RsiMappingChart({ profile, today, score, regime, label = 'RSI' }: RsiMappingChartProps) {
   // REQUIRED guard: Number.isFinite catches both NaN and null/undefined coerced to NaN.
   if (
     !Number.isFinite(today) ||
@@ -72,7 +74,7 @@ export function RsiMappingChart({ profile, today, score, regime }: RsiMappingCha
   // Warn (but render) if regime is unrecognised — guards future backend drift.
   if (regime !== 'trending' && regime !== 'ranging' && regime !== 'volatile') {
     // eslint-disable-next-line no-console
-    console.warn(`RsiMappingChart: unrecognised regime "${regime}", treating as ranging.`);
+    console.warn(`RsiMappingChart(${label}): unrecognised regime "${regime}", treating as ranging.`);
   }
 
   const trending = regime === 'trending';
@@ -111,10 +113,10 @@ export function RsiMappingChart({ profile, today, score, regime }: RsiMappingCha
   // Regime explanation for the chip
   const regimeNote =
     regime === 'trending'
-      ? 'sign FLIPPED (continuation — high RSI is bullish)'
+      ? `sign FLIPPED (continuation — high ${label} is bullish)`
       : regime === 'volatile'
-        ? 'mean-reversion (same as ranging — high RSI is bearish)'
-        : 'mean-reversion (high RSI is bearish)';
+        ? `mean-reversion (same as ranging — high ${label} is bearish)`
+        : `mean-reversion (high ${label} is bearish)`;
   const counterfactualLabel = trending ? 'if ranging' : 'if trending';
 
   // Number formatting helpers — keep signed strings consistent.
@@ -169,7 +171,7 @@ export function RsiMappingChart({ profile, today, score, regime }: RsiMappingCha
       <table className="mt-2 w-full text-[10px] font-mono">
         <tbody>
           <tr>
-            <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">RSI value</td>
+            <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">{label} value</td>
             <td className="text-foreground">{today.toFixed(1)}</td>
           </tr>
           {(() => {
@@ -194,7 +196,7 @@ export function RsiMappingChart({ profile, today, score, regime }: RsiMappingCha
                   <td className="text-foreground">
                     {(t * 100).toFixed(0)}%{' '}
                     <span className="text-muted-foreground">
-                      (= (RSI − {loLabel}) ÷ ({hiLabel} − {loLabel}) = ({today.toFixed(1)} − {zoneLo.x.toFixed(1)}) ÷ ({zoneHi.x.toFixed(1)} − {zoneLo.x.toFixed(1)}) = {(today - zoneLo.x).toFixed(1)} ÷ {(zoneHi.x - zoneLo.x).toFixed(1)})
+                      (= ({label} − {loLabel}) ÷ ({hiLabel} − {loLabel}) = ({today.toFixed(1)} − {zoneLo.x.toFixed(1)}) ÷ ({zoneHi.x.toFixed(1)} − {zoneLo.x.toFixed(1)}) = {(today - zoneLo.x).toFixed(1)} ÷ {(zoneHi.x - zoneLo.x).toFixed(1)})
                     </span>
                   </td>
                 </tr>

@@ -1674,21 +1674,41 @@ Each part = `headerContribution.weight × headerContribution.score` for that tim
 
 **Monthly asymmetry.** The per-section monthly equation row is hidden today because `contributions_payload` is not yet persisted for monthly rows. The cross-section banner still includes monthly because `headerContributions.monthly` is derivable from `snapshot.monthly.composite_score` and the redistributed timeframe weight — no payload needed. This asymmetry is intentional and will resolve naturally when monthly `contributions_payload` is wired.
 
-### 15.6 Stochastic %K — backend wiring (frontend pending)
+### 15.6 Stochastic %K — 7-step trace (Steps 1–4 live; Steps 5–7 pending)
 
-Backend data exposed for the Stochastic %K explainer panel:
+For `indicator === "stoch_k"` the panel renders a 7-step trace mirroring RSI structurally. Steps 1–4 use real backend data; Steps 5–7 remain on dummy values pending subsequent wiring tasks.
+
+#### Backend data
 
 - **`daily.stoch_sparkline`** — list of `{ date, stoch_k, stoch_d }` rows (stoch_d may be null during warm-up). Bounded by `<= picked_date`, excludes `stoch_k IS NULL` rows. Length capped by `sparkline.stoch_sparkline_days` (default 100).
 - **`daily.stoch_k_profile`** — percentile profile dict (`p5/p20/p50/p80/p95/mean/std`) from `indicator_profiles`, or `null` when no profile exists for the ticker.
 - **`daily.stoch_zone_label`** — zone string from `zone_label_for_stoch_k()`: six profile-path labels or four fallback-path labels. `null` when `stoch_k` is not available in `indicators_daily` for the picked date.
-- **`/api/scoring-rules` → `stoch_k`** — thresholds (`oversold=20`, `overbought=80`), `scoring_method`, `fallback_zones`, `profile_zones`. Thresholds read from `config/scorer.json indicator_thresholds.stoch_k`.
+- **`daily.indicator_scores.stoch_k`** — persisted indicator score (−100 to +100) from `indicator_scores_daily`.
+- **`/api/scoring-rules` → `stoch_k`** — thresholds (`oversold=20`, `overbought=80`), `scoring_method`, `fallback_zones`, `profile_zones`.
 
-Scoring notes:
+#### Steps (live)
+
+1. **Raw value** — `snapshot.daily.indicators.stoch_k` and `stoch_d`. Displays `%K`, `%D`, and their spread with a sign-coloured chip. Fallback prose when unavailable.
+2. **Zone label + trend chart** — `StochTrendChart` fed by `daily.stoch_sparkline`. Zone chip from `daily.stoch_zone_label`; description resolved via `STOCH_ZONE_LABEL_DESCRIPTIONS` (profile path, six labels) or `STOCH_FALLBACK_ZONE_DESCRIPTIONS` (fallback path, four labels). Fallback prose shown when sparkline or zone label is absent.
+3. **Scoring path** — `RsiPercentileStrip` reused with `label="Stoch %K"` when a profile is present; prose-only fallback when absent. Regime sign-flip note (trending vs mean-reversion). Same `score_with_percentile` path as RSI.
+4. **Indicator score** — `snapshot.daily.indicator_scores.stoch_k`.
+   - No score → `StepCard unavailable`.
+   - Score present + profile + valid regime + all five profile percentiles finite → `RsiMappingChart profile={stochProfile} today={kValue} score={stochScore} regime={...} label="Stoch %K"`. The same six-zone smooth curve as RSI; the `label` prop (added in this task) drives all user-facing prose inside the chart so it reads "Stoch %K value" / "(Stoch %K − p20) ÷ ...".
+   - Score present but no profile or unrecognised regime → fallback prose describing the piecewise scorer math: %K ≤ 20 caps at +60, %K ≥ 80 caps at −60, linear gradient (50 − %K) ÷ 50 × 30 through the middle; sign flips in trending regime.
+
+#### Steps (pending)
+
+5. **Magnitude share in momentum** — to be wired from `contributions_payload` (dummy items currently).
+6. **Category weight × expansion** — to be wired from `/api/scoring-rules` (dummy weights currently).
+7. **Net contribution** — to be wired from `contributions_payload.items[stoch_k]` (dummy values currently).
+
+#### Scoring notes
+
 - Scorer path: `score_with_percentile(stoch_k, profile, higher_is_bullish=oscillator_higher_is_bullish)` when profile exists; three-tier step function fallback (±60 / linear ±30) otherwise.
 - `higher_is_bullish` is regime-aware (`False` in ranging, `True` in trending).
 - `stoch_d` is computed/stored but not scored as an independent indicator.
-
-Frontend 7-step explainer panel is pending — tracked in next-up.
+- The 80/20 fallback thresholds are currently hardcoded literals in `indicator_scorer.py:533-539`; a follow-on refactor will read them from `config/scorer.json` via `scoring-rules`.
+- File rename (`RsiMappingChart.tsx` → `MappingChart.tsx`, `RsiPercentileStrip.tsx` → `PercentileStrip.tsx`) is deferred to Task #11 (tear-down).
 
 ### 15.7 Other indicators
 
