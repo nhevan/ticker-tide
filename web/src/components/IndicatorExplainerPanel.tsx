@@ -339,7 +339,7 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
   );
 
   return (
-    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-0">
+    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-2">
       {/* Step 1 — Raw value */}
       <StepCard stepNumber={1} heading="RSI(14) reading">
         RSI is {rsiValue.toFixed(1)}.
