@@ -234,27 +234,48 @@ export function MacdMappingChart({ profile, today, score }: MacdMappingChartProp
                   </span>
                 </td>
               </tr>
-              <tr>
-                <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">
-                  Bracket
-                </td>
-                <td className="text-foreground">
-                  z ∈ [{((segLo.x - profile.mean) / profile.std).toFixed(1)},{' '}
-                  {((segHi.x - profile.mean) / profile.std).toFixed(1)}] → score{' '}
-                  {sgn(segLo.y)} to {sgn(segHi.y)}
-                </td>
-              </tr>
-              <tr>
-                <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">
-                  Base score
-                </td>
-                <td className="text-foreground">
-                  {yToday.toFixed(1)}{' '}
-                  <span className="text-muted-foreground">
-                    (= {sgn(segLo.y)} + {t.toFixed(2)} × ({sgn(segHi.y - segLo.y)}))
-                  </span>
-                </td>
-              </tr>
+              {(() => {
+                const zLo = (segLo.x - profile.mean) / profile.std;
+                const zHi = (segHi.x - profile.mean) / profile.std;
+                return (
+                  <>
+                    <tr>
+                      <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">
+                        Bracket
+                      </td>
+                      <td className="text-foreground">
+                        z = {z.toFixed(2)} falls in the [{zLo.toFixed(1)}, {zHi.toFixed(1)}]
+                        z-segment, which maps to scores [{sgn(segLo.y)}, {sgn(segHi.y)}].
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">
+                        Position in bracket
+                      </td>
+                      <td className="text-foreground">
+                        {t.toFixed(2)}{' '}
+                        <span className="text-muted-foreground">
+                          (= (z − z_lo) ÷ (z_hi − z_lo) = ({z.toFixed(2)} − {zLo.toFixed(1)}) ÷ (
+                          {zHi.toFixed(1)} − {zLo.toFixed(1)}))
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">
+                        Base score
+                      </td>
+                      <td className="text-foreground">
+                        {yToday.toFixed(1)}{' '}
+                        <span className="text-muted-foreground">
+                          (= score_lo + position × (score_hi − score_lo) = {sgn(segLo.y)} +{' '}
+                          {t.toFixed(2)} × ({sgn(segHi.y)} − {sgn(segLo.y)}) = {sgn(segLo.y)} +{' '}
+                          {(t * (segHi.y - segLo.y)).toFixed(2)})
+                        </span>
+                      </td>
+                    </tr>
+                  </>
+                );
+              })()}
             </>
           ) : (
             <tr>
