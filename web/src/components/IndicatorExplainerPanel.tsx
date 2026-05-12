@@ -13,6 +13,7 @@ import { RsiTrendChart } from '@/components/RsiTrendChart';
 import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import { RsiMappingChart } from '@/components/RsiMappingChart';
 import { CategoryShareBar } from '@/components/CategoryShareBar';
+import { MacdTrendChart } from '@/components/MacdTrendChart';
 import { CategoryWeightBar } from '@/components/CategoryWeightBar';
 import { ContributionMathChain } from '@/components/ContributionMathChain';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
@@ -125,7 +126,12 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
           {histPhrase} — {verdict}.
         </div>
       </StepCard>
-      <StepCard stepNumber={2} heading="Zone" unavailable />
+      {/* Step 2 — Trend chart.
+          Classic MACD: histogram bars (green ≥0, red <0) overlaid with
+          MACD line (solid) + signal line (dashed) on a zero baseline. */}
+      <StepCard stepNumber={2} heading="MACD trend">
+        <MacdTrendChart data={daily.macd_sparkline ?? []} />
+      </StepCard>
       <StepCard stepNumber={3} heading="Scoring path" unavailable />
       <StepCard stepNumber={4} heading="MACD line score" unavailable />
       {/* Step 5 — Magnitude share in trend.

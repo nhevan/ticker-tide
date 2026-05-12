@@ -3,7 +3,7 @@
   "session_ttl_hours": 168,
   "login_rate_limit": {"max_attempts": 5, "window_seconds": 60},
   "llm_rate_limit": {"window_seconds": 60},
-  "sparkline": {"daily_days": 15, "weekly_weeks": 6, "monthly_months": 6, "rsi_sparkline_days": 100},
+  "sparkline": {"daily_days": 15, "weekly_weeks": 6, "monthly_months": 6, "rsi_sparkline_days": 100, "macd_sparkline_days": 100},
   "ai_reasoner": {"model": "claude-sonnet-4-20250514", "max_tokens": 800, "temperature": 0.3, "target_words": 150},
   "why_bullets": {"limit": 3},
   "signal_flip_lookback_days": 14,
