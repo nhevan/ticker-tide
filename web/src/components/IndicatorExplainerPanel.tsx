@@ -10,6 +10,7 @@
  */
 
 import { RsiTrendChart } from '@/components/RsiTrendChart';
+import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -138,9 +139,17 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
       <StepCard stepNumber={3} heading="Scoring path">
         {rsiProfile ? (
           <>
-            <span className="font-medium">Percentile profile path.</span> Historical percentiles
-            for this ticker: p5={rsiProfile.p5.toFixed(1)}, p20={rsiProfile.p20.toFixed(1)},{' '}
-            p50={rsiProfile.p50.toFixed(1)}, p80={rsiProfile.p80.toFixed(1)}, p95={rsiProfile.p95.toFixed(1)}.
+            <RsiPercentileStrip
+              profile={rsiProfile}
+              today={rsiValue}
+              zoneLabel={zoneLabel}
+              zoneDescription={zoneLabel ? (ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? '') : ''}
+            />
+            <p className="mt-2">
+              <span className="font-medium">Percentile profile path.</span> This ticker has enough
+              history for the engine to use its own RSI distribution rather than textbook 30/70
+              thresholds.
+            </p>
           </>
         ) : (
           <>
