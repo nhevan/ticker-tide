@@ -102,6 +102,19 @@ const CATEGORY_HEADERS: Record<Category, string> = {
 const PATTERN_CATEGORIES: Array<'candlestick' | 'structural'> = ['candlestick', 'structural'];
 
 /**
+ * Resolve a humanized label for a contribution-payload item name.
+ * Indicators use INDICATOR_DISPLAY_LABELS; aggregates (sentiment/fundamental/macro)
+ * are capitalized; everything else is treated as a pattern key and humanized.
+ */
+function prettyContributionLabel(name: string): string {
+  if (name in INDICATOR_DISPLAY_LABELS) return INDICATOR_DISPLAY_LABELS[name];
+  if (name === 'sentiment' || name === 'fundamental' || name === 'macro') {
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+  return humanizePatternName(name);
+}
+
+/**
  * Categories with no indicator/pattern constituents in the matrix. Rendered
  * as aggregate rows showing the category's rollup score directly.
  */
@@ -480,14 +493,10 @@ export function MatrixTable({
   }, [snapshot?.daily?.contributions_payload, snapshot?.weekly?.contributions_payload, timeframe]);
 
   /**
-   * Section equation data: top-N contribution items + others count/sum + total.
+   * Section equation data: all contribution items + total.
    * Dispatches on timeframe — does NOT use bracket notation on snapshot.
-   * topN comes from scoringRules?.equation_summary_top_n; falls back to null
-   * when scoringRules is absent (equation row stays hidden).
    */
   const sectionEquationData = useMemo(() => {
-    const topN = scoringRules?.equation_summary_top_n;
-    if (topN === undefined || topN === null) return null;
     if (!Number.isFinite(headerContribution?.score ?? null)) return null;
     const target = headerContribution?.score ?? null;
     let items;
@@ -498,13 +507,12 @@ export function MatrixTable({
     } else {
       items = snapshot?.monthly?.contributions_payload?.items;
     }
-    return summarizeSectionContributions(items, target, topN);
+    return summarizeSectionContributions(items, target);
   }, [
     snapshot?.daily?.contributions_payload,
     snapshot?.weekly?.contributions_payload,
     snapshot?.monthly?.contributions_payload,
     headerContribution,
-    scoringRules?.equation_summary_top_n,
     timeframe,
   ]);
 
@@ -528,7 +536,7 @@ export function MatrixTable({
       </h3>
       {sectionEquationData && (
         <div className="mb-3 text-[11px] text-muted-foreground leading-relaxed tabular-nums">
-          {sectionEquationData.topItems.map((item, idx) => {
+          {sectionEquationData.items.map((item, idx) => {
             const tone =
               item.value > 0
                 ? 'text-[hsl(var(--up))]'
@@ -536,28 +544,25 @@ export function MatrixTable({
                   ? 'text-[hsl(var(--down))]'
                   : 'text-muted-foreground';
             const mag = Math.abs(item.value).toFixed(1);
-            if (idx === 0) {
-              const sign = item.value < 0 ? '−' : '+';
-              return (
-                <span key={item.label} className={`${tone} font-semibold`}>
-                  {sign}
-                  {mag}
-                </span>
-              );
-            }
-            const sep = item.value < 0 ? '−' : '+';
+            const sign = item.value < 0 ? '−' : '+';
+            const prettyLabel = prettyContributionLabel(item.label);
             return (
               <Fragment key={item.label}>
-                <span className="mx-1 text-muted-foreground">{sep}</span>
-                <span className={`${tone} font-semibold`}>{mag}</span>
+                {idx === 0 ? (
+                  <span className={`${tone} font-semibold`}>
+                    {sign}
+                    {mag}
+                  </span>
+                ) : (
+                  <>
+                    <span className="mx-1 text-muted-foreground">{sign}</span>
+                    <span className={`${tone} font-semibold`}>{mag}</span>
+                  </>
+                )}
+                <span className="ml-1 text-[10px] text-muted-foreground">{prettyLabel}</span>
               </Fragment>
             );
           })}
-          {sectionEquationData.othersCount > 0 && (
-            <span className="ml-2 text-muted-foreground">
-              (+ {sectionEquationData.othersCount} others)
-            </span>
-          )}
           <span className="mx-2">≈</span>
           <span className="font-semibold">
             {sectionEquationData.total >= 0 ? '+' : '−'}

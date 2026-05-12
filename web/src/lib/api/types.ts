@@ -134,8 +134,6 @@ export interface ScoringRules {
    */
   timeframe_weights: Record<string, { daily: number; weekly: number; monthly: number }>;
   approximation_caveat: string;
-  /** Maximum number of top-N contribution items shown in the section equation row. From config/web.json equation.equation_summary_top_n. */
-  equation_summary_top_n: number;
 }
 
 /** Daily snapshot card data. */

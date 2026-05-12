@@ -1288,7 +1288,6 @@ describe('MatrixTable', () => {
       score_expansion_factor: 1.5,
       approximation_caveat: '',
       timeframe_weights: {},
-      equation_summary_top_n: 5,
     };
 
     it('renders equation row when contributions_payload and headerContribution are provided', () => {
@@ -1377,7 +1376,7 @@ describe('MatrixTable', () => {
       expect(document.body.textContent).not.toContain('≈');
     });
 
-    it('renders "+ N others" suffix when items > topN', () => {
+    it('renders all non-zero items with no "others" suffix', () => {
       const items: ContributionItem[] = [
         { name: 'a', category: 'trend', kind: 'indicator', score: 60, raw_value: 60, category_weight: 0.2, contribution: 10.0 },
         { name: 'b', category: 'trend', kind: 'indicator', score: 55, raw_value: 55, category_weight: 0.2, contribution: 9.0 },
@@ -1400,8 +1399,30 @@ describe('MatrixTable', () => {
           scoringRules={SCORING_RULES_WITH_TOP5}
         />,
       );
-      // 7 items, topN=5 → "2 others"
-      expect(document.body.textContent).toContain('2 others');
+      expect(document.body.textContent).not.toContain('others');
+    });
+
+    it('hides zero-contribution items from the equation row', () => {
+      const items: ContributionItem[] = [
+        { name: 'has_value', category: 'trend', kind: 'indicator', score: 60, raw_value: 60, category_weight: 0.2, contribution: 10.0 },
+        { name: 'divergence_macd', category: 'momentum', kind: 'pattern', score: 0, raw_value: null, category_weight: 0.2, contribution: 0 },
+        { name: 'crossover_ema_9_21', category: 'trend', kind: 'pattern', score: 0, raw_value: null, category_weight: 0.2, contribution: 0 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: 50.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      expect(document.body.textContent).not.toContain('Divergence Macd');
+      expect(document.body.textContent).not.toContain('Crossover Ema');
     });
 
     it('total rendered equals headerContribution.score, NOT sum of items', () => {

@@ -565,7 +565,6 @@ def create_app(
             "score_expansion_factor", 1.0
         )
         timeframe_weights = resolved_scorer_config.get("timeframe_weights", {})
-        equation_summary_top_n = config.get("equation", {}).get("equation_summary_top_n", 5)
         return JSONResponse({
             "rsi": {
                 "thresholds": rsi_thresholds,
@@ -583,7 +582,6 @@ def create_app(
                 "Item-level contributions do not sum to the final composite score "
                 "due to clamping at ±100, sector adjustment, and timeframe merging."
             ),
-            "equation_summary_top_n": equation_summary_top_n,
         })
 
     # ── Static file serving ───────────────────────────────────────────────────

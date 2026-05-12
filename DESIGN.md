@@ -1658,12 +1658,11 @@ For `indicator === "macd_line"` the panel renders a 7-step trace adapted to MACD
 ≈ ▲19.5 + ▲8.4 + ▼3.2 (+ 18 others) ≈ +100.0
 ```
 
-The row decomposes the timeframe's `contributions_payload.items` into top-N items (sorted by `abs(contribution)` descending) plus a collapsed "+ N others" suffix. The total on the right comes from `headerContribution.score` (the timeframe's pre-blend authoritative score, e.g. `daily_score` for daily). This is intentionally NOT the sum of items — the `≈` symbol acknowledges the approximation gap from sector adjustment and clamping (same gap described in `approximation_caveat`).
+The row decomposes the timeframe's `contributions_payload.items` into a full equation: every finite, non-zero contribution rendered in order of `abs(contribution)` descending, each annotated with a humanized indicator/pattern/aggregate label. Zero-valued contributions (e.g. pattern detectors that didn't fire under the current regime) are filtered out as visual noise. The total on the right comes from `headerContribution.score` (the timeframe's pre-blend authoritative score, e.g. `daily_score` for daily). This is intentionally NOT the sum of items — the `≈` symbol acknowledges the approximation gap from sector adjustment and clamping (same gap described in `approximation_caveat`).
 
-All three `kind` values (`indicator`, `pattern`, `aggregate`) are included so the approximation gap is minimized visually. Item names are shown as raw strings (no humanization in this version).
+All three `kind` values (`indicator`, `pattern`, `aggregate`) are included so the approximation gap is minimized visually. Labels are resolved via `INDICATOR_DISPLAY_LABELS`, `humanizePatternName`, or title-case for aggregates.
 
-- The row is hidden when `contributions_payload` is null (e.g. monthly timeframe, which has no persisted payload yet) or when `headerContribution` is null.
-- `topN` is sourced from `scoringRules.equation_summary_top_n`, which comes from `config/web.json → equation.equation_summary_top_n` (default 5) via `/api/scoring-rules`.
+The row is hidden when `contributions_payload` is null (e.g. monthly timeframe, which has no persisted payload yet) or when `headerContribution` is null.
 
 **Cross-section banner.** Above the three `MatrixTable` blocks, a one-line banner shows the per-timeframe weighted contributions summing to the final blended score:
 

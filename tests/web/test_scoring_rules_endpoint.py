@@ -206,9 +206,3 @@ class TestScoringRulesEndpoint:
             assert "weekly" in entry
             assert "monthly" in entry
 
-    def test_equation_summary_top_n_present_and_correct(self, client: TestClient) -> None:
-        """equation_summary_top_n must be present and equal to 5 (from web config default)."""
-        _login(client)
-        data = client.get("/api/scoring-rules").json()
-        assert "equation_summary_top_n" in data
-        assert data["equation_summary_top_n"] == 5
