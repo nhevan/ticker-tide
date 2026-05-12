@@ -15,6 +15,17 @@
 - Log at INFO for normal ops, WARNING for recoverable issues, ERROR for failures
 - Always include context in log messages (which ticker, which phase, what date)
 
+## Dashboard Workflow
+
+For ANY visual change to the dashboard — new chart, panel, restyle, layout shift, color/typography tweak — follow this discipline:
+
+- ALWAYS mock 2–3 variations first, inline in the affected component, with dummy data clearly labeled `[PROTOTYPE]`.
+- Wait for the user to visually pick before any planning or implementation. Do NOT delegate to `plan-implementer` until they've chosen.
+- After the user picks: standard plan → `adversarial-reviewer` → `plan-implementer` → `code-reviewer` → commit cycle.
+- Mockups are scaffolding only. After the pick, promote the chosen variant to a real component file, then remove all prototype scaffolding atomically (extract → wire → build green → remove). **Never commit prototypes.**
+
+This applies to anything the user will see (charts, layout, components, styling). It does NOT apply to backend work, wiring changes invisible to the user, or pure refactors.
+
 ## Error Handling
 - Never silently swallow exceptions
 - Catch specific exceptions, not bare except
@@ -117,6 +128,57 @@ Every change to indicators, patterns, scoring logic, or thresholds must be verif
 4. Write tests
 5. Run: `python scripts/verify_pipeline.py`
 6. Check pattern count is reasonable (not 0, not thousands)
+
+### Adding an indicator explainer:
+
+For adding a click-to-expand explainer panel for an indicator (parallel to the existing `rsi_14` panel — see `DESIGN.md` §15 for the full contract and the RSI implementation as the canonical reference).
+
+#### Pre-work
+1. Read `DESIGN.md` §15.
+2. Identify the indicator's category in `web/src/lib/scoring/categoryMap.ts` (`INDICATOR_CATEGORY_MAP`).
+3. Identify the scoring path in `src/scorer/indicator_scorer.py` (which `score_<name>` function, whether percentile-profile or fallback, regime-sensitivity).
+
+#### Reusable components — REUSE verbatim
+- `web/src/components/CategoryWeightBar.tsx` — step 6. Already generic over any category.
+- `web/src/components/ContributionMathChain.tsx` — step 7. Already generic over any indicator.
+- `web/src/components/MomentumShareBar.tsx` — step 5, **only if the indicator is in the `momentum` category**. For other categories, generalise on first use: rename to `CategoryShareBar`, parameterise the category filter; the rest of the component is category-agnostic.
+
+#### Per-indicator components — NEEDS NEW or GENERALISE
+- Step 2 trend chart: new `<X>TrendChart.tsx`. Use `RsiTrendChart.tsx` as a template. Different sparkline data shape (signed, unbounded, bounded differently) and reference bands per indicator.
+- Step 3 percentile strip: `RsiPercentileStrip.tsx` currently hardcodes the 0–100 RSI range. Generalise on first use (parameterise the value range) for unbounded indicators like MACD or CCI.
+- Step 4 mapping chart: new `<X>MappingChart.tsx`. Use `RsiMappingChart.tsx` as a template. Mapping curve shape differs per indicator (RSI uses six zones around percentile profile; MACD/CCI have different scoring functions).
+
+#### Backend extensions — IF NEEDED
+- Per-indicator sparkline field on `snapshot.daily` (template: `_fetch_rsi_sparkline` in `src/web/queries.py`).
+- Per-indicator profile lookup (template: `_fetch_rsi_profile`).
+- Per-indicator zone-label helper in `src/scorer/zone_labels.py` (template: `zone_label_for_rsi`).
+- New entry in `/api/scoring-rules` response if the indicator has its own thresholds (template: the `rsi` block in `src/web/app.py`).
+- New `<x>_sparkline_days` key in `config/web.json` `sparkline` block if the trend chart window differs from RSI's 100 days.
+
+#### Per-step workflow
+For each step's visualisation, follow the `## Dashboard Workflow` rule above: mock 2–3 variations inline in `IndicatorExplainerPanel.tsx` with dummy data, wait for the user to pick, then promote the chosen variant to a real component (extract → wire → build green → remove scaffolding atomically).
+
+The frontend orchestrator is `web/src/components/IndicatorExplainerPanel.tsx`. The `RsiPanel` function inside is the per-indicator pattern to mirror — copy its structure for a new `<X>Panel`, then dispatch in the top-level component switch.
+
+#### Gotchas (from the RSI build)
+1. **Math sign**: contribution is `score × |score| / Σ|score| × regime_weight × expansion`, NOT `score × score / Σ|score|`. For negative scores these differ in sign and the latter silently inverts bearish indicators into bullish-looking contributions. Caught in `ContribVariationA` during the RSI build; fixed in `ContributionMathChain`.
+2. **Persisted vs current config**: steps 4/5/7 read from `snapshot.daily.contributions_payload` (persisted at scoring time); step 6 reads from `/api/scoring-rules` (current config). Drift between them is covered by the `approximation_caveat` shown in step 7. Don't change this convention.
+3. **`useId()` for SVG `<defs>` IDs**: SVG IDs are document-global. Use React's `useId()` to scope per-instance — otherwise rendering two panels at once causes gradient/clip-path collisions.
+4. **`Number.isFinite` guards on every numeric prop**: DB columns are nullable even when TS types say `number`. `isNaN(null) === false` in JS, so `isNaN`-based guards silently pass — use `Number.isFinite`.
+5. **Math display pattern**: every formula renders symbolic-first, then with values substituted, then simplified, then result. Names anchor the numbers to earlier steps. Example: `= (RSI − p80) ÷ (p95 − p80) = (73.2 − 66.8) ÷ (77.9 − 66.8) = 6.4 ÷ 11.1`.
+6. **Always render fallback prose**: components never return `null` into a step card — empty cards look broken. When inputs are non-finite, render the `Approximately X points.` prose (or equivalent).
+7. **Frontend tests deferred**: accepted project policy for pure UI components built under this recipe. Acknowledge explicitly in the implementation PR or `hot.md` entry; don't re-litigate.
+
+#### Verification
+- `cd web && npm run build` clean.
+- `cd web && npm test -- --run` green.
+- Manual: click the indicator's matrix row, confirm all 7 steps render with real data for a representative ticker/date.
+- `git diff --stat` matches only the files declared in the implementer's plan.
+
+#### Docs
+- Update `DESIGN.md` §15 with the new indicator's 7-step trace (mirror the RSI subsection format).
+- Update `hot.md` per the session-handoff ritual.
+- Update `CONFIG.md` only if new config keys were added.
 
 ### Modifying scoring thresholds:
 1. Update `config/scorer.json`
