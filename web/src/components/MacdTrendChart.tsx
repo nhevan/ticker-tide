@@ -50,7 +50,8 @@ export function MacdTrendChart({ data }: MacdTrendChartProps) {
   const domainExtent = maxAbs * 1.15;
 
   return (
-    <div className="h-40 w-full">
+    <div className="w-full">
+      <div className="h-40 w-full">
       <ResponsiveContainer>
         <ComposedChart data={data} margin={{ top: 6, right: 40, bottom: 16, left: 4 }}>
           <XAxis
@@ -146,6 +147,7 @@ export function MacdTrendChart({ data }: MacdTrendChartProps) {
           />
         </ComposedChart>
       </ResponsiveContainer>
+      </div>
       <div className="mt-1 flex justify-center gap-4 text-[10px] font-mono text-muted-foreground">
         <span>
           <span className="inline-block w-3 border-t-2 border-foreground align-middle" /> MACD
