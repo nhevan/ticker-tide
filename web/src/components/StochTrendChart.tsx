@@ -9,7 +9,7 @@
  * without a custom label renderer. Raw SVG keeps xFor/yFor trivial.
  *
  * ASSUMPTION: data is non-empty. The empty-data guard lives at the call site
- * (Step 2 in StochKPanelPrototype) — this component renders nothing useful
+ * (Step 2 in StochKPanel) — this component renders nothing useful
  * with zero points so callers must check before rendering.
  */
 

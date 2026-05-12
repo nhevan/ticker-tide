@@ -318,8 +318,7 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
 
 // =====================================================================
 // StochKPanel — 7-step Stoch %K explainer.
-// Steps 1–6 wired to real backend data. Step 7 still uses dummy values
-// (clearly marked) — replaced per task plan.
+// All 7 steps wired to real backend data.
 // =====================================================================
 
 /**
@@ -331,10 +330,9 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
  *   contributions data used by Step 7). If config has drifted since the last scoring run,
  *   Step 6 (current config) and Step 7 (persisted payload) may differ slightly.
  *
- * Steps 1–6 use real backend data. Step 7 remains on dummy values
- * pending subsequent wiring tasks.
+ * All 7 steps use real backend data.
  */
-function StochKPanelPrototype({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
+function StochKPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
   const daily = snapshot.daily;
   const liveK = daily.indicators?.stoch_k;
   const liveD = daily.indicators?.stoch_d;
@@ -359,20 +357,10 @@ function StochKPanelPrototype({ snapshot, rules }: { snapshot: Snapshot; rules: 
     (item) => item.name === 'stoch_k',
   );
 
-  // Dummy values for step 7 — replaced per task plan.
-  const dummyScore = -12.4; // [PROTOTYPE]
-  const dummyDenom = 168.0; // [PROTOTYPE] Σ|momentum scores|
   const regime = (daily.regime ?? 'ranging') as string;
-  const dummyExpansion = 1.12; // [PROTOTYPE]
-  const dummyMomentumWeight = 0.28; // [PROTOTYPE]
-  const dummyFinalContribution = (dummyScore * Math.abs(dummyScore) / dummyDenom) * dummyMomentumWeight * dummyExpansion;
 
   return (
     <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-foreground">
-      <div className="mb-3 rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
-        [PROTOTYPE] Step 7 uses dummy values — wired in order per task plan. Steps 1–6 now use real backend data.
-      </div>
-
       {/* Step 1 — Raw value */}
       <StepCard stepNumber={1} heading="Stochastic %K reading">
         {kValue !== null && dValue !== null && spread !== null ? (
@@ -534,24 +522,25 @@ function StochKPanelPrototype({ snapshot, rules }: { snapshot: Snapshot; rules: 
             )}
           </StepCard>
 
-          {/* Step 7 — Net contribution to composite [PROTOTYPE — dummy values until Task #10] */}
+          {/* Step 7 — Net contribution (REAL) */}
           <StepCard stepNumber={7} heading="Net contribution to composite">
-            <p>
-              Final contribution of %K to today's composite score{' '}
-              <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>:
-            </p>
-            <div className="mt-3">
-              <ContributionMathChain
-                score={dummyScore}
-                denom={dummyDenom}
-                regimeWeight={dummyMomentumWeight}
-                expansion={dummyExpansion}
-                finalContribution={dummyFinalContribution}
-                activeName="stoch_k"
-              />
-            </div>
+            {(() => {
+              const momentumItems = contributions.items.filter((item) => item.category === 'momentum');
+              const denom = momentumItems.reduce((acc, item) => acc + Math.abs(item.score), 0);
+              return (
+                <ContributionMathChain
+                  score={stochItem.score}
+                  denom={denom}
+                  regimeWeight={stochItem.category_weight}
+                  expansion={contributions.expansion_factor}
+                  finalContribution={stochItem.contribution}
+                  activeName="stoch_k"
+                />
+              );
+            })()}
             <p className="mt-2 text-muted-foreground italic text-[10px]">
-              Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.
+              {rules?.approximation_caveat ??
+                'Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.'}
             </p>
           </StepCard>
         </>
@@ -790,7 +779,7 @@ export function IndicatorExplainerPanel({
     return <MacdLinePanel snapshot={snapshot} rules={rules} />;
   }
   if (indicator === 'stoch_k') {
-    return <StochKPanelPrototype snapshot={snapshot} rules={rules} />;
+    return <StochKPanel snapshot={snapshot} rules={rules} />;
   }
   return <PlaceholderPanel indicator={indicator} />;
 }
