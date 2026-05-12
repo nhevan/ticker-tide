@@ -318,14 +318,23 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
 
 // =====================================================================
 // StochKPanel — 7-step Stoch %K explainer.
-// Steps 1–4 wired to real backend data. Steps 5–7 still use dummy values
+// Steps 1–6 wired to real backend data. Step 7 still uses dummy values
 // (clearly marked) — replaced per task plan.
 // =====================================================================
 
-/** Stoch %K panel — 7-step trace mirroring RsiPanel.
- * Steps 1–4 use real backend data. Steps 5–7 remain on dummy values
- * pending subsequent wiring tasks. */
-function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
+/**
+ * Stoch %K panel — 7-step trace mirroring RsiPanel.
+ *
+ * @param snapshot - Full snapshot object from the server.
+ * @param rules - Scoring rules from /api/scoring-rules, or undefined if not yet loaded.
+ *   Used by Step 6 to render CURRENT regime weights + expansion factor (vs. the persisted
+ *   contributions data used by Step 7). If config has drifted since the last scoring run,
+ *   Step 6 (current config) and Step 7 (persisted payload) may differ slightly.
+ *
+ * Steps 1–6 use real backend data. Step 7 remains on dummy values
+ * pending subsequent wiring tasks.
+ */
+function StochKPanelPrototype({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
   const daily = snapshot.daily;
   const liveK = daily.indicators?.stoch_k;
   const liveD = daily.indicators?.stoch_d;
@@ -350,19 +359,18 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
     (item) => item.name === 'stoch_k',
   );
 
-  // Dummy values for steps 6–7 — replaced per task plan.
+  // Dummy values for step 7 — replaced per task plan.
   const dummyScore = -12.4; // [PROTOTYPE]
   const dummyDenom = 168.0; // [PROTOTYPE] Σ|momentum scores|
   const regime = (daily.regime ?? 'ranging') as string;
   const dummyExpansion = 1.12; // [PROTOTYPE]
   const dummyMomentumWeight = 0.28; // [PROTOTYPE]
   const dummyFinalContribution = (dummyScore * Math.abs(dummyScore) / dummyDenom) * dummyMomentumWeight * dummyExpansion;
-  const dummyCategoryWeights = { momentum: 0.28, trend: 0.34, volatility: 0.14, volume: 0.10, breadth: 0.08, valuation: 0.06 };
 
   return (
     <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-foreground">
       <div className="mb-3 rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
-        [PROTOTYPE] Steps 6–7 use dummy values — wired in order per task plan. Steps 1–5 now use real backend data.
+        [PROTOTYPE] Step 7 uses dummy values — wired in order per task plan. Steps 1–6 now use real backend data.
       </div>
 
       {/* Step 1 — Raw value */}
@@ -503,17 +511,27 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
             />
           </StepCard>
 
-          {/* Step 6 — Category weight × expansion [PROTOTYPE — dummy values until Task #9] */}
+          {/* Step 6 — Category weight × expansion (REAL) */}
           <StepCard stepNumber={6} heading="Category weight × expansion">
-            <p>
-              Momentum's base weight in the <span className="font-mono">{regime}</span> regime is{' '}
-              <span className="font-mono font-semibold">{(dummyMomentumWeight * 100).toFixed(0)}%</span>, then scaled by the cross-section expansion factor{' '}
-              <span className="font-mono font-semibold">×{dummyExpansion.toFixed(2)}</span>{' '}
-              <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>.
-            </p>
-            <div className="mt-3">
-              <CategoryWeightBar weights={dummyCategoryWeights} regime={regime} expansion={dummyExpansion} activeName="momentum" />
-            </div>
+            {/* activeName hardcoded because this panel is stoch_k whose home category is
+                momentum; the component supports any active category. expansion comes from
+                CURRENT config (rules) which may differ slightly from the persisted
+                contributions.expansion_factor used in Step 7 if config has drifted since
+                the last scoring run. */}
+            {rules?.regime_weights && rules.regime_weights[regime] ? (
+              <CategoryWeightBar
+                weights={rules.regime_weights[regime]}
+                regime={regime}
+                expansion={rules.score_expansion_factor}
+                activeName="momentum"
+              />
+            ) : (
+              <>
+                Momentum weight in <span className="font-medium">{regime}</span> regime ={' '}
+                {stochItem.category_weight.toFixed(3)} × expansion{' '}
+                {contributions.expansion_factor.toFixed(2)}.
+              </>
+            )}
           </StepCard>
 
           {/* Step 7 — Net contribution to composite [PROTOTYPE — dummy values until Task #10] */}
@@ -772,7 +790,7 @@ export function IndicatorExplainerPanel({
     return <MacdLinePanel snapshot={snapshot} rules={rules} />;
   }
   if (indicator === 'stoch_k') {
-    return <StochKPanelPrototype snapshot={snapshot} />;
+    return <StochKPanelPrototype snapshot={snapshot} rules={rules} />;
   }
   return <PlaceholderPanel indicator={indicator} />;
 }
