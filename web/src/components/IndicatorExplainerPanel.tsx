@@ -14,6 +14,7 @@ import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import { RsiMappingChart } from '@/components/RsiMappingChart';
 import { MomentumShareBar } from '@/components/MomentumShareBar';
 import { CategoryWeightBar } from '@/components/CategoryWeightBar';
+import { ContributionMathChain } from '@/components/ContributionMathChain';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -241,9 +242,21 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
 
               {/* Step 7 — Net contribution */}
               <StepCard stepNumber={7} heading="Net contribution to composite">
-                Approximately{' '}
-                <span className="font-medium">{rsiItem.contribution.toFixed(2)} points</span>.
-                <p className="mt-1 text-muted-foreground italic text-[10px]">
+                {(() => {
+                  const momentumItems = contributions.items.filter((item) => item.category === 'momentum');
+                  const denom = momentumItems.reduce((acc, item) => acc + Math.abs(item.score), 0);
+                  return (
+                    <ContributionMathChain
+                      score={rsiItem.score}
+                      denom={denom}
+                      regimeWeight={rsiItem.category_weight}
+                      expansion={contributions.expansion_factor}
+                      finalContribution={rsiItem.contribution}
+                      activeName="rsi_14"
+                    />
+                  );
+                })()}
+                <p className="mt-2 text-muted-foreground italic text-[10px]">
                   {rules?.approximation_caveat ??
                     'Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.'}
                 </p>
