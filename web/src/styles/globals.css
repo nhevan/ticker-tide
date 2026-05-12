@@ -98,4 +98,18 @@
     text-transform: uppercase;
     letter-spacing: 0.15em;
   }
+
+  /* Make the native <input type="date"> calendar icon visible on the dark
+     theme. The browser default icon is near-black and disappears against
+     the card background. invert(1) flips it to near-white; the amber-on-
+     black palette has no specific hue to match, so a neutral inverted
+     glyph is the right call. */
+  input[type='date']::-webkit-calendar-picker-indicator {
+    filter: invert(0.85);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
 }
