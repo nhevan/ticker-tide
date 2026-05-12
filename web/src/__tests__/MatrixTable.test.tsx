@@ -1107,18 +1107,18 @@ describe('MatrixTable', () => {
       expect(screen.getByRole('button', { name: /MACD line/i })).toBeInTheDocument();
     });
 
-    it('non-explainer rows (e.g. stoch_k) render no role="button" and no click affordance', () => {
+    it('non-explainer rows (e.g. cci_20) render no role="button" and no click affordance', () => {
       render(
         <MatrixTable
           title="Daily"
-          indicators={{ stoch_k: 50 }}
-          indicatorScores={{ stoch_k: 10 }}
+          indicators={{ cci_20: 50 }}
+          indicatorScores={{ cci_20: 10 }}
           signalDirection={1}
         />,
       );
-      // The Stoch K label is rendered, but the <td> does NOT become a button.
-      expect(screen.getByText('Stoch K')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /Stoch K/i })).not.toBeInTheDocument();
+      // The CCI 20 label is rendered, but the <td> does NOT become a button.
+      expect(screen.getByText('CCI 20')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /CCI 20/i })).not.toBeInTheDocument();
     });
   });
 

@@ -93,6 +93,17 @@ export interface RsiProfile {
   std: number;
 }
 
+/** Stochastic %K percentile profile from indicator_profiles. */
+export interface StochKProfile {
+  p5: number;
+  p20: number;
+  p50: number;
+  p80: number;
+  p95: number;
+  mean: number;
+  std: number;
+}
+
 /** A single indicator contribution item inside ContributionsPayload. */
 export interface ContributionItem {
   name: string;
@@ -189,6 +200,18 @@ export interface DailySection {
     signal: number | null;
     histogram: number | null;
   }[];
+  /**
+   * Last N working days of Stochastic %K and %D values for this ticker, ordered
+   * ascending by date, bounded by the picked date. Rows with stoch_k IS NULL are
+   * excluded server-side. stoch_d is independently nullable (null during SMA
+   * warm-up). Always present when data_available is true — empty array when no
+   * Stoch data exists, never null, never absent.
+   */
+  stoch_sparkline?: { date: string; stoch_k: number; stoch_d: number | null }[];
+  /** Per-ticker Stoch %K percentile profile, or null if no profile exists. */
+  stoch_k_profile?: StochKProfile | null;
+  /** Zone label string from zone_label_for_stoch_k(), or null when stoch_k is unavailable for the date. */
+  stoch_zone_label?: string | null;
 }
 
 /** Weekly or monthly snapshot card data. */

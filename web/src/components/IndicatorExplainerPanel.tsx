@@ -17,6 +17,7 @@ import { MacdTrendChart } from '@/components/MacdTrendChart';
 import { MacdMappingChart } from '@/components/MacdMappingChart';
 import { CategoryWeightBar } from '@/components/CategoryWeightBar';
 import { ContributionMathChain } from '@/components/ContributionMathChain';
+import { StochTrendChart } from '@/components/StochTrendChart';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -35,6 +36,24 @@ const FALLBACK_ZONE_DESCRIPTIONS: Record<string, string> = {
   below_mid: 'Between oversold and the midpoint',
   above_mid: 'Between the midpoint and overbought',
   overbought: 'Above the fixed overbought threshold',
+};
+
+/** Human-friendly prose fragments for Stoch %K zone label strings (profile path). */
+const STOCH_ZONE_LABEL_DESCRIPTIONS: Record<string, string> = {
+  extreme_oversold: "Below p5 of this ticker's historical %K",
+  oversold: "Between p5 and p20 of this ticker's historical %K",
+  below_mid: "Between p20 and p50 of this ticker's historical %K",
+  above_mid: "Between p50 and p80 of this ticker's historical %K",
+  overbought: "Between p80 and p95 of this ticker's historical %K",
+  extreme_overbought: "Above p95 of this ticker's historical %K",
+};
+
+/** Human-friendly prose fragments for Stoch %K zone label strings (fallback path). */
+const STOCH_FALLBACK_ZONE_DESCRIPTIONS: Record<string, string> = {
+  oversold: 'Below the fixed oversold threshold (20)',
+  below_mid: 'Between oversold and the midpoint',
+  above_mid: 'Between the midpoint and overbought',
+  overbought: 'Above the fixed overbought threshold (80)',
 };
 
 interface IndicatorExplainerPanelProps {
@@ -297,6 +316,236 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
   );
 }
 
+// =====================================================================
+// StochKPanel — 7-step Stoch %K explainer.
+// Steps 1 & 2 wired to real backend data. Steps 3–7 use dummy values
+// (clearly marked) — replaced per task plan.
+// =====================================================================
+
+/** [PROTOTYPE A] Mapping chart: six-zone smooth curve mirroring RSI. */
+function StochMappingChartProtoA({ value }: { value: number }) {
+  const w = 560;
+  const h = 160;
+  const pad = { l: 28, r: 16, t: 12, b: 22 };
+  const innerW = w - pad.l - pad.r;
+  const innerH = h - pad.t - pad.b;
+  const xFor = (v: number) => pad.l + (v / 100) * innerW;
+  const yFor = (s: number) => pad.t + ((30 - s) / 60) * innerH;
+  const p5 = 8, p20 = 22, p50 = 48, p80 = 76, p95 = 92;
+  const points: [number, number][] = [
+    [0, 30], [p5, 30], [p20, 15], [p50, 0], [p80, -15], [p95, -30], [100, -30],
+  ];
+  const curve = points.map(([v, s], i) => `${i === 0 ? 'M' : 'L'}${xFor(v).toFixed(1)},${yFor(s).toFixed(1)}`).join(' ');
+  const score = (() => {
+    if (value <= p5) return 30;
+    if (value <= p20) return 30 - ((value - p5) / (p20 - p5)) * 15;
+    if (value <= p50) return 15 - ((value - p20) / (p50 - p20)) * 15;
+    if (value <= p80) return 0 - ((value - p50) / (p80 - p50)) * 15;
+    if (value <= p95) return -15 - ((value - p80) / (p95 - p80)) * 15;
+    return -30;
+  })();
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-40" preserveAspectRatio="none">
+      <line x1={pad.l} x2={pad.l + innerW} y1={yFor(0)} y2={yFor(0)} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.3} />
+      <path d={curve} fill="none" stroke="hsl(var(--foreground))" strokeWidth={1.75} />
+      {[p5, p20, p50, p80, p95].map((p) => (
+        <line key={p} x1={xFor(p)} x2={xFor(p)} y1={pad.t} y2={pad.t + innerH} stroke="hsl(var(--muted-foreground))" strokeDasharray="2 3" strokeOpacity={0.25} />
+      ))}
+      <circle cx={xFor(value)} cy={yFor(score)} r={4.5} fill="hsl(var(--primary))" stroke="hsl(var(--card))" strokeWidth={1.5} />
+      <text x={xFor(value) + 6} y={yFor(score) - 6} fontSize={10} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--primary))">
+        %K {value.toFixed(1)} → {score.toFixed(1)}
+      </text>
+      <text x={pad.l - 4} y={yFor(30) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--up))" textAnchor="end">+30</text>
+      <text x={pad.l - 4} y={yFor(0) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="end">0</text>
+      <text x={pad.l - 4} y={yFor(-30) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--down))" textAnchor="end">−30</text>
+      {[0, 25, 50, 75, 100].map((v) => (
+        <text key={v} x={xFor(v)} y={pad.t + innerH + 12} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="middle">{v}</text>
+      ))}
+    </svg>
+  );
+}
+
+/** Stoch %K panel — 7-step trace mirroring RsiPanel.
+ * Steps 1 & 2 use real backend data. Steps 3–7 remain on dummy values
+ * pending subsequent wiring tasks. */
+function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
+  const daily = snapshot.daily;
+  const liveK = daily.indicators?.stoch_k;
+  const liveD = daily.indicators?.stoch_d;
+  const kValue: number | null = Number.isFinite(liveK as number) ? (liveK as number) : null;
+  const dValue: number | null = Number.isFinite(liveD as number) ? (liveD as number) : null;
+  const spread = Number.isFinite(kValue) && Number.isFinite(dValue) ? (kValue as number) - (dValue as number) : null;
+
+  // Real backend fields — now typed via DailySection.
+  const sparkline = daily.stoch_sparkline ?? [];
+  const stochProfile = daily.stoch_k_profile ?? null;
+  const zoneLabel = daily.stoch_zone_label ?? null;
+
+  // Dummy values for steps 3–7 — replaced per task plan.
+  const dummyScore = -12.4; // [PROTOTYPE]
+  const dummyDenom = 168.0; // [PROTOTYPE] Σ|momentum scores|
+  const dummyRegime = (daily.regime ?? 'ranging') as string;
+  const dummyExpansion = 1.12; // [PROTOTYPE]
+  const dummyMomentumWeight = 0.28; // [PROTOTYPE]
+  const dummyFinalContribution = (dummyScore * Math.abs(dummyScore) / dummyDenom) * dummyMomentumWeight * dummyExpansion;
+  const dummyMomentumItems: ContributionItem[] = [
+    { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: -42, raw_value: -42, category_weight: 0.28, contribution: 0 },
+    { name: 'stoch_k', category: 'momentum', kind: 'indicator', score: dummyScore, raw_value: dummyScore, category_weight: 0.28, contribution: 0 },
+    { name: 'macd_line', category: 'momentum', kind: 'indicator', score: 18, raw_value: 18, category_weight: 0.28, contribution: 0 },
+    { name: 'macd_histogram', category: 'momentum', kind: 'indicator', score: -22, raw_value: -22, category_weight: 0.28, contribution: 0 },
+    { name: 'cci_20', category: 'momentum', kind: 'indicator', score: -55, raw_value: -55, category_weight: 0.28, contribution: 0 },
+    { name: 'roc_10', category: 'momentum', kind: 'indicator', score: -19, raw_value: -19, category_weight: 0.28, contribution: 0 },
+  ];
+  const dummyCategoryWeights = { momentum: 0.28, trend: 0.34, volatility: 0.14, volume: 0.10, breadth: 0.08, valuation: 0.06 };
+
+  return (
+    <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-foreground">
+      <div className="mb-3 rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
+        [PROTOTYPE] Steps 3–7 use dummy values — wired in order per task plan. Steps 1 &amp; 2 now use real backend data.
+      </div>
+
+      {/* Step 1 — Raw value */}
+      <StepCard stepNumber={1} heading="Stochastic %K reading">
+        {kValue !== null && dValue !== null && spread !== null ? (
+          <>
+            <p>
+              %K = <span className="font-mono font-semibold">{kValue.toFixed(2)}</span>, %D ={' '}
+              <span className="font-mono font-semibold">{dValue.toFixed(2)}</span> (3-period SMA of %K). Spread %K − %D ={' '}
+              <span className={`font-mono font-semibold ${spread >= 0 ? 'text-up' : 'text-down'}`}>{spread >= 0 ? '+' : ''}{spread.toFixed(2)}</span>.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              %K measures where today's close sits within the highest-high / lowest-low range over the last 14 sessions. 0 = at the period low, 100 = at the period high.
+            </p>
+          </>
+        ) : (
+          <p className="text-muted-foreground italic">Stochastic reading unavailable for this date.</p>
+        )}
+      </StepCard>
+
+      {/* Step 2 — Zone + trend chart (real backend data) */}
+      <StepCard stepNumber={2} heading="Zone">
+        {sparkline.length > 0 ? (
+          <StochTrendChart
+            data={sparkline.map((row) => ({ date: row.date, k: row.stoch_k, d: row.stoch_d }))}
+          />
+        ) : (
+          <p className="text-muted-foreground italic">Sparkline unavailable for this date.</p>
+        )}
+        {zoneLabel ? (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-muted text-foreground rounded-sm">
+              {zoneLabel}
+            </span>
+            <span>
+              {stochProfile
+                ? (STOCH_ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? zoneLabel)
+                : (STOCH_FALLBACK_ZONE_DESCRIPTIONS[zoneLabel] ?? zoneLabel)}
+            </span>
+            {!stochProfile && (
+              <span className="text-muted-foreground italic">
+                (fallback — no per-ticker profile yet)
+              </span>
+            )}
+          </div>
+        ) : (
+          <p className="text-muted-foreground italic mt-2">Zone unavailable for this date.</p>
+        )}
+      </StepCard>
+
+      {/* Step 3 — Scoring path [PROTOTYPE — dummy profile] */}
+      <StepCard stepNumber={3} heading="Scoring path">
+        <p>
+          {stochProfile
+            ? 'This ticker has a persisted percentile profile for %K, so scoring uses the '
+            : 'This ticker has no persisted %K profile, so scoring falls back to the '}
+          <span className="font-semibold">{stochProfile ? 'profile path' : 'fallback path'}</span>
+          {stochProfile
+            ? ' (six zones around p5/p20/p50/p80/p95).'
+            : ' (fixed 80/20 thresholds).'}{' '}
+          {stochProfile
+            ? 'Without a profile, scoring would fall back to fixed 80/20 thresholds.'
+            : 'With a profile, scoring would use six zones around p5/p20/p50/p80/p95.'}
+        </p>
+        <p className="mt-1 text-muted-foreground">
+          In a <span className="font-mono">{dummyRegime}</span> regime, the oscillator's sign{' '}
+          {dummyRegime === 'ranging'
+            ? 'is treated as mean-reverting (overbought → bearish, oversold → bullish).'
+            : 'flips: in trending regimes, overbought is bullish (momentum continuation).'}
+        </p>
+        <p className="mt-1 text-muted-foreground italic text-[10px]">[PROTOTYPE — profile percentiles wired in a later task]</p>
+      </StepCard>
+
+      {/* Step 4 — Stoch K score [PROTOTYPE — dummy score and dummy profile] */}
+      <StepCard stepNumber={4} heading="Stochastic %K score">
+        {kValue !== null ? (
+          <>
+            <p>
+              %K {kValue.toFixed(1)} maps to a score of{' '}
+              <span className={`font-mono font-semibold ${dummyScore >= 0 ? 'text-up' : 'text-down'}`}>{dummyScore >= 0 ? '+' : ''}{dummyScore.toFixed(1)}</span>{' '}
+              <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy score and dummy profile]</span>. Mapping curve:
+            </p>
+            <div className="mt-3">
+              <StochMappingChartProtoA value={kValue} />
+            </div>
+          </>
+        ) : (
+          <p className="text-muted-foreground italic">Stochastic score unavailable for this date.</p>
+        )}
+      </StepCard>
+
+      {/* Step 5 — Magnitude share in momentum [PROTOTYPE — dummy items] */}
+      <StepCard stepNumber={5} heading="Magnitude share in momentum">
+        <p>
+          %K's |score| of <span className="font-mono">{Math.abs(dummyScore).toFixed(1)}</span> divided by the total magnitude across all momentum indicators (<span className="font-mono">{dummyDenom.toFixed(1)}</span>) gives its share:{' '}
+          <span className="font-mono font-semibold">{((Math.abs(dummyScore) / dummyDenom) * 100).toFixed(1)}%</span>{' '}
+          <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy items]</span>.
+        </p>
+        <div className="mt-3">
+          <CategoryShareBar items={dummyMomentumItems} activeName="stoch_k" category="momentum" />
+        </div>
+      </StepCard>
+
+      {/* Step 6 — Category weight × expansion [PROTOTYPE — dummy weights] */}
+      <StepCard stepNumber={6} heading="Category weight × expansion">
+        <p>
+          Momentum's base weight in the <span className="font-mono">{dummyRegime}</span> regime is{' '}
+          <span className="font-mono font-semibold">{(dummyMomentumWeight * 100).toFixed(0)}%</span>, then scaled by the cross-section expansion factor{' '}
+          <span className="font-mono font-semibold">×{dummyExpansion.toFixed(2)}</span>{' '}
+          <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>.
+        </p>
+        <div className="mt-3">
+          <CategoryWeightBar weights={dummyCategoryWeights} regime={dummyRegime} expansion={dummyExpansion} activeName="momentum" />
+        </div>
+      </StepCard>
+
+      {/* Step 7 — Net contribution to composite [PROTOTYPE — dummy] */}
+      <StepCard stepNumber={7} heading="Net contribution to composite">
+        <p>
+          Final contribution of %K to today's composite score{' '}
+          <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>:
+        </p>
+        <div className="mt-3">
+          <ContributionMathChain
+            score={dummyScore}
+            denom={dummyDenom}
+            regimeWeight={dummyMomentumWeight}
+            expansion={dummyExpansion}
+            finalContribution={dummyFinalContribution}
+            activeName="stoch_k"
+          />
+        </div>
+        <p className="mt-2 text-muted-foreground italic text-[10px]">
+          Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.
+        </p>
+      </StepCard>
+    </div>
+  );
+}
+
+// =====================================================================
+// End StochKPanel block.
+// =====================================================================
+
 /** Placeholder shown for indicators other than rsi_14 and macd_line. */
 function PlaceholderPanel({ indicator }: { indicator: string }) {
   return (
@@ -522,6 +771,9 @@ export function IndicatorExplainerPanel({
   if (indicator === 'macd_line') {
     return <MacdLinePanel snapshot={snapshot} rules={rules} />;
   }
+  if (indicator === 'stoch_k') {
+    return <StochKPanelPrototype snapshot={snapshot} />;
+  }
   return <PlaceholderPanel indicator={indicator} />;
 }
 
@@ -536,4 +788,5 @@ export function IndicatorExplainerPanel({
 export const INDICATORS_WITH_EXPLAINER: ReadonlySet<string> = new Set([
   'rsi_14',
   'macd_line',
+  'stoch_k',
 ]);
