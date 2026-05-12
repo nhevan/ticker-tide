@@ -394,17 +394,26 @@ export function MatrixTable({
   const scored = new Set<string>(categories as readonly string[]);
 
   /**
-   * Map of name → composite-point contribution, built from
-   * snapshot.daily.contributions_payload.items when timeframe is 'daily'.
+   * Map of name → composite-point contribution, built from the timeframe's
+   * contributions_payload.items. Dispatches on timeframe:
+   *   'daily'  → snapshot.daily.contributions_payload
+   *   'weekly' → snapshot.weekly.contributions_payload
+   *   else     → empty Map (monthly stays gated — no payload wired yet)
    * Accepts items with kind === 'indicator' or kind === 'aggregate'; both land
    * in the same Map keyed by item.name. Aggregate names (sentiment/fundamental/
    * macro) are guaranteed not to collide with indicator names — categoryMap is
    * the source of truth.
-   * Returns an empty Map for non-daily timeframes or when the payload is absent.
+   * Returns an empty Map when the payload is absent or for un-wired timeframes.
    */
   const contributionsByName = useMemo(() => {
-    if (timeframe !== 'daily') return new Map<string, number>();
-    const items = snapshot?.daily?.contributions_payload?.items ?? [];
+    let items;
+    if (timeframe === 'daily') {
+      items = snapshot?.daily?.contributions_payload?.items ?? [];
+    } else if (timeframe === 'weekly') {
+      items = snapshot?.weekly?.contributions_payload?.items ?? [];
+    } else {
+      return new Map<string, number>();
+    }
     const map = new Map<string, number>();
     for (const item of items) {
       if (item.kind !== 'indicator' && item.kind !== 'aggregate') continue;
@@ -412,7 +421,7 @@ export function MatrixTable({
       map.set(item.name, item.contribution);
     }
     return map;
-  }, [snapshot, timeframe]);
+  }, [snapshot?.daily?.contributions_payload, snapshot?.weekly?.contributions_payload, timeframe]);
 
   /** Toggle the explainer panel for an indicator row. Same row collapses; different row replaces. */
   function handleIndicatorClick(indicatorKey: string): void {

@@ -932,4 +932,148 @@ describe('MatrixTable', () => {
       expect(cell.textContent).not.toContain('▼');
     });
   });
+
+  describe('weekly contribution display', () => {
+    /** Build a snapshot with weekly contributions_payload and no daily payload. */
+    function makeSnapshotWithWeeklyContributions(
+      items: ContributionItem[],
+    ): Snapshot {
+      return {
+        daily: {
+          data_available: true,
+          categories: [
+            'trend', 'momentum', 'volume', 'volatility',
+            'candlestick', 'structural', 'sentiment', 'fundamental', 'macro',
+          ],
+          resolved_period: '2026-05-12',
+          // no contributions_payload on daily
+          rsi_sparkline: [],
+        },
+        weekly: {
+          data_available: true,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural'],
+          resolved_period: '2026-05-05',
+          resolved_period_label: 'Week of May 5',
+          is_fallback: false,
+          contributions_payload: {
+            expansion_factor: 1.0,
+            items,
+          },
+        },
+        monthly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+      } as Snapshot;
+    }
+
+    it('weekly timeframe renders up-glyph when weekly payload contains positive indicator contribution', () => {
+      const snapshot = makeSnapshotWithWeeklyContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 55, raw_value: 55, category_weight: 0.35, contribution: 3.1 },
+      ]);
+      render(
+        <MatrixTable
+          title="Weekly"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 55 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural']}
+          timeframe="weekly"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).toContain('▲');
+      expect(cell.textContent).toContain('3.1');
+    });
+
+    it('weekly timeframe renders down-glyph when weekly payload contains negative indicator contribution', () => {
+      const snapshot = makeSnapshotWithWeeklyContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: -45, raw_value: -45, category_weight: 0.35, contribution: -2.2 },
+      ]);
+      render(
+        <MatrixTable
+          title="Weekly"
+          indicators={{ rsi_14: 30 }}
+          indicatorScores={{ rsi_14: -45 }}
+          signalDirection={-1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural']}
+          timeframe="weekly"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).toContain('▼');
+      expect(cell.textContent).toContain('2.2');
+    });
+
+    it('weekly timeframe renders no glyph when weekly payload is absent', () => {
+      // Snapshot has no contributions_payload on weekly section — backward-compat.
+      const snapshot: Snapshot = {
+        daily: {
+          data_available: true,
+          categories: [
+            'trend', 'momentum', 'volume', 'volatility',
+            'candlestick', 'structural', 'sentiment', 'fundamental', 'macro',
+          ],
+          resolved_period: '2026-05-12',
+          rsi_sparkline: [],
+        },
+        weekly: {
+          data_available: true,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural'],
+          resolved_period: '2026-05-05',
+          resolved_period_label: 'Week of May 5',
+          is_fallback: false,
+          // no contributions_payload
+        },
+        monthly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+      };
+      render(
+        <MatrixTable
+          title="Weekly"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 55 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural']}
+          timeframe="weekly"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).not.toContain('▲');
+      expect(cell.textContent).not.toContain('▼');
+    });
+
+    it('monthly timeframe renders no glyph even when weekly payload contains items', () => {
+      // Monthly stays gated — even if snapshot.weekly has a payload, monthly matrix
+      // should not read it.
+      const snapshot = makeSnapshotWithWeeklyContributions([
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 55, raw_value: 55, category_weight: 0.35, contribution: 3.1 },
+      ]);
+      render(
+        <MatrixTable
+          title="Monthly"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 55 }}
+          signalDirection={1}
+          categories={['trend', 'momentum', 'volume', 'volatility', 'structural']}
+          timeframe="monthly"
+          snapshot={snapshot}
+        />,
+      );
+      const cell = screen.getByTestId('cell-rsi_14-momentum');
+      expect(cell.textContent).not.toContain('▲');
+      expect(cell.textContent).not.toContain('▼');
+    });
+  });
 });

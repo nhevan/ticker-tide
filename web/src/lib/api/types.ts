@@ -179,6 +179,8 @@ export interface TimeframeSection {
   recent_patterns?: Pattern[];
   sparkline?: SparklinePoint[];
   composite_score?: number | null;
+  /** Parsed key_signals_data payload, or null/absent for legacy rows. */
+  contributions_payload?: ContributionsPayload | null;
 }
 
 /** Full snapshot response from GET /api/snapshot. */

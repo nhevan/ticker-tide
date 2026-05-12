@@ -1428,7 +1428,7 @@ class TestScorerPersistsKeySignalsData:
             assert not missing_keys, (
                 f"Item {item.get('name')!r} is missing keys: {missing_keys}"
             )
-            assert item["kind"] in ("indicator", "pattern"), (
+            assert item["kind"] in ("indicator", "pattern", "aggregate"), (
                 f"Unexpected kind {item['kind']!r} for item {item['name']!r}"
             )
 

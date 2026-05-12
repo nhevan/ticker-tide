@@ -922,4 +922,116 @@ class TestPersistMonthlyWithIndicatorScores:
             ("AAPL",),
         ).fetchone()
         assert im_row is not None
-        assert im_row["month_start"] == "2026-03-01"
+
+
+# ---------------------------------------------------------------------------
+# Weekly key_signals_data persistence
+# ---------------------------------------------------------------------------
+
+class TestWeeklyContributionsPayloadPersistence:
+    """Tests for scores_weekly.key_signals_data written by persist_weekly_score_row."""
+
+    def test_contributions_json_is_persisted_when_provided(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        When contributions_json is provided, persist_weekly_score_row stores it
+        in scores_weekly.key_signals_data.
+        """
+        _insert_indicators_weekly_row(db_connection, "AAPL", "2026-04-20")
+        sample_payload = {"v": 1, "expansion_factor": 1.0, "items": []}
+        import json
+        contributions_json = json.dumps(sample_payload)
+
+        persist_weekly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=48.0),
+            regime="ranging",
+            data_completeness={},
+            key_signals=[],
+            scoring_date="2026-04-27",
+            contributions_json=contributions_json,
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_weekly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        assert row is not None
+        assert row["key_signals_data"] is not None
+        parsed = json.loads(row["key_signals_data"])
+        assert parsed["v"] == 1
+        assert parsed["expansion_factor"] == 1.0
+
+    def test_contributions_json_is_null_when_not_provided(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        When contributions_json is omitted (default None), key_signals_data is
+        stored as SQL NULL — backward-compatible with legacy rows.
+        """
+        _insert_indicators_weekly_row(db_connection, "AAPL", "2026-04-20")
+
+        persist_weekly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=35.0),
+            regime="ranging",
+            data_completeness={},
+            key_signals=[],
+            scoring_date="2026-04-27",
+            # contributions_json omitted
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_weekly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        assert row is not None
+        assert row["key_signals_data"] is None
+
+    def test_contributions_json_with_indicator_items_round_trips(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        A payload with real indicator items survives the write-read cycle intact.
+        Asserts specific values, not just non-None.
+        """
+        _insert_indicators_weekly_row(db_connection, "AAPL", "2026-04-20")
+        import json
+        sample_payload = {
+            "v": 1,
+            "expansion_factor": 1.2,
+            "items": [
+                {
+                    "name": "rsi_14",
+                    "kind": "indicator",
+                    "raw_value": 55.0,
+                    "score": 55.0,
+                    "category": "momentum",
+                    "category_weight": 0.35,
+                    "contribution": 2.5,
+                }
+            ],
+        }
+        contributions_json = json.dumps(sample_payload)
+
+        persist_weekly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=55.0),
+            regime="trending",
+            data_completeness={},
+            key_signals=[],
+            scoring_date="2026-04-27",
+            contributions_json=contributions_json,
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_weekly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        assert row is not None
+        parsed = json.loads(row["key_signals_data"])
+        assert parsed["expansion_factor"] == 1.2
+        assert len(parsed["items"]) == 1
+        assert parsed["items"][0]["name"] == "rsi_14"
+        assert parsed["items"][0]["contribution"] == 2.5

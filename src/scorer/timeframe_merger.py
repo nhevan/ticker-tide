@@ -682,7 +682,14 @@ def compute_weekly_score_breakdown(
 
     composite = _assemble_composite(category_scores, config, regime, "weekly", method)
 
+    # Resolve regime weights for the caller (needed by build_contributions_payload).
+    if method == "v2_8cat":
+        resolved_regime_weights = _resolve_v2_weights(config, regime, "weekly")
+    else:
+        resolved_regime_weights = _resolve_v1_weights(config, regime, "weekly")
+
     # In v1 mode, leave candlestick/structural as None for shape consistency.
+    # pattern_scores is {} (empty) in v1 mode — no pattern scoring was done.
     if method != "v2_8cat":
         return {
             "composite_score": composite,
@@ -693,6 +700,8 @@ def compute_weekly_score_breakdown(
             "candlestick_score": None,
             "structural_score": None,
             "indicator_scores": indicator_scores,
+            "pattern_scores": {},
+            "regime_weights": resolved_regime_weights,
         }
     return {
         "composite_score": composite,
@@ -703,6 +712,8 @@ def compute_weekly_score_breakdown(
         "candlestick_score": category_scores["candlestick"],
         "structural_score": category_scores["structural"],
         "indicator_scores": indicator_scores,
+        "pattern_scores": pattern_scores,
+        "regime_weights": resolved_regime_weights,
     }
 
 

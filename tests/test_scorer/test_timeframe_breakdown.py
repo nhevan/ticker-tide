@@ -357,10 +357,15 @@ class TestBreakdownShape:
         assert set(result.keys()) == {
             "composite_score", "trend_score", "momentum_score", "volume_score",
             "volatility_score", "candlestick_score", "structural_score",
-            "indicator_scores",
+            "indicator_scores", "pattern_scores", "regime_weights",
         }
         assert result["candlestick_score"] is None
         assert result["structural_score"] is None
+        # v1 mode: pattern_scores is empty (no pattern scoring done)
+        assert result["pattern_scores"] == {}
+        # regime_weights is a non-empty dict
+        assert isinstance(result["regime_weights"], dict)
+        assert len(result["regime_weights"]) > 0
         # 4 main categories should be numeric
         assert isinstance(result["trend_score"], float)
         assert isinstance(result["momentum_score"], float)

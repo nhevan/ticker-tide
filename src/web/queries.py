@@ -162,6 +162,33 @@ def fetch_snapshot(
     }
 
 
+def _parse_contributions_payload(raw: Optional[str]) -> Optional[dict]:
+    """
+    Parse a contributions payload from its stored JSON string representation.
+
+    Treats SQL NULL (None) and malformed JSON as a valid absent-payload state,
+    returning None without raising. This is consistent with the convention that
+    the column is nullable — legacy rows written before key_signals_data was
+    added will have NULL, and callers should render graceful fallbacks.
+
+    Parameters:
+        raw: The raw TEXT value from a key_signals_data column, or None.
+
+    Returns:
+        Parsed dict, or None when raw is None or JSON is malformed.
+    """
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            "Malformed contributions_payload JSON in key_signals_data — returning None: %s",
+            exc,
+        )
+        return None
+
+
 def _build_daily_section(
     conn: sqlite3.Connection,
     ticker: str,
@@ -259,14 +286,9 @@ def _build_daily_section(
         rsi_zone_label = None
 
     # Parse contributions payload; treat NULL as None without raising.
-    raw_contributions = score_dict.get("key_signals_data")
-    if raw_contributions is not None:
-        try:
-            contributions_payload: Optional[dict] = json.loads(raw_contributions)
-        except (json.JSONDecodeError, ValueError):
-            contributions_payload = None
-    else:
-        contributions_payload = None
+    contributions_payload: Optional[dict] = _parse_contributions_payload(
+        score_dict.get("key_signals_data")
+    )
 
     return {
         "data_available": True,
@@ -347,6 +369,9 @@ def _build_weekly_section(
     sparkline = _fetch_weekly_sparkline(conn, ticker, picked_date, sparkline_weeks)
     period_label = _format_weekly_period_label(week_start)
     indicator_scores = _fetch_weekly_indicator_scores(conn, ticker, week_start)
+    contributions_payload: Optional[dict] = _parse_contributions_payload(
+        score_dict.get("key_signals_data")
+    )
 
     return {
         "data_available": True,
@@ -361,6 +386,7 @@ def _build_weekly_section(
         "resolved_period_label": period_label,
         "is_fallback": is_fallback,
         "indicator_scores": indicator_scores,
+        "contributions_payload": contributions_payload,
     }
 
 

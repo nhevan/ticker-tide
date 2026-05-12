@@ -591,6 +591,7 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             macro_score REAL,
             data_completeness TEXT,
             key_signals TEXT,
+            key_signals_data TEXT,
             PRIMARY KEY (ticker, week_start)
         )""",
         """CREATE TABLE IF NOT EXISTS scores_monthly (

@@ -73,6 +73,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         2. Create ``indicator_scores_daily``, ``indicator_scores_weekly``, and
            ``indicator_scores_monthly`` sidecar tables if they do not yet exist.
            Uses ``CREATE TABLE IF NOT EXISTS`` so the step is fully idempotent.
+        3. Add ``key_signals_data TEXT`` column to ``scores_weekly`` if absent.
+           Fresh databases created by ``create_all_tables`` already include this
+           column; the migration exists for databases created before it was added.
 
     Parameters:
         conn: An open sqlite3.Connection to the target database.
@@ -130,6 +133,30 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
     conn.commit()
     logger.debug("Migration: indicator_scores sidecar tables ensured")
+
+    # Migration 3: scores_weekly.key_signals_data column.
+    weekly_table_info_rows = conn.execute("PRAGMA table_info(scores_weekly)").fetchall()
+    weekly_table_exists = len(weekly_table_info_rows) > 0
+
+    if not weekly_table_exists:
+        logger.debug(
+            "Migration scores_weekly.key_signals_data skipped — table does not exist yet"
+        )
+    else:
+        existing_weekly_columns = [row[1] for row in weekly_table_info_rows]
+
+        if "key_signals_data" not in existing_weekly_columns:
+            conn.execute(
+                "ALTER TABLE scores_weekly ADD COLUMN key_signals_data TEXT"
+            )
+            conn.commit()
+            logger.info(
+                "Applied migration: added scores_weekly.key_signals_data"
+            )
+        else:
+            logger.debug(
+                "Migration scores_weekly.key_signals_data already present — nothing to do"
+            )
 
 
 def _build_schema_statements() -> list[str]:
@@ -679,6 +706,7 @@ def _build_schema_statements() -> list[str]:
             macro_score REAL,
             data_completeness TEXT,
             key_signals TEXT,
+            key_signals_data TEXT,
             PRIMARY KEY (ticker, week_start)
         )""",
 

@@ -671,6 +671,21 @@ def score_ticker(
     weekly_score = weekly_breakdown["composite_score"] if weekly_breakdown is not None else None
     weekly_available = weekly_score is not None
 
+    # 13a. Build weekly contributions payload (mirrors the daily 11b block).
+    # Aggregate items (sentiment/fundamental/macro) are absent for weekly — no
+    # per-week aggregate weights exist in the config. Pass aggregate_scores={}.
+    if weekly_breakdown is not None:
+        weekly_contributions_payload = build_contributions_payload(
+            indicator_scores=weekly_breakdown["indicator_scores"],
+            pattern_scores=weekly_breakdown.get("pattern_scores", {}),
+            regime_weights=weekly_breakdown["regime_weights"],
+            expansion_factor=expansion_factor,
+            aggregate_scores={},
+        )
+        weekly_contributions_json: Optional[str] = json.dumps(weekly_contributions_payload)
+    else:
+        weekly_contributions_json = None
+
     # 13b. Compute monthly score breakdown
     monthly_breakdown = compute_monthly_score_breakdown(
         db_conn, ticker, config, scoring_date=scoring_date, regime=regime
@@ -836,6 +851,7 @@ def score_ticker(
                 key_signals=key_signals,
                 scoring_date=scoring_date,
                 indicator_scores=weekly_breakdown.get("indicator_scores"),
+                contributions_json=weekly_contributions_json,
             )
         except Exception as exc:
             logger.warning(

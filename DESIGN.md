@@ -773,7 +773,7 @@ Enable WAL mode on connection.
 - model_r2 REAL
 - data_completeness TEXT (JSON)
 - key_signals TEXT (JSON array)
-- key_signals_data TEXT (nullable) — JSON contribution payload used by the `/why` command. See §11.1 below for the schema and approximation notes. **Daily-only**: `scores_weekly` and `scores_monthly` do not carry this column because the `/why` feature operates on daily signals.
+- key_signals_data TEXT (nullable) — JSON contribution payload used by the `/why` command and the dashboard contribution matrix. See §11.1 below for the schema and approximation notes.
 - UNIQUE(ticker, date)
 
 **scores_weekly** — denormalized weekly composite snapshot for query/UI consumers (e.g., `/detail` and scatter views). NOT in the scoring critical path: the runtime `merge_timeframes()` still consumes the in-memory composite and writes the final ±100 to `scores_daily.final_score`. This table is a write-through projection so historical queries do not need to recompute weekly aggregates from `indicators_weekly`.
@@ -785,6 +785,7 @@ Enable WAL mode on connection.
 - fundamental_score REAL, macro_score REAL — inherited from the most recent `scores_daily` row whose date falls in the closed week (`<= week_start + 4 days`, i.e. Friday). NULL when no daily row exists.
 - data_completeness TEXT — JSON object (mirrors `scores_daily.data_completeness`). Stored as TEXT after commit 6's `migrate_fix_scores_completeness_type.py` correction.
 - key_signals TEXT — JSON-encoded array of contributing weekly signals
+- key_signals_data TEXT (nullable) — JSON contribution payload written by `build_contributions_payload` at scoring time. Shape mirrors `scores_daily.key_signals_data` but without aggregate items (no per-week sentiment/fundamental/macro weights in the config). Used by the dashboard weekly matrix to render per-indicator contribution glyphs. NULL on rows written before this column was added (migration-safe).
 - PRIMARY KEY (ticker, week_start)
 
 **scores_monthly** — denormalized monthly composite snapshot, same role as `scores_weekly`. Also NOT in the critical path; populated alongside the daily score so long-horizon queries don't have to recompute.
@@ -1087,7 +1088,12 @@ in-progress bar — by design.
 
 ### 11.1 Contribution Payload (`key_signals_data`)
 
-After `apply_adaptive_weights` produces category scores, `src/scorer/contribution.py::build_contributions_payload` assembles a per-indicator/per-pattern breakdown of how much each signal contributed to the daily composite. The result is serialised as JSON and persisted in `scores_daily.key_signals_data` (nullable TEXT). The column is **daily-only** — `scores_weekly` and `scores_monthly` do not carry it.
+After `apply_adaptive_weights` produces category scores, `src/scorer/contribution.py::build_contributions_payload` assembles a per-indicator/per-pattern breakdown of how much each signal contributed to the composite. The result is serialised as JSON and persisted in:
+
+- `scores_daily.key_signals_data` — full payload including indicator, pattern, and aggregate (sentiment/fundamental/macro) items.
+- `scores_weekly.key_signals_data` — payload with indicator and pattern items only; `aggregate_scores={}` is passed because no per-week sentiment/fundamental/macro weights exist in `weekly_adaptive_weights_v2`. `regime_weights` comes from `compute_weekly_score_breakdown`'s resolved v1/v2 weights.
+
+`scores_monthly` does not carry this column.
 
 **Payload schema (`v: 1`):**
 

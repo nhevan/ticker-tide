@@ -157,6 +157,7 @@ export function DashboardPage() {
                 timeframe="weekly"
                 recentPatterns={snapshot.weekly.recent_patterns}
                 categoryScores={snapshot.weekly.scores}
+                snapshot={snapshot}
               />
               <MatrixTable
                 title="Monthly — Indicator Agreement"
