@@ -277,6 +277,7 @@ def _build_daily_section(
     # RSI explainer fields.
     regime = score_dict.get("regime")
     rsi_profile = _fetch_rsi_profile(conn, ticker)
+    macd_line_profile = _fetch_macd_line_profile(conn, ticker)
     rsi_value = indicators.get("rsi_14") if indicators else None
     rsi_zone_label: Optional[str]
     if rsi_value is not None:
@@ -315,6 +316,7 @@ def _build_daily_section(
         "indicator_scores": indicator_scores,
         "regime": regime,
         "rsi_profile": rsi_profile,
+        "macd_line_profile": macd_line_profile,
         "rsi_zone_label": rsi_zone_label,
         "contributions_payload": contributions_payload,
     }
@@ -538,6 +540,37 @@ def _fetch_rsi_profile(
         "mean": row["mean"],
         "std": row["std"],
     }
+
+
+def _fetch_macd_line_profile(
+    conn: sqlite3.Connection,
+    ticker: str,
+) -> Optional[dict]:
+    """
+    Fetch the macd_line z-score profile from indicator_profiles for a ticker.
+
+    MACD scoring uses z-score normalisation (mean + std), unlike RSI which
+    uses percentiles. Returns a dict with mean + std keys, or None if no
+    profile row exists for this ticker and indicator.
+
+    Parameters:
+        conn:   Open SQLite connection with row_factory=sqlite3.Row.
+        ticker: Ticker symbol.
+
+    Returns:
+        Profile dict with mean and std, or None.
+    """
+    try:
+        row = conn.execute(
+            "SELECT mean, std FROM indicator_profiles "
+            "WHERE ticker = ? AND indicator = 'macd_line'",
+            (ticker,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    return {"mean": row["mean"], "std": row["std"]}
 
 
 def _fetch_weekly_indicator_scores(

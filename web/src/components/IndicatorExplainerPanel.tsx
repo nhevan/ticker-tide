@@ -132,7 +132,72 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
       <StepCard stepNumber={2} heading="MACD trend">
         <MacdTrendChart data={daily.macd_sparkline ?? []} />
       </StepCard>
-      <StepCard stepNumber={3} heading="Scoring path" unavailable />
+      {/* Step 3 — Scoring path.
+          MACD uses z-score normalisation (when a per-ticker profile exists)
+          or a linear fallback (score = clamp(value × 20, ±100)) otherwise.
+          We do not generalise RsiPercentileStrip here because MACD doesn't
+          map onto a percentile metaphor — the scoring shape is fundamentally
+          different from RSI's. */}
+      {(() => {
+        const profile = daily.macd_line_profile ?? null;
+        if (profile && profile.std > 0) {
+          const z = (macdValue - profile.mean) / profile.std;
+          const zoneLabel =
+            z > 2
+              ? 'strongly bullish (z > 2)'
+              : z > 1
+                ? 'moderately bullish (1 < z ≤ 2)'
+                : z >= -1
+                  ? 'neutral band (−1 ≤ z ≤ 1)'
+                  : z >= -2
+                    ? 'moderately bearish (−2 ≤ z < −1)'
+                    : 'strongly bearish (z < −2)';
+          return (
+            <StepCard stepNumber={3} heading="Scoring path">
+              <p className="mb-2">
+                <span className="font-medium">Profile path (z-score).</span> This ticker has enough
+                MACD history for the engine to use its own distribution rather than the linear
+                fallback.
+              </p>
+              <div className="font-mono text-[10px] space-y-0.5">
+                <div className="text-muted-foreground">z = (MACD − mean) ÷ std</div>
+                <div className="text-foreground">
+                  = ({macdValue.toFixed(2)} − {profile.mean.toFixed(2)}) ÷ {profile.std.toFixed(2)}
+                </div>
+                <div className="text-foreground">
+                  = {(macdValue - profile.mean).toFixed(2)} ÷ {profile.std.toFixed(2)}
+                </div>
+                <div>
+                  = <span className="text-foreground font-semibold">{z.toFixed(2)}</span>
+                </div>
+              </div>
+              <p className="mt-2">
+                z falls in the <span className="text-primary font-medium">{zoneLabel}</span> band.
+              </p>
+            </StepCard>
+          );
+        }
+        return (
+          <StepCard stepNumber={3} heading="Scoring path">
+            <p className="mb-2">
+              <span className="font-medium">Fallback path (linear).</span> No per-ticker MACD
+              profile is available, so the engine falls back to a magnitude-scaled mapping.
+            </p>
+            <div className="font-mono text-[10px] space-y-0.5">
+              <div className="text-muted-foreground">score = clamp(MACD × 20, −100, +100)</div>
+              <div className="text-foreground">
+                = clamp({macdValue.toFixed(2)} × 20, −100, +100)
+              </div>
+              <div>
+                ={' '}
+                <span className="text-foreground font-semibold">
+                  {Math.max(-100, Math.min(100, macdValue * 20)).toFixed(1)}
+                </span>
+              </div>
+            </div>
+          </StepCard>
+        );
+      })()}
       <StepCard stepNumber={4} heading="MACD line score" unavailable />
       {/* Step 5 — Magnitude share in trend.
           Uses the generalised CategoryShareBar (renamed from MomentumShareBar);

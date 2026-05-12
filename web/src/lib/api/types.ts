@@ -152,6 +152,8 @@ export interface DailySection {
   regime?: string | null;
   /** Per-ticker RSI percentile profile, or null if no profile exists. */
   rsi_profile?: RsiProfile | null;
+  /** Per-ticker MACD line z-score profile (mean + std), or null if absent. */
+  macd_line_profile?: { mean: number; std: number } | null;
   /** Zone label string from zone_label_for_rsi(), or null if RSI unavailable. */
   rsi_zone_label?: string | null;
   /** Parsed key_signals_data payload, or null for legacy rows. */
