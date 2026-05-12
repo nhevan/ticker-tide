@@ -175,6 +175,14 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
               <p className="mt-2">
                 z falls in the <span className="text-primary font-medium">{zoneLabel}</span> band.
               </p>
+              <p className="mt-2 text-[9px] text-muted-foreground italic">
+                <span className="not-italic font-mono">mean</span> and{' '}
+                <span className="not-italic font-mono">std</span> are this ticker's own MACD line
+                distribution over a rolling 504 trading-day (~2-year) window, sourced from{' '}
+                <span className="not-italic font-mono">indicator_profiles</span>. Z-scoring against
+                the ticker's own history (rather than a fixed cross-stock threshold) accounts for
+                MACD's price-dependent scale.
+              </p>
             </StepCard>
           );
         }
