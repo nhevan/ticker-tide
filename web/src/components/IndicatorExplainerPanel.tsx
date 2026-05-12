@@ -12,7 +12,7 @@
 import { RsiTrendChart } from '@/components/RsiTrendChart';
 import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import { RsiMappingChart } from '@/components/RsiMappingChart';
-import { MomentumShareBar } from '@/components/MomentumShareBar';
+import { CategoryShareBar } from '@/components/CategoryShareBar';
 import { CategoryWeightBar } from '@/components/CategoryWeightBar';
 import { ContributionMathChain } from '@/components/ContributionMathChain';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
@@ -128,7 +128,25 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
       <StepCard stepNumber={2} heading="Zone" unavailable />
       <StepCard stepNumber={3} heading="Scoring path" unavailable />
       <StepCard stepNumber={4} heading="MACD line score" unavailable />
-      <StepCard stepNumber={5} heading="Magnitude share in trend" unavailable />
+      {/* Step 5 — Magnitude share in trend.
+          Uses the generalised CategoryShareBar (renamed from MomentumShareBar);
+          caller filters items to category === 'trend'. Falls back to unavailable
+          when contributions_payload is missing. */}
+      {(() => {
+        const contributions = daily.contributions_payload ?? null;
+        if (!contributions) {
+          return <StepCard stepNumber={5} heading="Magnitude share in trend" unavailable />;
+        }
+        return (
+          <StepCard stepNumber={5} heading="Magnitude share in trend">
+            <CategoryShareBar
+              items={contributions.items.filter((item) => item.category === 'trend')}
+              activeName="macd_line"
+              category="trend"
+            />
+          </StepCard>
+        );
+      })()}
 
       {/* Step 6 — Category weight × expansion.
           Reuses CategoryWeightBar verbatim (already generic over any category).
@@ -325,9 +343,10 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
               <StepCard stepNumber={5} heading="Magnitude share in momentum">
                 {/* activeName hardcoded here because this panel only renders for rsi_14;
                     the component itself supports any active indicator. */}
-                <MomentumShareBar
+                <CategoryShareBar
                   items={contributions.items.filter((item) => item.category === 'momentum')}
                   activeName="rsi_14"
+                  category="momentum"
                 />
               </StepCard>
 
