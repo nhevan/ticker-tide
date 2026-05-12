@@ -26,6 +26,7 @@ vi.mock('@/lib/api/endpoints', () => ({
   askAI: vi.fn(),
   generateVerdict: vi.fn(),
   getVerdict: vi.fn().mockResolvedValue(null),
+  fetchScoringRules: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('@/lib/hooks/useLlm', () => ({
   useLlm: vi.fn().mockReturnValue({

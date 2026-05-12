@@ -150,6 +150,13 @@ export interface DailySection {
   rsi_zone_label?: string | null;
   /** Parsed key_signals_data payload, or null for legacy rows. */
   contributions_payload?: ContributionsPayload | null;
+  /**
+   * Last N working days of RSI(14) values for this ticker, ordered ascending by date,
+   * bounded by the picked date. Rows with rsi_14 IS NULL are excluded.
+   * Always present when data_available is true — empty array when no RSI data exists,
+   * never null, never absent. Configured via web.json sparkline.rsi_sparkline_days (default 100).
+   */
+  rsi_sparkline?: { date: string; value: number }[];
 }
 
 /** Weekly or monthly snapshot card data. */

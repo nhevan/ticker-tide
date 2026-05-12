@@ -573,6 +573,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `sparkline.daily_days` | int | `15` | Number of trading-day OHLCV rows to include in the daily sparkline (bounded by `<= picked_date`) |
 | `sparkline.weekly_weeks` | int | `6` | Number of weekly candle rows to include in the weekly sparkline |
 | `sparkline.monthly_months` | int | `6` | Number of monthly candle rows to include in the monthly sparkline |
+| `sparkline.rsi_sparkline_days` | int | `100` | Number of trading-day rows to include in the RSI trend chart shown in the RSI explainer panel (step 2). Rows with `rsi_14 IS NULL` are excluded. Bounded by `<= picked_date`. Changing this affects only the RSI explainer chart density; no pipeline phase re-run is needed (the snapshot is computed at read time). |
 | `ai_reasoner.model` | string | `claude-sonnet-4-20250514` | Anthropic model to use for web LLM analysis |
 | `ai_reasoner.max_tokens` | int | `800` | Maximum tokens in Claude's response |
 | `ai_reasoner.temperature` | float | `0.3` | Sampling temperature for Claude |
@@ -626,7 +627,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `web.json port` | `sudo systemctl restart ticker-tide-web` |
 | `web.json login_rate_limit.*` | None — applies on next login attempt |
 | `web.json llm_rate_limit.*` | None — applies on next LLM request |
-| `web.json sparkline.*` | None — applies on next snapshot load |
+| `web.json sparkline.*` | None — applies on next snapshot load (includes `rsi_sparkline_days`) |
 | `web.json ai_reasoner.*` | None — applies on next LLM request |
 | `web.json why_bullets.*` | None — applies on next snapshot load |
 | `web.json signal_flip_lookback_days` | None — applies on next snapshot load |

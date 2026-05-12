@@ -9,30 +9,32 @@
  * snapshot.daily.indicators.rsi_14 (the true RSI reading), never raw_value.
  */
 
+import { RsiTrendChart } from '@/components/RsiTrendChart';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
+
+/** Human-friendly prose fragments for zone label strings (profile path). */
+const ZONE_LABEL_DESCRIPTIONS: Record<string, string> = {
+  extreme_oversold: "Below p5 of this ticker's historical RSI",
+  oversold: "Between p5 and p20 of this ticker's historical RSI",
+  below_mid: "Between p20 and p50 of this ticker's historical RSI",
+  above_mid: "Between p50 and p80 of this ticker's historical RSI",
+  overbought: "Between p80 and p95 of this ticker's historical RSI",
+  extreme_overbought: "Above p95 of this ticker's historical RSI",
+};
+
+/** Human-friendly prose fragments for zone label strings (fallback path). */
+const FALLBACK_ZONE_DESCRIPTIONS: Record<string, string> = {
+  oversold: 'Below the fixed oversold threshold',
+  below_mid: 'Between oversold and the midpoint',
+  above_mid: 'Between the midpoint and overbought',
+  overbought: 'Above the fixed overbought threshold',
+};
 
 interface IndicatorExplainerPanelProps {
   indicator: string;
   snapshot: Snapshot;
   rules: ScoringRules | undefined;
 }
-
-/** Human-friendly translations for zone label strings. */
-const ZONE_LABEL_DESCRIPTIONS: Record<string, string> = {
-  extreme_oversold: 'Extreme oversold — below p5 of this ticker\'s historical RSI',
-  oversold: 'Oversold — between p5 and p20 of this ticker\'s historical RSI',
-  below_mid: 'Below mid — between p20 and p50 of this ticker\'s historical RSI',
-  above_mid: 'Above mid — between p50 and p80 of this ticker\'s historical RSI',
-  overbought: 'Overbought — between p80 and p95 of this ticker\'s historical RSI',
-  extreme_overbought: 'Extreme overbought — above p95 of this ticker\'s historical RSI',
-};
-
-const FALLBACK_ZONE_DESCRIPTIONS: Record<string, string> = {
-  oversold: 'Oversold — below the fixed oversold threshold',
-  below_mid: 'Below mid — between oversold and the midpoint',
-  above_mid: 'Above mid — between the midpoint and overbought',
-  overbought: 'Overbought — above the fixed overbought threshold',
-};
 
 /** Wrapper for a single explainer step card. */
 function StepCard({
@@ -108,21 +110,25 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
         RSI is {rsiValue.toFixed(1)}.
       </StepCard>
 
-      {/* Step 2 — Zone label */}
+      {/* Step 2 — Zone label with RSI trend chart */}
       <StepCard stepNumber={2} heading="Zone">
+        <RsiTrendChart data={daily.rsi_sparkline ?? []} />
         {zoneLabel ? (
-          <>
-            <span className="font-medium">{zoneLabel}</span>
-            {' — '}
-            {rsiProfile
-              ? (ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? zoneLabel)
-              : (FALLBACK_ZONE_DESCRIPTIONS[zoneLabel] ?? zoneLabel)}
+          <div className="flex items-center gap-2 mt-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-muted text-foreground rounded-sm">
+              {zoneLabel}
+            </span>
+            <span>
+              {rsiProfile
+                ? (ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? '')
+                : (FALLBACK_ZONE_DESCRIPTIONS[zoneLabel] ?? '')}
+            </span>
             {!rsiProfile && (
-              <span className="ml-1 text-muted-foreground italic">
-                (fallback zones — no per-ticker profile yet)
+              <span className="text-muted-foreground italic">
+                (fallback — no per-ticker profile yet)
               </span>
             )}
-          </>
+          </div>
         ) : (
           <span className="text-muted-foreground italic">Zone label unavailable.</span>
         )}

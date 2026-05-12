@@ -110,6 +110,19 @@ def _insert_indicators(conn: sqlite3.Connection, ticker: str, date: str) -> None
     conn.commit()
 
 
+def _insert_rsi_rows(
+    conn: sqlite3.Connection,
+    ticker: str,
+    rows: list[tuple[str, float | None]],
+) -> None:
+    """Insert multiple (date, rsi_14) rows into indicators_daily for a ticker."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO indicators_daily(ticker, date, rsi_14) VALUES (?, ?, ?)",
+        [(ticker, date, value) for date, value in rows],
+    )
+    conn.commit()
+
+
 class TestSnapshotRsiFields:
     """Daily section includes regime, rsi_profile, rsi_zone_label, contributions_payload."""
 
@@ -195,3 +208,123 @@ class TestSnapshotRsiFields:
         assert daily["data_available"] is True
         assert daily["signal"] == "BULLISH"
         assert daily["regime"] == "ranging"
+
+
+class TestRsiSparkline:
+    """rsi_sparkline field is always present in the daily section and has correct shape."""
+
+    def _make_snap(self, conn: sqlite3.Connection, ticker: str, date: str) -> dict:
+        """Insert a scores_daily row and fetch the snapshot for the given ticker/date."""
+        _insert_ticker(conn, ticker)
+        _insert_daily_score(conn, ticker, date)
+        return fetch_snapshot(conn, ticker, date, config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+
+    def test_rsi_sparkline_key_present_with_rsi_data(self, conn: sqlite3.Connection) -> None:
+        """rsi_sparkline key is present in daily section when RSI data exists."""
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        _insert_rsi_rows(conn, "AAPL", [("2026-04-24", 48.0), ("2026-04-25", 52.0)])
+        snap = fetch_snapshot(conn, "AAPL", "2026-04-25",
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        daily = snap["daily"]
+        assert "rsi_sparkline" in daily
+
+    def test_rsi_sparkline_ordered_ascending(self, conn: sqlite3.Connection) -> None:
+        """rsi_sparkline rows are ordered ascending by date."""
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        _insert_rsi_rows(conn, "AAPL", [
+            ("2026-04-23", 44.0),
+            ("2026-04-24", 48.0),
+            ("2026-04-25", 52.0),
+        ])
+        snap = fetch_snapshot(conn, "AAPL", "2026-04-25",
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        dates = [item["date"] for item in snap["daily"]["rsi_sparkline"]]
+        assert dates == sorted(dates)
+
+    def test_rsi_sparkline_length_at_most_configured_days(self, conn: sqlite3.Connection) -> None:
+        """rsi_sparkline length is bounded by rsi_sparkline_days config (default 100)."""
+        from datetime import date as date_cls, timedelta
+        # Insert 110 RSI rows starting 2026-01-01.
+        base_date = date_cls.fromisoformat("2026-01-01")
+        rows = []
+        d = base_date
+        for i in range(110):
+            rows.append((d.isoformat(), 40.0 + (i % 30)))
+            d += timedelta(days=1)
+        last_rsi_date = (d - timedelta(days=1)).isoformat()
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", last_rsi_date)
+        _insert_rsi_rows(conn, "AAPL", rows)
+        snap = fetch_snapshot(conn, "AAPL", last_rsi_date,
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        assert len(snap["daily"]["rsi_sparkline"]) <= 100
+
+    def test_rsi_sparkline_item_shape(self, conn: sqlite3.Connection) -> None:
+        """Each rsi_sparkline item has keys 'date' (str) and 'value' (float)."""
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        _insert_rsi_rows(conn, "AAPL", [("2026-04-25", 55.5)])
+        snap = fetch_snapshot(conn, "AAPL", "2026-04-25",
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        sparkline = snap["daily"]["rsi_sparkline"]
+        assert len(sparkline) == 1
+        item = sparkline[0]
+        assert set(item.keys()) == {"date", "value"}
+        assert isinstance(item["date"], str)
+        assert isinstance(item["value"], float)
+
+    def test_rsi_sparkline_bounded_by_picked_date(self, conn: sqlite3.Connection) -> None:
+        """All rsi_sparkline entries have date <= picked_date."""
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        _insert_rsi_rows(conn, "AAPL", [
+            ("2026-04-24", 48.0),
+            ("2026-04-25", 52.0),
+            ("2026-04-26", 60.0),  # after picked_date — must be excluded
+        ])
+        snap = fetch_snapshot(conn, "AAPL", "2026-04-25",
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        sparkline = snap["daily"]["rsi_sparkline"]
+        for item in sparkline:
+            assert item["date"] <= "2026-04-25"
+
+    def test_rsi_sparkline_excludes_null_rsi_rows(self, conn: sqlite3.Connection) -> None:
+        """Rows where rsi_14 IS NULL are excluded from rsi_sparkline."""
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        _insert_rsi_rows(conn, "AAPL", [
+            ("2026-04-23", 44.0),
+            ("2026-04-24", None),   # NULL — must be excluded
+            ("2026-04-25", 52.0),
+        ])
+        snap = fetch_snapshot(conn, "AAPL", "2026-04-25",
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        sparkline = snap["daily"]["rsi_sparkline"]
+        dates_in_result = [item["date"] for item in sparkline]
+        assert "2026-04-24" not in dates_in_result
+        assert len(sparkline) == 2
+
+    def test_rsi_sparkline_partial_data_returns_what_exists(self, conn: sqlite3.Connection) -> None:
+        """When fewer than 100 rows exist, returns whatever is available (no padding)."""
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        _insert_rsi_rows(conn, "AAPL", [("2026-04-25", 50.0)])
+        snap = fetch_snapshot(conn, "AAPL", "2026-04-25",
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        sparkline = snap["daily"]["rsi_sparkline"]
+        assert len(sparkline) == 1
+        assert sparkline[0]["value"] == 50.0
+
+    def test_rsi_sparkline_empty_list_when_no_rsi_data(self, conn: sqlite3.Connection) -> None:
+        """When no RSI data exists, rsi_sparkline is [] (key present, empty list, not None)."""
+        _insert_ticker(conn, "AAPL")
+        _insert_daily_score(conn, "AAPL", "2026-04-25")
+        # No indicators_daily rows inserted.
+        snap = fetch_snapshot(conn, "AAPL", "2026-04-25",
+                              config=_WEB_CONFIG, scorer_config=_SCORER_CONFIG)
+        daily = snap["daily"]
+        assert "rsi_sparkline" in daily
+        assert daily["rsi_sparkline"] == []
+        assert daily["rsi_sparkline"] is not None

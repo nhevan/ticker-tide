@@ -1497,6 +1497,8 @@ The `categories` array is the UI rendering contract. The UI renders only bars li
 
 `_fetch_recent_patterns` (in `src/web/queries.py`) queries the `patterns_{daily,weekly,monthly}` tables within the scorer's canonical recency windows. The recency constants (`_CANDLESTICK_WINDOW_DAYS`, `_STRUCTURAL_WINDOW_DAYS`) are imported directly from `src/scorer/pattern_scorer.py` — this import keeps the matrix display window in lockstep with the scoring decay logic: if the decay window changes in the scorer, the matrix automatically reflects the same boundary on the next request.
 
+`daily.rsi_sparkline` is a daily-only field surfaced by `_fetch_rsi_sparkline()` in `src/web/queries.py`. It contains the last N trading days of `rsi_14` values from `indicators_daily`, bounded by `<= picked_date` and with `rsi_14 IS NULL` rows excluded. Rows are returned in ascending date order. The window size N is configurable via `web.json sparkline.rsi_sparkline_days` (default 100). The field is always present in the daily section when `data_available` is True — it is an empty list `[]` when no RSI data exists for the ticker, never `None` and never absent. The RSI explainer panel (`IndicatorExplainerPanel.tsx`, step 2) renders this data as a `RsiTrendChart` component (recharts polished variant) with zone background tints, OB/OS reference lines, and a today dot with value text. `rsi_sparkline` is absent from weekly and monthly sections.
+
 ### 14.3 LLM Analysis
 
 `POST /api/llm { ticker, date, timeframe }` → `{ text }`.
