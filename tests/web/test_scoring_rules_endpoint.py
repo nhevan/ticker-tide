@@ -43,6 +43,7 @@ _TEST_SCORER_CONFIG = {
     "indicator_thresholds": {
         "rsi_14": {"oversold": 30.0, "overbought": 70.0},
         "stoch_k": {"oversold": 20.0, "overbought": 80.0},
+        "adx": {"ranging_max": 20.0, "weak_max": 25.0, "developing_max": 40.0},
     },
     "adaptive_weights": {
         "trending": {"trend": 0.30, "momentum": 0.20, "volume": 0.10, "volatility": 0.05,
@@ -255,4 +256,101 @@ class TestScoringRulesEndpoint:
             "extreme_oversold", "oversold", "below_mid",
             "above_mid", "overbought", "extreme_overbought",
         ]
+
+
+class TestScoringRulesAdxBlock:
+    """Tests for the adx block in GET /api/scoring-rules."""
+
+    def test_adx_key_present(self, client: TestClient) -> None:
+        """Response contains the adx key."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert "adx" in data
+
+    def test_adx_scoring_method(self, client: TestClient) -> None:
+        """adx.scoring_method is 'fixed_band_piecewise'."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["adx"]["scoring_method"] == "fixed_band_piecewise"
+
+    def test_adx_bands_count(self, client: TestClient) -> None:
+        """adx.bands has exactly 4 entries."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert len(data["adx"]["bands"]) == 4
+
+    def test_adx_bands_names_in_order(self, client: TestClient) -> None:
+        """adx.bands names are in the correct order."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        names = [b["name"] for b in data["adx"]["bands"]]
+        assert names == [
+            "ranging",
+            "weak_trend_developing",
+            "developing_trend",
+            "strong_trend",
+        ]
+
+    def test_adx_weak_band_score_max_is_20(self, client: TestClient) -> None:
+        """
+        BLOCKER 2: weak_trend_developing.score_max == 20.0.
+
+        This is the band's actual ceiling (NOT 40.0). The +20 → +40 gap to
+        developing_trend.score_min is the documented discontinuity.
+        """
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        weak_band = data["adx"]["bands"][1]
+        assert weak_band["name"] == "weak_trend_developing"
+        assert weak_band["score_max"] == 20.0
+
+    def test_adx_developing_band_score_min_is_40(self, client: TestClient) -> None:
+        """
+        BLOCKER 2: developing_trend.score_min == 40.0.
+
+        Together with weak_trend_developing.score_max=20.0, this pins the
+        discontinuity into the API contract.
+        """
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        developing_band = data["adx"]["bands"][2]
+        assert developing_band["name"] == "developing_trend"
+        assert developing_band["score_min"] == 40.0
+
+    def test_adx_discontinuity_at(self, client: TestClient) -> None:
+        """adx.discontinuity_at == 25.0 (the weak_max threshold value from config)."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["adx"]["discontinuity_at"] == 25.0
+
+    def test_adx_score_range(self, client: TestClient) -> None:
+        """adx.score_range == [-20.0, 80.0]."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["adx"]["score_range"] == [-20.0, 80.0]
+
+    def test_adx_no_profile_zones(self, client: TestClient) -> None:
+        """profile_zones must NOT be in the adx block (ADX has no profile path)."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert "profile_zones" not in data["adx"]
+
+    def test_adx_no_thresholds(self, client: TestClient) -> None:
+        """thresholds must NOT be in the adx block (no oversold/overbought pair)."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert "thresholds" not in data["adx"]
+
+    def test_existing_rsi_and_stoch_k_blocks_unchanged(self, client: TestClient) -> None:
+        """Adding the adx block must not alter the existing rsi and stoch_k blocks."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        rsi = data["rsi"]
+        assert rsi["thresholds"]["oversold"] == 30.0
+        assert rsi["thresholds"]["overbought"] == 70.0
+        assert rsi["scoring_method"] == "percentile_blended_with_fallback"
+        stoch_k = data["stoch_k"]
+        assert stoch_k["thresholds"]["oversold"] == 20.0
+        assert stoch_k["thresholds"]["overbought"] == 80.0
+        assert stoch_k["scoring_method"] == "percentile_profile_with_threshold_fallback"
 

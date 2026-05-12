@@ -5,13 +5,14 @@
 ## Current Task
 None (Idle).
 
-<!-- Last completed: Stoch %K follow-up backend tests (2026-05-13) -->
+<!-- Last completed: ADX explainer backend wiring (2026-05-13) -->
 
 ## Recent History
 <!-- Most recent first, keep last 3-5 items -->
 
 | When | What | Status |
 |---|---|---|
+| 2026-05-13 | **ADX explainer — backend wiring (Task #13).** `zone_label_for_adx()` added to `zone_labels.py` (no profile, no fallback, 4-band fixed piecewise). `_fetch_adx_sparkline()` added to `queries.py` (single-series, mirrors `_fetch_rsi_sparkline` shape, key `adx`). `_build_daily_section` extended with `adx_sparkline` + `adx_zone_label` fields; `adx_profile` deliberately absent. `/api/scoring-rules` gains `adx` block with `fixed_band_piecewise`, 4 bands, `discontinuity_at=25.0`, `score_range=[-20.0, 80.0]`; `bands[1].score_max=20.0` and `bands[2].score_min=40.0` pin the discontinuity into the API contract. Config: `web.json sparkline.adx_sparkline_days=100`, `scorer.json indicator_thresholds.adx` (display-only). Tests: `TestZoneLabelForAdx` (8 cases + boundary+sign-agreement), `TestFetchAdxSparkline` (5 cases), `test_snapshot_adx_fields.py` (new file, BLOCKER 3 negative assertion), `TestScoringRulesAdxBlock` (11 cases, BLOCKER 2 assertions). DESIGN.md §15.7 stub added (§15.8 renumbered "other indicators"). CONFIG.md updated. Frontend: no .tsx files touched. | ✅ Done |
 | 2026-05-13 | **Stoch %K explainer — follow-up backend tests (Task #12).** Two tests added: `test_overbought_label_agrees_with_ranging_score_sign` in `tests/test_scorer/test_zone_labels.py` (symmetry mirror of the existing oversold sign-agreement test); `test_stoch_k_fallback_thresholds_match_config` in `tests/test_scorer/test_indicator_scorer.py` (drift-guard reading `config/scorer.json` and asserting hard-cap behaviour at the configured boundary, the oversold boundary, and just-below-overbought to catch both directions of drift). 2008 passing; 4 pre-existing unrelated failures in `test_notifier/test_chart_generator.py`. | ✅ Done |
 | 2026-05-12 | **Stoch %K explainer — full build + tear-down (Task #11).** All 7 steps live on real backend data. Commits: c70c031 (backend), 1b6b0a4 (Step 2), 0773617 (Step 3), 5a509c6 (Step 4), 2a50772 (Step 5), 7306112 (Steps 6–7), 6d9509f (Step 7 wiring complete), tear-down (this task). Tear-down: renamed `RsiPercentileStrip.tsx` → `PercentileStrip.tsx` and `RsiMappingChart.tsx` → `PercentileMappingChart.tsx` via `git mv`; updated all import sites and JSX tags in `IndicatorExplainerPanel.tsx`; updated MACD Step 3 comment (Required Fix #3); updated CLAUDE.md recipe (Required Fix #4); rewrote DESIGN.md §15.6 as full 7-step trace (Required Fix #5/6); cleaned stale "File rename deferred" note. Build clean; 153/153 tests pass. Grep confirms 0 residual `RsiPercentileStrip`/`RsiMappingChart` references. | ✅ Done |
 | 2026-05-12 | **Verdict header — Trend/Mom columns replaced with SignedBar bars; dashed border wrapper.** Promoted Prototype B from `TimeframeSummaryTable.tsx`. Build clean; 153/153 frontend tests pass. | ✅ Done |

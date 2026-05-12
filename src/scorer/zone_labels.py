@@ -141,6 +141,37 @@ def zone_label_for_stoch_k(
     return label
 
 
+def zone_label_for_adx(value: float) -> str:
+    """
+    Return the ADX trend-strength zone label for a value.
+
+    Single-arg signature (no profile, no thresholds dict) because ADX is in
+    PROFILE_FREE_INDICATORS — there is no profile path and no config-driven
+    fallback. Thresholds mirror score_adx's `>=` semantics exactly so
+    label/score sign agree at every boundary.
+
+    NOTE: This function intentionally does NOT consult FIXED_LADDER['adx'].
+    FIXED_LADDER contains a dead (50.0, "strong trend") fourth (final) entry that has
+    no effect on scoring (score_adx caps at >= 40 → 80.0). See
+    indicator_scorer.py:381-407 for the authoritative thresholds. The
+    follow-up cleanup of FIXED_LADDER is tracked separately.
+
+    Parameters:
+        value: Current ADX value (typically 0–100).
+
+    Returns:
+        Zone label string. One of: "ranging", "weak_trend_developing",
+        "developing_trend", "strong_trend".
+    """
+    if value >= 40.0:
+        return "strong_trend"
+    if value >= 25.0:
+        return "developing_trend"
+    if value >= 20.0:
+        return "weak_trend_developing"
+    return "ranging"
+
+
 def _zone_label_profile(value: float, profile: dict) -> str:
     """
     Return a zone label using the ticker's percentile profile.

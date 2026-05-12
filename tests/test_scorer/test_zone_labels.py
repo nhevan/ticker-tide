@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.scorer.zone_labels import zone_label_for_rsi, zone_label_for_stoch_k
-from src.scorer.indicator_scorer import score_with_percentile
+from src.scorer.zone_labels import zone_label_for_adx, zone_label_for_rsi, zone_label_for_stoch_k
+from src.scorer.indicator_scorer import score_adx, score_with_percentile
 
 # Synthetic profile used for profile-path tests.
 _PROFILE = {"p5": 20.0, "p20": 35.0, "p50": 50.0, "p80": 65.0, "p95": 80.0,
@@ -270,3 +270,75 @@ class TestZoneLabelForStochK:
         assert score < 0, (
             f"Expected negative score for overbought stoch_k in ranging regime, got {score}"
         )
+
+
+# ── ADX zone label tests ─────────────────────────────────────────────────────
+
+class TestZoneLabelForAdx:
+    """Tests for zone_label_for_adx()."""
+
+    def test_below_20_is_ranging(self) -> None:
+        """ADX values below 20 → ranging zone."""
+        assert zone_label_for_adx(0.0) == "ranging"
+        assert zone_label_for_adx(10.0) == "ranging"
+        assert zone_label_for_adx(19.999) == "ranging"
+
+    def test_at_20_is_weak_trend_developing(self) -> None:
+        """ADX exactly at 20 → weak_trend_developing (boundary pin, mirrors >= 20 in score_adx)."""
+        assert zone_label_for_adx(20.0) == "weak_trend_developing"
+
+    def test_between_20_and_25_is_weak(self) -> None:
+        """ADX between 20 and 25 (exclusive) → weak_trend_developing."""
+        assert zone_label_for_adx(22.5) == "weak_trend_developing"
+
+    def test_at_25_is_developing_trend(self) -> None:
+        """ADX exactly at 25 → developing_trend (boundary pin, matches score_adx >= 25)."""
+        assert zone_label_for_adx(25.0) == "developing_trend"
+
+    def test_between_25_and_40_is_developing(self) -> None:
+        """ADX between 25 and 40 (exclusive) → developing_trend."""
+        assert zone_label_for_adx(33.0) == "developing_trend"
+
+    def test_at_40_is_strong_trend(self) -> None:
+        """ADX exactly at 40 → strong_trend (boundary pin, matches score_adx >= 40)."""
+        assert zone_label_for_adx(40.0) == "strong_trend"
+
+    def test_above_40_is_strong_trend(self) -> None:
+        """ADX values above 40 → strong_trend."""
+        assert zone_label_for_adx(55.0) == "strong_trend"
+        assert zone_label_for_adx(80.0) == "strong_trend"
+        assert zone_label_for_adx(100.0) == "strong_trend"
+
+    def test_label_score_sign_agreement_at_boundaries(self) -> None:
+        """
+        At each boundary (20, 25, 40), the sign of score_adx agrees with
+        the band the label points to. No scenario where label = "weak_trend_developing"
+        but score is +40 (the discontinuity gap).
+        """
+        # ADX=20: label → weak_trend_developing, score = 0.0 (boundary between -20..0 and 0..20)
+        label_20 = zone_label_for_adx(20.0)
+        score_20 = score_adx(20.0)
+        assert label_20 == "weak_trend_developing", f"At ADX=20, expected weak_trend_developing, got {label_20!r}"
+        assert score_20 == 0.0, f"At ADX=20, expected score 0.0, got {score_20}"
+
+        # ADX=25: label → developing_trend, score = 40.0 (bottom of +40..+80 band)
+        label_25 = zone_label_for_adx(25.0)
+        score_25 = score_adx(25.0)
+        assert label_25 == "developing_trend", f"At ADX=25, expected developing_trend, got {label_25!r}"
+        assert score_25 == 40.0, f"At ADX=25, expected score 40.0, got {score_25}"
+        # Guard: weak_trend_developing must NOT produce score 40+ (the discontinuity gap)
+        for adx_val in [20.0, 22.5, 24.999]:
+            label = zone_label_for_adx(adx_val)
+            score = score_adx(adx_val)
+            assert label == "weak_trend_developing", (
+                f"ADX={adx_val}: expected weak_trend_developing, got {label!r}"
+            )
+            assert score < 40.0, (
+                f"ADX={adx_val}: score {score} should be below the +40 gap threshold"
+            )
+
+        # ADX=40: label → strong_trend, score = 80.0 (cap)
+        label_40 = zone_label_for_adx(40.0)
+        score_40 = score_adx(40.0)
+        assert label_40 == "strong_trend", f"At ADX=40, expected strong_trend, got {label_40!r}"
+        assert score_40 == 80.0, f"At ADX=40, expected score 80.0, got {score_40}"

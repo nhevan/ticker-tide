@@ -563,6 +563,9 @@ def create_app(
         stoch_k_thresholds = resolved_scorer_config.get(
             "indicator_thresholds", {}
         ).get("stoch_k", {"oversold": 20.0, "overbought": 80.0})
+        adx_t = resolved_scorer_config.get(
+            "indicator_thresholds", {}
+        ).get("adx", {"ranging_max": 20.0, "weak_max": 25.0, "developing_max": 40.0})
         regime_weights = resolved_scorer_config.get("adaptive_weights", {})
         expansion_factor = resolved_scorer_config.get("scoring", {}).get(
             "score_expansion_factor", 1.0
@@ -589,6 +592,48 @@ def create_app(
                     "extreme_oversold", "oversold", "below_mid",
                     "above_mid", "overbought", "extreme_overbought",
                 ],
+            },
+            # ADX uses a fixed-band piecewise scoring model (no profile path, no fallback).
+            # See score_adx() at indicator_scorer.py:381-407 for the authoritative literals.
+            # The discontinuity at ADX=25 is explicit: weak_trend_developing.score_max=20.0
+            # is the band's actual ceiling and the +20 → +40 gap to developing_trend.score_min
+            # is the documented discontinuity, additionally signalled by "discontinuity_at".
+            # Thresholds are read from config/scorer.json indicator_thresholds.adx (display-only;
+            # scorer hardcodes the same literals — keep manually in sync).
+            "adx": {
+                "scoring_method": "fixed_band_piecewise",
+                "bands": [
+                    {
+                        "name": "ranging",
+                        "min": 0.0,
+                        "max": adx_t["ranging_max"],
+                        "score_min": -20.0,
+                        "score_max": 0.0,
+                    },
+                    {
+                        "name": "weak_trend_developing",
+                        "min": adx_t["ranging_max"],
+                        "max": adx_t["weak_max"],
+                        "score_min": 0.0,
+                        "score_max": 20.0,  # band ceiling; score JUMPS to 40 at ADX=25
+                    },
+                    {
+                        "name": "developing_trend",
+                        "min": adx_t["weak_max"],
+                        "max": adx_t["developing_max"],
+                        "score_min": 40.0,
+                        "score_max": 80.0,
+                    },
+                    {
+                        "name": "strong_trend",
+                        "min": adx_t["developing_max"],
+                        "max": 100.0,
+                        "score_min": 80.0,
+                        "score_max": 80.0,
+                    },
+                ],
+                "discontinuity_at": adx_t["weak_max"],
+                "score_range": [-20.0, 80.0],
             },
             "regime_weights": regime_weights,
             "score_expansion_factor": expansion_factor,

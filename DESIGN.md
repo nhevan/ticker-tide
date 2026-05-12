@@ -1707,9 +1707,42 @@ For `indicator === "stoch_k"` the panel renders a 7-step trace mirroring RSI str
 - The 80/20 fallback thresholds are currently hardcoded literals in `indicator_scorer.py:533–539`; a follow-on refactor will read them from `config/scorer.json` via `scoring-rules`.
 - Steps 3 & 4 (`PercentileStrip`, `PercentileMappingChart`) are shared with the RSI panel via the `label` prop — not RSI-specific components.
 
-### 15.7 Other indicators
+### 15.7 ADX (Average Directional Index) — backend wiring
 
-All indicators other than `rsi_14`, `macd_line`, and `stoch_k` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
+Backend wiring landed; frontend panel pending (follow-up commit).
+
+#### Backend data
+
+- **`daily.adx_sparkline`** — list of `{ date, adx }` rows (single-series, no secondary line). Bounded by `<= picked_date`, excludes `adx IS NULL` rows. Length capped by `sparkline.adx_sparkline_days` (default 100, `config/web.json`).
+- **`daily.adx_zone_label`** — zone string from `zone_label_for_adx()`: four fixed-band labels (`ranging`, `weak_trend_developing`, `developing_trend`, `strong_trend`). `null` when `adx` is not available in `indicators_daily` for the picked date.
+- **`daily.indicator_scores.adx`** — persisted indicator score (−20 to +80) from `indicator_scores_daily`.
+- **`/api/scoring-rules` → `adx`** — fixed-band piecewise descriptor with 4 bands, `discontinuity_at=25.0`, `score_range=[-20.0, 80.0]`. No `profile_zones` or `thresholds` (oversold/overbought) — ADX is a trend-strength indicator, not an oscillator.
+
+**Note: `adx_profile` is deliberately absent from the snapshot.** ADX is in `PROFILE_FREE_INDICATORS` — `score_adx()` uses hardcoded literals and does not read from `indicator_profiles`. Exposing the profile on the snapshot would mislead callers.
+
+#### ADX scoring model
+
+ADX uses a fixed-band piecewise function (no profile path, no regime sign-flip):
+```
+ADX ≥ 40:       score = +80.0  (strong trend, capped)
+25 ≤ ADX < 40:  score = 40 + (ADX − 25) / 15 × 40  (developing trend, +40→+80)
+20 ≤ ADX < 25:  score = (ADX − 20) / 5 × 20         (weak trend, 0→+20)
+ADX < 20:       score = −20 + ADX / 20 × 20          (ranging, −20→0)
+```
+**Discontinuity at ADX=25**: score jumps from +20 (top of `weak_trend_developing`) to +40 (bottom of `developing_trend`). This is documented in the `/api/scoring-rules` response via `discontinuity_at: 25.0` and by the gap between `bands[1].score_max=20.0` and `bands[2].score_min=40.0`.
+
+#### Config
+
+- `config/scorer.json` `indicator_thresholds.adx` — display-only thresholds read by `/api/scoring-rules`. Must be kept manually in sync with the literals in `score_adx()` (`indicator_scorer.py:381-407`). The scorer does NOT read from config at runtime.
+- `config/web.json` `sparkline.adx_sparkline_days` — window size for `daily.adx_sparkline`.
+
+#### Full 7-step trace
+
+Full 7-step frontend trace will be added in the follow-up commit when the frontend panel is promoted from prototype.
+
+### 15.8 Other indicators
+
+All indicators other than `rsi_14`, `macd_line`, `stoch_k`, and `adx` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
 
 Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic. For `score_with_percentile`-scored indicators, `PercentileStrip.tsx` and `PercentileMappingChart.tsx` can be reused directly via the `label` prop. For indicators with a different scoring model (e.g. z-score like MACD), use `Macd*.tsx` as templates for new per-indicator components.
 

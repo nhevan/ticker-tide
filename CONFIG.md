@@ -218,6 +218,9 @@ requires re-running the scorer: `python scripts/run_scorer.py --force`.
 | `indicator_thresholds.rsi_14.overbought` | float | `70.0` | RSI at or above this value is scored as overbought (bearish in ranging regime) |
 | `indicator_thresholds.stoch_k.oversold` | float | `20.0` | Stochastic %K at or below this value is oversold (bullish in ranging regime). Used by the `/api/scoring-rules` endpoint to advertise thresholds; the scorer fallback path currently hardcodes these same values (follow-on refactor pending). |
 | `indicator_thresholds.stoch_k.overbought` | float | `80.0` | Stochastic %K at or above this value is overbought (bearish in ranging regime). Same note as above. |
+| `indicator_thresholds.adx.ranging_max` | float | `20.0` | **Display-only.** ADX below this value is in the "ranging" zone (score −20→0). Read by `/api/scoring-rules` for the ADX explainer panel. The scorer (`score_adx()` at `indicator_scorer.py:381-407`) hardcodes the same literal and does NOT read from config. If you change this value you MUST also update the literal in `score_adx` manually. |
+| `indicator_thresholds.adx.weak_max` | float | `25.0` | **Display-only.** ADX between `ranging_max` and this value is in the "weak_trend_developing" zone (score 0→+20). Also the `discontinuity_at` boundary — score jumps from +20 to +40 at this exact value. Same manual-sync caveat as `ranging_max`. |
+| `indicator_thresholds.adx.developing_max` | float | `40.0` | **Display-only.** ADX between `weak_max` and this value is in the "developing_trend" zone (score +40→+80). ADX at or above this value is "strong_trend" (score capped at +80). Same manual-sync caveat as `ranging_max`. |
 
 > **Note on `score_expansion_factor` and persisted payloads:** `scores_daily.key_signals_data`
 > stores per-indicator contribution payloads at scoring time, including the expansion factor
@@ -578,6 +581,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `sparkline.rsi_sparkline_days` | int | `100` | Number of trading-day rows to include in the RSI trend chart shown in the RSI explainer panel (step 2). Rows with `rsi_14 IS NULL` are excluded. Bounded by `<= picked_date`. Changing this affects only the RSI explainer chart density; no pipeline phase re-run is needed (the snapshot is computed at read time). |
 | `sparkline.macd_sparkline_days` | int | `100` | Number of trading-day rows to include in the MACD trend chart shown in the MACD line explainer panel (step 2). Rows with `macd_line IS NULL` are excluded; `macd_signal` and `macd_histogram` are independently nullable and surface as `null` within a row. Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
 | `sparkline.stoch_sparkline_days` | int | `100` | Number of trading-day rows to include in the Stochastic %K/%D trend chart shown in the Stoch %K explainer panel (step 2, pending). Rows with `stoch_k IS NULL` are excluded; `stoch_d` is independently nullable (warm-up period) and surfaces as `null` within a row. Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
+| `sparkline.adx_sparkline_days` | int | `100` | Number of trading-day rows to include in the ADX trend chart shown in the ADX explainer panel (step 2, pending). Rows with `adx IS NULL` are excluded. Single-series (no secondary line like Stoch's %D). Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
 | `ai_reasoner.model` | string | `claude-sonnet-4-20250514` | Anthropic model to use for web LLM analysis |
 | `ai_reasoner.max_tokens` | int | `800` | Maximum tokens in Claude's response |
 | `ai_reasoner.temperature` | float | `0.3` | Sampling temperature for Claude |
@@ -631,7 +635,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `web.json port` | `sudo systemctl restart ticker-tide-web` |
 | `web.json login_rate_limit.*` | None — applies on next login attempt |
 | `web.json llm_rate_limit.*` | None — applies on next LLM request |
-| `web.json sparkline.*` | None — applies on next snapshot load (includes `rsi_sparkline_days`, `macd_sparkline_days`, `stoch_sparkline_days`) |
+| `web.json sparkline.*` | None — applies on next snapshot load (includes `rsi_sparkline_days`, `macd_sparkline_days`, `stoch_sparkline_days`, `adx_sparkline_days`) |
 | `web.json ai_reasoner.*` | None — applies on next LLM request |
 | `web.json why_bullets.*` | None — applies on next snapshot load |
 | `web.json signal_flip_lookback_days` | None — applies on next snapshot load |

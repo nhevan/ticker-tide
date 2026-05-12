@@ -19,7 +19,7 @@ from typing import Any, Optional
 # in lockstep with score_candlestick_patterns / score_structural_patterns.
 # Private-prefixed names are accepted here as the canonical source of truth.
 from src.scorer.pattern_scorer import _CANDLESTICK_WINDOW_DAYS, _STRUCTURAL_WINDOW_DAYS
-from src.scorer.zone_labels import zone_label_for_rsi, zone_label_for_stoch_k
+from src.scorer.zone_labels import zone_label_for_adx, zone_label_for_rsi, zone_label_for_stoch_k
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,7 @@ def fetch_snapshot(
     rsi_sparkline_days = sparkline_cfg.get("rsi_sparkline_days", 100)
     macd_sparkline_days = sparkline_cfg.get("macd_sparkline_days", 100)
     stoch_sparkline_days = sparkline_cfg.get("stoch_sparkline_days", 100)
+    adx_sparkline_days = sparkline_cfg.get("adx_sparkline_days", 100)
 
     why_limit = config.get("why_bullets", {}).get("limit", 3)
     signal_flip_lookback = config.get("signal_flip_lookback_days", 14)
@@ -154,6 +155,7 @@ def fetch_snapshot(
             rsi_sparkline_days=rsi_sparkline_days,
             macd_sparkline_days=macd_sparkline_days,
             stoch_sparkline_days=stoch_sparkline_days,
+            adx_sparkline_days=adx_sparkline_days,
         ),
         "weekly": _build_weekly_section(
             conn, ticker, picked_date, weekly_weeks,
@@ -205,6 +207,7 @@ def _build_daily_section(
     rsi_sparkline_days: int = 100,
     macd_sparkline_days: int = 100,
     stoch_sparkline_days: int = 100,
+    adx_sparkline_days: int = 100,
 ) -> dict[str, Any]:
     """
     Build the daily card data for a ticker and exact date.
@@ -225,6 +228,20 @@ def _build_daily_section(
         contributions_payload: parsed key_signals_data JSON dict, or None for
                                legacy rows where that column is NULL.
 
+    ADX explainer fields added:
+        adx_sparkline: list of {date, adx} dicts from _fetch_adx_sparkline().
+                       Always present when data_available is True; empty list
+                       when no qualifying rows exist; never None.
+        adx_zone_label: zone label string from zone_label_for_adx(), or None
+                        when adx is not available in indicators_daily for
+                        the picked date.
+
+    Note: adx_profile is intentionally NOT included. ADX is in
+    PROFILE_FREE_INDICATORS — the indicator_profiles table stores a row for
+    ADX but it is unused for scoring (score_adx() uses hardcoded literals).
+    Exposing adx_profile on the snapshot would mislead callers into thinking
+    the profile influences the score.
+
     Parameters:
         conn: Open SQLite connection.
         ticker: Ticker symbol.
@@ -242,11 +259,15 @@ def _build_daily_section(
         stoch_sparkline_days: Number of trading days to include in the Stochastic %K/%D
                               sparkline (bounded by <= picked_date). Rows with stoch_k IS NULL
                               are excluded. Returns [] when no data exists.
+        adx_sparkline_days: Number of trading days to include in the ADX sparkline
+                            (bounded by <= picked_date). Rows with adx IS NULL are
+                            excluded. Returns [] when no data exists.
 
     Returns:
-        Daily section dict. Includes rsi_sparkline, stoch_sparkline: list[dict[str, Any]] —
-        always present (may be empty list), never None.
-        Also includes stoch_k_profile (dict or None) and stoch_zone_label (str or None).
+        Daily section dict. Includes rsi_sparkline, stoch_sparkline, adx_sparkline:
+        list[dict[str, Any]] — always present (may be empty list), never None.
+        Also includes stoch_k_profile (dict or None), stoch_zone_label (str or None),
+        adx_zone_label (str or None). adx_profile is deliberately absent — see note above.
     """
     resolved_scorer_config = scorer_config if scorer_config is not None else {}
 
@@ -275,6 +296,7 @@ def _build_daily_section(
     rsi_sparkline = _fetch_rsi_sparkline(conn, ticker, picked_date, rsi_sparkline_days)
     macd_sparkline = _fetch_macd_sparkline(conn, ticker, picked_date, macd_sparkline_days)
     stoch_sparkline = _fetch_stoch_sparkline(conn, ticker, picked_date, stoch_sparkline_days)
+    adx_sparkline = _fetch_adx_sparkline(conn, ticker, picked_date, adx_sparkline_days)
     key_signals = _extract_key_signals(score_dict, limit=why_limit)
     earnings = _fetch_earnings(conn, ticker, picked_date)
     signal_flip = _fetch_signal_flip(
@@ -312,6 +334,15 @@ def _build_daily_section(
     else:
         stoch_zone_label = None
 
+    # ADX explainer fields. No profile fetch — ADX is in PROFILE_FREE_INDICATORS
+    # and adx_profile is intentionally not exposed (see docstring).
+    adx_value = indicators.get("adx") if indicators else None
+    adx_zone_label: Optional[str]
+    if adx_value is not None:
+        adx_zone_label = zone_label_for_adx(float(adx_value))
+    else:
+        adx_zone_label = None
+
     # Parse contributions payload; treat NULL as None without raising.
     contributions_payload: Optional[dict] = _parse_contributions_payload(
         score_dict.get("key_signals_data")
@@ -344,6 +375,8 @@ def _build_daily_section(
         "rsi_zone_label": rsi_zone_label,
         "stoch_k_profile": stoch_k_profile,
         "stoch_zone_label": stoch_zone_label,
+        "adx_sparkline": adx_sparkline,
+        "adx_zone_label": adx_zone_label,
         "contributions_payload": contributions_payload,
     }
 
@@ -1101,6 +1134,40 @@ def _fetch_stoch_sparkline(
         }
         for r in reversed(rows)
     ]
+
+
+def _fetch_adx_sparkline(
+    conn: sqlite3.Connection,
+    ticker: str,
+    picked_date: str,
+    num_days: int,
+) -> list[dict[str, Any]]:
+    """
+    Fetch the last num_days ADX values from indicators_daily for a ticker up to
+    and including picked_date.
+
+    ADX is a single-series sparkline (unlike Stochastic's %K/%D dual series).
+    Applies a strict <= picked_date bound and excludes rows where adx IS NULL.
+    Returns rows in chronological (ascending) order. Returns an empty list when
+    no qualifying rows exist.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        picked_date: Upper-bound date (YYYY-MM-DD). No rows after this date are included.
+        num_days: Maximum number of rows to return.
+
+    Returns:
+        List of dicts with keys: date (str), adx (float). Empty list if no data.
+    """
+    cur = conn.execute(
+        "SELECT date, adx FROM indicators_daily "
+        "WHERE ticker = ? AND date <= ? AND adx IS NOT NULL "
+        "ORDER BY date DESC LIMIT ?",
+        (ticker, picked_date, num_days),
+    )
+    rows = cur.fetchall()
+    return [{"date": r["date"], "adx": float(r["adx"])} for r in reversed(rows)]
 
 
 def _fetch_stoch_k_profile(

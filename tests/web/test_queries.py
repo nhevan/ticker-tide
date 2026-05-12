@@ -22,6 +22,7 @@ from src.web.queries import (
     _fetch_earnings,
     _fetch_signal_flip,
     _fetch_recent_patterns,
+    _fetch_adx_sparkline,
     _fetch_stoch_sparkline,
     _fetch_stoch_k_profile,
     _build_daily_section,
@@ -1537,3 +1538,88 @@ class TestFetchStochKProfile:
         profile = _fetch_stoch_k_profile(raw_conn, "AAPL")
         assert profile is None
         raw_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# _fetch_adx_sparkline tests
+# ---------------------------------------------------------------------------
+
+def _insert_adx_rows(
+    conn: sqlite3.Connection,
+    ticker: str,
+    rows: list[tuple[str, float | None]],
+) -> None:
+    """Insert multiple (date, adx) rows into indicators_daily for a ticker."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO indicators_daily(ticker, date, adx) VALUES (?, ?, ?)",
+        [(ticker, date, adx) for date, adx in rows],
+    )
+    conn.commit()
+
+
+class TestFetchAdxSparkline:
+    """Tests for _fetch_adx_sparkline()."""
+
+    def test_happy_path_multiple_rows(self, conn: sqlite3.Connection) -> None:
+        """Multiple rows with adx are returned in ascending date order."""
+        _insert_adx_rows(conn, "AAPL", [
+            ("2026-04-23", 18.5),
+            ("2026-04-24", 22.1),
+            ("2026-04-25", 27.3),
+        ])
+        result = _fetch_adx_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert len(result) == 3
+        assert result[0]["date"] == "2026-04-23"
+        assert result[1]["date"] == "2026-04-24"
+        assert result[2]["date"] == "2026-04-25"
+
+    def test_row_shape_has_date_and_adx_keys(self, conn: sqlite3.Connection) -> None:
+        """Each returned row has exactly keys: date (str), adx (float)."""
+        _insert_adx_rows(conn, "AAPL", [("2026-04-25", 30.0)])
+        result = _fetch_adx_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert len(result) == 1
+        row = result[0]
+        assert set(row.keys()) == {"date", "adx"}
+        assert isinstance(row["date"], str)
+        assert isinstance(row["adx"], float)
+
+    def test_null_adx_rows_excluded(self, conn: sqlite3.Connection) -> None:
+        """Rows where adx IS NULL are excluded from the sparkline."""
+        _insert_adx_rows(conn, "AAPL", [
+            ("2026-04-23", 18.5),
+            ("2026-04-24", None),   # NULL adx — must be excluded
+            ("2026-04-25", 27.3),
+        ])
+        result = _fetch_adx_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        dates = [r["date"] for r in result]
+        assert "2026-04-24" not in dates
+        assert len(result) == 2
+
+    def test_le_picked_date_bound_respected(self, conn: sqlite3.Connection) -> None:
+        """Rows after picked_date are excluded."""
+        _insert_adx_rows(conn, "AAPL", [
+            ("2026-04-24", 20.0),
+            ("2026-04-25", 25.0),
+            ("2026-04-26", 30.0),  # after picked_date — must be excluded
+        ])
+        result = _fetch_adx_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        dates = [r["date"] for r in result]
+        assert "2026-04-26" not in dates
+        assert len(result) == 2
+
+    def test_limit_respected(self, conn: sqlite3.Connection) -> None:
+        """LIMIT parameter caps the number of returned rows."""
+        _insert_adx_rows(conn, "AAPL", [
+            ("2026-04-21", 15.0),
+            ("2026-04-22", 18.0),
+            ("2026-04-23", 22.0),
+            ("2026-04-24", 26.0),
+            ("2026-04-25", 30.0),
+        ])
+        result = _fetch_adx_sparkline(conn, "AAPL", "2026-04-25", num_days=2)
+        assert len(result) == 2
+
+    def test_empty_result_when_no_rows(self, conn: sqlite3.Connection) -> None:
+        """Returns empty list when no rows exist for the ticker."""
+        result = _fetch_adx_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert result == []
