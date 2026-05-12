@@ -11,6 +11,7 @@
 
 import { RsiTrendChart } from '@/components/RsiTrendChart';
 import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
+import { RsiMappingChart } from '@/components/RsiMappingChart';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -171,7 +172,21 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
       ) : (
         <>
           <StepCard stepNumber={4} heading="RSI score">
-            Score = {rsiScore.toFixed(1)} (range −100 to +100).
+            {rsiProfile && (regime === 'trending' || regime === 'ranging' || regime === 'volatile') ? (
+              <RsiMappingChart
+                profile={rsiProfile}
+                today={rsiValue}
+                score={rsiScore}
+                regime={regime}
+              />
+            ) : (
+              <>
+                Score = {rsiScore.toFixed(1)} (range −100 to +100).{' '}
+                <span className="text-muted-foreground italic">
+                  (Mapping chart unavailable without per-ticker profile or recognised regime.)
+                </span>
+              </>
+            )}
           </StepCard>
 
           {/* Steps 5–7 require contributions payload */}
