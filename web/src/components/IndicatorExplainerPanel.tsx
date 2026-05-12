@@ -67,7 +67,74 @@ function StepCard({
   );
 }
 
-/** Placeholder shown for indicators other than rsi_14. */
+/**
+ * Render the 7-step MACD line trace.
+ *
+ * Scaffold only — Step 1 renders the real raw reading + interpretation;
+ * steps 2–7 are placeholder cards to be filled in per-step follow-up branches.
+ *
+ * Step 1 reads three raw values from `snapshot.daily.indicators`:
+ *   - macd_line, macd_signal, macd_histogram.
+ * Each is independently guarded with `Number.isFinite` because the DB columns
+ * are nullable (NaN → NULL is applied during indicator persistence).
+ */
+function MacdLinePanel({ snapshot }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
+  const daily = snapshot.daily;
+  const macdRaw = daily.indicators?.macd_line;
+  const signalRaw = daily.indicators?.macd_signal;
+  const histRaw = daily.indicators?.macd_histogram;
+
+  const macdValue = typeof macdRaw === 'number' && Number.isFinite(macdRaw) ? macdRaw : null;
+  const signalValue = typeof signalRaw === 'number' && Number.isFinite(signalRaw) ? signalRaw : null;
+  const histValue = typeof histRaw === 'number' && Number.isFinite(histRaw) ? histRaw : null;
+
+  if (macdValue === null || signalValue === null || histValue === null) {
+    return (
+      <div className="border-t border-border/40 bg-card px-4 py-3">
+        <StepCard stepNumber={1} heading="MACD line reading">
+          MACD not fully available for this date.
+        </StepCard>
+      </div>
+    );
+  }
+
+  const lineAboveSignal = macdValue > signalValue;
+  const histPositive = histValue > 0;
+  const bullish = lineAboveSignal && histPositive;
+  const bearish = !lineAboveSignal && !histPositive;
+  const verdict = bullish
+    ? 'a bullish MACD configuration'
+    : bearish
+      ? 'a bearish MACD configuration'
+      : 'a mixed MACD configuration';
+  const positionPhrase = lineAboveSignal ? 'above signal' : 'below signal';
+  const histPhrase = histPositive ? 'histogram is positive' : 'histogram is negative';
+
+  return (
+    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-0">
+      <StepCard stepNumber={1} heading="MACD line reading">
+        <div>
+          <span className="font-medium">Reading.</span> MACD line{' '}
+          <span className="font-mono">{macdValue.toFixed(2)}</span>, signal{' '}
+          <span className="font-mono">{signalValue.toFixed(2)}</span>, histogram{' '}
+          <span className="font-mono">{histValue.toFixed(2)}</span>.
+        </div>
+        <div className="mt-1">
+          <span className="font-medium">Interpretation.</span> Line sits {positionPhrase} and{' '}
+          {histPhrase} — {verdict}.
+        </div>
+      </StepCard>
+      <StepCard stepNumber={2} heading="Zone" unavailable />
+      <StepCard stepNumber={3} heading="Scoring path" unavailable />
+      <StepCard stepNumber={4} heading="MACD line score" unavailable />
+      <StepCard stepNumber={5} heading="Magnitude share in trend" unavailable />
+      <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+      <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />
+    </div>
+  );
+}
+
+/** Placeholder shown for indicators other than rsi_14 and macd_line. */
 function PlaceholderPanel({ indicator }: { indicator: string }) {
   return (
     <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-muted-foreground">
@@ -283,6 +350,9 @@ export function IndicatorExplainerPanel({
 }: IndicatorExplainerPanelProps) {
   if (indicator === 'rsi_14') {
     return <RsiPanel snapshot={snapshot} rules={rules} />;
+  }
+  if (indicator === 'macd_line') {
+    return <MacdLinePanel snapshot={snapshot} rules={rules} />;
   }
   return <PlaceholderPanel indicator={indicator} />;
 }
