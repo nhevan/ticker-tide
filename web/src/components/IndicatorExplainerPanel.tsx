@@ -12,6 +12,7 @@
 import { RsiTrendChart } from '@/components/RsiTrendChart';
 import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import { RsiMappingChart } from '@/components/RsiMappingChart';
+import { MomentumShareBar } from '@/components/MomentumShareBar';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -206,33 +207,12 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
             <>
               {/* Step 5 — Magnitude share in momentum */}
               <StepCard stepNumber={5} heading="Magnitude share in momentum">
-                {(() => {
-                  const momentumItems = contributions.items.filter(
-                    (item) => item.category === 'momentum',
-                  );
-                  const denom = momentumItems.reduce(
-                    (acc, item) => acc + Math.abs(item.score),
-                    0,
-                  );
-                  if (denom === 0) {
-                    return 'Share undefined (all momentum components zero).';
-                  }
-                  const share = Math.abs(rsiItem.score) / denom;
-                  const siblings = momentumItems.filter((item) => item.name !== 'rsi_14');
-                  return (
-                    <>
-                      RSI accounts for{' '}
-                      <span className="font-medium">{(share * 100).toFixed(1)}%</span> of the
-                      absolute momentum signal.
-                      {siblings.length > 0 && (
-                        <span className="text-muted-foreground">
-                          {' '}Momentum siblings:{' '}
-                          {siblings.map((s) => `${s.name} (${s.score.toFixed(1)})`).join(', ')}.
-                        </span>
-                      )}
-                    </>
-                  );
-                })()}
+                {/* activeName hardcoded here because this panel only renders for rsi_14;
+                    the component itself supports any active indicator. */}
+                <MomentumShareBar
+                  items={contributions.items.filter((item) => item.category === 'momentum')}
+                  activeName="rsi_14"
+                />
               </StepCard>
 
               {/* Step 6 — Category weight × expansion */}
