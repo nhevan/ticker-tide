@@ -344,27 +344,25 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
     return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
   })();
 
-  // Dummy values for steps 3–7 — replaced per task plan.
+  // Step 5: real contributions payload and stoch_k item.
+  const contributions = daily.contributions_payload ?? null;
+  const stochItem: ContributionItem | undefined = contributions?.items.find(
+    (item) => item.name === 'stoch_k',
+  );
+
+  // Dummy values for steps 6–7 — replaced per task plan.
   const dummyScore = -12.4; // [PROTOTYPE]
   const dummyDenom = 168.0; // [PROTOTYPE] Σ|momentum scores|
   const regime = (daily.regime ?? 'ranging') as string;
   const dummyExpansion = 1.12; // [PROTOTYPE]
   const dummyMomentumWeight = 0.28; // [PROTOTYPE]
   const dummyFinalContribution = (dummyScore * Math.abs(dummyScore) / dummyDenom) * dummyMomentumWeight * dummyExpansion;
-  const dummyMomentumItems: ContributionItem[] = [
-    { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: -42, raw_value: -42, category_weight: 0.28, contribution: 0 },
-    { name: 'stoch_k', category: 'momentum', kind: 'indicator', score: dummyScore, raw_value: dummyScore, category_weight: 0.28, contribution: 0 },
-    { name: 'macd_line', category: 'momentum', kind: 'indicator', score: 18, raw_value: 18, category_weight: 0.28, contribution: 0 },
-    { name: 'macd_histogram', category: 'momentum', kind: 'indicator', score: -22, raw_value: -22, category_weight: 0.28, contribution: 0 },
-    { name: 'cci_20', category: 'momentum', kind: 'indicator', score: -55, raw_value: -55, category_weight: 0.28, contribution: 0 },
-    { name: 'roc_10', category: 'momentum', kind: 'indicator', score: -19, raw_value: -19, category_weight: 0.28, contribution: 0 },
-  ];
   const dummyCategoryWeights = { momentum: 0.28, trend: 0.34, volatility: 0.14, volume: 0.10, breadth: 0.08, valuation: 0.06 };
 
   return (
     <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-foreground">
       <div className="mb-3 rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
-        [PROTOTYPE] Steps 3–7 use dummy values — wired in order per task plan. Steps 1 &amp; 2 now use real backend data.
+        [PROTOTYPE] Steps 6–7 use dummy values — wired in order per task plan. Steps 1–5 now use real backend data.
       </div>
 
       {/* Step 1 — Raw value */}
@@ -484,51 +482,62 @@ function StochKPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
         </StepCard>
       )}
 
-      {/* Step 5 — Magnitude share in momentum [PROTOTYPE — dummy items] */}
-      <StepCard stepNumber={5} heading="Magnitude share in momentum">
-        <p>
-          %K's |score| of <span className="font-mono">{Math.abs(dummyScore).toFixed(1)}</span> divided by the total magnitude across all momentum indicators (<span className="font-mono">{dummyDenom.toFixed(1)}</span>) gives its share:{' '}
-          <span className="font-mono font-semibold">{((Math.abs(dummyScore) / dummyDenom) * 100).toFixed(1)}%</span>{' '}
-          <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy items]</span>.
-        </p>
-        <div className="mt-3">
-          <CategoryShareBar items={dummyMomentumItems} activeName="stoch_k" category="momentum" />
-        </div>
-      </StepCard>
+      {!contributions || !stochItem ? (
+        <>
+          <StepCard stepNumber={5} heading="Magnitude share in momentum">
+            {!contributions
+              ? 'Contribution breakdown not available for this date (legacy data).'
+              : 'Stoch %K not found in contributions payload.'}
+          </StepCard>
+          <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+          <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />
+        </>
+      ) : (
+        <>
+          {/* Step 5 — Magnitude share in momentum (REAL) */}
+          <StepCard stepNumber={5} heading="Magnitude share in momentum">
+            <CategoryShareBar
+              items={contributions.items.filter((item) => item.category === 'momentum')}
+              activeName="stoch_k"
+              category="momentum"
+            />
+          </StepCard>
 
-      {/* Step 6 — Category weight × expansion [PROTOTYPE — dummy weights] */}
-      <StepCard stepNumber={6} heading="Category weight × expansion">
-        <p>
-          Momentum's base weight in the <span className="font-mono">{regime}</span> regime is{' '}
-          <span className="font-mono font-semibold">{(dummyMomentumWeight * 100).toFixed(0)}%</span>, then scaled by the cross-section expansion factor{' '}
-          <span className="font-mono font-semibold">×{dummyExpansion.toFixed(2)}</span>{' '}
-          <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>.
-        </p>
-        <div className="mt-3">
-          <CategoryWeightBar weights={dummyCategoryWeights} regime={regime} expansion={dummyExpansion} activeName="momentum" />
-        </div>
-      </StepCard>
+          {/* Step 6 — Category weight × expansion [PROTOTYPE — dummy values until Task #9] */}
+          <StepCard stepNumber={6} heading="Category weight × expansion">
+            <p>
+              Momentum's base weight in the <span className="font-mono">{regime}</span> regime is{' '}
+              <span className="font-mono font-semibold">{(dummyMomentumWeight * 100).toFixed(0)}%</span>, then scaled by the cross-section expansion factor{' '}
+              <span className="font-mono font-semibold">×{dummyExpansion.toFixed(2)}</span>{' '}
+              <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>.
+            </p>
+            <div className="mt-3">
+              <CategoryWeightBar weights={dummyCategoryWeights} regime={regime} expansion={dummyExpansion} activeName="momentum" />
+            </div>
+          </StepCard>
 
-      {/* Step 7 — Net contribution to composite [PROTOTYPE — dummy] */}
-      <StepCard stepNumber={7} heading="Net contribution to composite">
-        <p>
-          Final contribution of %K to today's composite score{' '}
-          <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>:
-        </p>
-        <div className="mt-3">
-          <ContributionMathChain
-            score={dummyScore}
-            denom={dummyDenom}
-            regimeWeight={dummyMomentumWeight}
-            expansion={dummyExpansion}
-            finalContribution={dummyFinalContribution}
-            activeName="stoch_k"
-          />
-        </div>
-        <p className="mt-2 text-muted-foreground italic text-[10px]">
-          Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.
-        </p>
-      </StepCard>
+          {/* Step 7 — Net contribution to composite [PROTOTYPE — dummy values until Task #10] */}
+          <StepCard stepNumber={7} heading="Net contribution to composite">
+            <p>
+              Final contribution of %K to today's composite score{' '}
+              <span className="text-muted-foreground italic text-[10px]">[PROTOTYPE — dummy]</span>:
+            </p>
+            <div className="mt-3">
+              <ContributionMathChain
+                score={dummyScore}
+                denom={dummyDenom}
+                regimeWeight={dummyMomentumWeight}
+                expansion={dummyExpansion}
+                finalContribution={dummyFinalContribution}
+                activeName="stoch_k"
+              />
+            </div>
+            <p className="mt-2 text-muted-foreground italic text-[10px]">
+              Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.
+            </p>
+          </StepCard>
+        </>
+      )}
     </div>
   );
 }
