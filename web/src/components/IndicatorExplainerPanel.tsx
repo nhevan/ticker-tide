@@ -146,7 +146,37 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
         <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
       )}
 
-      <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />
+      {/* Step 7 — Net contribution.
+          Reuses ContributionMathChain verbatim (already generic over any indicator).
+          Requires the macd_line item from the persisted contributions payload;
+          falls back to unavailable when contributions or the item is missing. */}
+      {(() => {
+        const contributions = daily.contributions_payload ?? null;
+        const macdItem: ContributionItem | undefined = contributions?.items.find(
+          (item) => item.name === 'macd_line',
+        );
+        if (!contributions || !macdItem) {
+          return <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />;
+        }
+        const trendItems = contributions.items.filter((item) => item.category === 'trend');
+        const denom = trendItems.reduce((acc, item) => acc + Math.abs(item.score), 0);
+        return (
+          <StepCard stepNumber={7} heading="Net contribution to composite">
+            <ContributionMathChain
+              score={macdItem.score}
+              denom={denom}
+              regimeWeight={macdItem.category_weight}
+              expansion={contributions.expansion_factor}
+              finalContribution={macdItem.contribution}
+              activeName="macd_line"
+            />
+            <p className="mt-2 text-muted-foreground italic text-[10px]">
+              {rules?.approximation_caveat ??
+                'Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.'}
+            </p>
+          </StepCard>
+        );
+      })()}
     </div>
   );
 }
