@@ -583,6 +583,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `signal_flip_lookback_days` | int | `14` | Number of calendar days to look back from the picked date when searching for a recent signal flip. The badge is shown only when a flip exists within this window. |
 | `pattern_row_limit` | int | `5` | Maximum number of pattern rows returned per category in the `recent_patterns` field of each snapshot section. Controls how many candlestick and structural pattern rows appear in the dashboard indicator-agreement matrix below the indicator rows. |
 | `verdict.max_lines` | int | `5` | Hard cap on the number of lines returned for the dashboard verdict block. Enforced both in the Claude prompt and as a post-processing trim in `_enforce_verdict_line_cap()`. |
+| `equation.equation_summary_top_n` | int | `5` | Maximum number of top contribution items shown in the per-section equation row beneath each matrix table header. Items are sorted by `abs(contribution)` descending; items beyond this count are collapsed into `+ N others`. Surfaced via `/api/scoring-rules` as `equation_summary_top_n`. Web-only display — no pipeline re-run needed. |
 
 **`dist_dir` is intentionally NOT a config key.** The frontend build output path is a structural convention hardcoded to `web/dist` relative to the repo root. Override is available only via the `dist_dir` parameter to `create_app` for tests. Do not add this to `config/web.json`.
 
@@ -634,3 +635,4 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `web.json signal_flip_lookback_days` | None — applies on next snapshot load |
 | `web.json pattern_row_limit` | None — applies on next snapshot load |
 | `web.json verdict.max_lines` | None — applies on next verdict generation (does not retroactively re-trim cached rows) |
+| `web.json equation.equation_summary_top_n` | None — applies on next snapshot load |

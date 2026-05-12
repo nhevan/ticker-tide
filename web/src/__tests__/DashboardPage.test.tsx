@@ -28,6 +28,9 @@ vi.mock('@/lib/api/endpoints', () => ({
   getVerdict: vi.fn().mockResolvedValue(null),
   fetchScoringRules: vi.fn().mockResolvedValue(null),
 }));
+vi.mock('@/lib/hooks/useScoringRules', () => ({
+  useScoringRules: vi.fn().mockReturnValue({ data: null }),
+}));
 vi.mock('@/lib/hooks/useLlm', () => ({
   useLlm: vi.fn().mockReturnValue({
     mutate: vi.fn(),
@@ -48,6 +51,7 @@ vi.mock('@/lib/hooks/useVerdict', () => ({
 }));
 
 import { useSnapshot } from '@/lib/hooks/useSnapshot';
+import { useScoringRules } from '@/lib/hooks/useScoringRules';
 
 const mockSnapshot = {
   daily: {
@@ -158,5 +162,92 @@ describe('DashboardPage', () => {
 
     renderDashboard();
     expect(screen.getByText('BULLISH')).toBeInTheDocument();
+  });
+
+  describe('cross-section banner', () => {
+    const SCORING_RULES_WITH_TIMEFRAME_WEIGHTS = {
+      rsi: {
+        thresholds: { oversold: 30, overbought: 70 },
+        scoring_method: 'percentile_blended_with_fallback',
+        fallback_zones: [],
+        profile_zones: [],
+      },
+      regime_weights: {},
+      score_expansion_factor: 1.5,
+      approximation_caveat: '',
+      timeframe_weights: {
+        trending: { daily: 0.10, weekly: 0.50, monthly: 0.40 },
+        ranging: { daily: 0.60, weekly: 0.30, monthly: 0.10 },
+        volatile: { daily: 0.25, weekly: 0.45, monthly: 0.30 },
+      },
+      equation_summary_top_n: 5,
+    };
+
+    /** Snapshot with regime + daily_score so computeTimeframeHeaderContributions returns non-null entries. */
+    const snapshotWithRegime = {
+      ...mockSnapshot,
+      daily: {
+        ...mockSnapshot.daily,
+        regime: 'ranging',
+        daily_score: 20.0,
+      },
+    };
+
+    it('banner renders when headerContributions has at least one non-null entry', () => {
+      vi.mocked(useSnapshot).mockReturnValue({
+        data: snapshotWithRegime,
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useSnapshot>);
+      vi.mocked(useScoringRules).mockReturnValue({
+        data: SCORING_RULES_WITH_TIMEFRAME_WEIGHTS,
+      } as unknown as ReturnType<typeof useScoringRules>);
+
+      renderDashboard();
+      // Banner should render with ≈ symbol
+      expect(document.body.textContent).toContain('≈');
+    });
+
+    it('banner hidden when all headerContributions entries are null (no regime)', () => {
+      const snapshotNoRegime = {
+        ...mockSnapshot,
+        daily: {
+          ...mockSnapshot.daily,
+          regime: null,
+          daily_score: null,
+        },
+      };
+      vi.mocked(useSnapshot).mockReturnValue({
+        data: snapshotNoRegime,
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useSnapshot>);
+      vi.mocked(useScoringRules).mockReturnValue({
+        data: SCORING_RULES_WITH_TIMEFRAME_WEIGHTS,
+      } as unknown as ReturnType<typeof useScoringRules>);
+
+      const { container } = renderDashboard();
+      // The cross-section banner div has class "rounded-lg border border-border/60"
+      // which is distinct from the MatrixTable divs. No ≈ should appear.
+      // Note: MatrixTable ≈ symbols may appear if snapshots have contributions_payload
+      // but mockSnapshot does not have contributions_payload, so no ≈ should appear at all.
+      expect(document.body.textContent).not.toContain('≈');
+    });
+
+    it('banner uses ≈ not = for the cross-section total', () => {
+      vi.mocked(useSnapshot).mockReturnValue({
+        data: snapshotWithRegime,
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useSnapshot>);
+      vi.mocked(useScoringRules).mockReturnValue({
+        data: SCORING_RULES_WITH_TIMEFRAME_WEIGHTS,
+      } as unknown as ReturnType<typeof useScoringRules>);
+
+      renderDashboard();
+      expect(document.body.textContent).toContain('≈');
+      // The banner should NOT use bare = (it uses ≈)
+      // We assert ≈ is present — the prototype used = but the real implementation uses ≈
+    });
   });
 });

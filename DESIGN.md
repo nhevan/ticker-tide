@@ -1650,6 +1650,31 @@ For `indicator === "macd_line"` the panel renders a 7-step trace adapted to MACD
 - **No `rsi_zone_label` analogue** — z-score bands are computed inline in the explainer from `z`; we do not persist a zone label string for MACD.
 - **No regime sign-flip** — RSI's score sign flips in `trending` regime (continuation logic). MACD's z-score mapping is regime-invariant, so the mapping chart has only one active curve (no dashed counterfactual line).
 
+### 15.4b Section equation row and cross-section banner
+
+**Section equation row.** Each `MatrixTable` section (daily, weekly, monthly) renders a compact one-line equation below the title and above the table:
+
+```
+≈ ▲19.5 + ▲8.4 + ▼3.2 (+ 18 others) ≈ +100.0
+```
+
+The row decomposes the timeframe's `contributions_payload.items` into top-N items (sorted by `abs(contribution)` descending) plus a collapsed "+ N others" suffix. The total on the right comes from `headerContribution.score` (the timeframe's pre-blend authoritative score, e.g. `daily_score` for daily). This is intentionally NOT the sum of items — the `≈` symbol acknowledges the approximation gap from sector adjustment and clamping (same gap described in `approximation_caveat`).
+
+All three `kind` values (`indicator`, `pattern`, `aggregate`) are included so the approximation gap is minimized visually. Item names are shown as raw strings (no humanization in this version).
+
+- The row is hidden when `contributions_payload` is null (e.g. monthly timeframe, which has no persisted payload yet) or when `headerContribution` is null.
+- `topN` is sourced from `scoringRules.equation_summary_top_n`, which comes from `config/web.json → equation.equation_summary_top_n` (default 5) via `/api/scoring-rules`.
+
+**Cross-section banner.** Above the three `MatrixTable` blocks, a one-line banner shows the per-timeframe weighted contributions summing to the final blended score:
+
+```
+▲10.0 (daily) + ▲44.9 (weekly) + ▲3.0 (monthly) ≈ +57.9 (final blended)
+```
+
+Each part = `headerContribution.weight × headerContribution.score` for that timeframe. The banner also uses `≈` (not `=`) because Python-side clamping means the sum of redistributed-weight parts does not exactly reproduce `final_score`. The banner is hidden when all three `headerContributions` entries are null.
+
+**Monthly asymmetry.** The per-section monthly equation row is hidden today because `contributions_payload` is not yet persisted for monthly rows. The cross-section banner still includes monthly because `headerContributions.monthly` is derivable from `snapshot.monthly.composite_score` and the redistributed timeframe weight — no payload needed. This asymmetry is intentional and will resolve naturally when monthly `contributions_payload` is wired.
+
 ### 15.6 Other indicators
 
 All indicators other than `rsi_14` and `macd_line` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.

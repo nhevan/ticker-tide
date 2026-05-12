@@ -1245,4 +1245,250 @@ describe('MatrixTable', () => {
       expect(heading.textContent).not.toContain('%');
     });
   });
+
+  describe('section equation row', () => {
+    /** Build a minimal Snapshot with a daily contributions_payload. */
+    function makeSnapshotForEquation(items: ContributionItem[]): Snapshot {
+      return {
+        daily: {
+          data_available: true,
+          categories: [
+            'trend', 'momentum', 'volume', 'volatility',
+            'candlestick', 'structural', 'sentiment', 'fundamental', 'macro',
+          ],
+          resolved_period: '2026-05-12',
+          contributions_payload: { expansion_factor: 1.5, items },
+          rsi_sparkline: [],
+        },
+        weekly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+        monthly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+      } as Snapshot;
+    }
+
+    const SCORING_RULES_WITH_TOP5 = {
+      rsi: {
+        thresholds: { oversold: 30, overbought: 70 },
+        scoring_method: 'percentile_blended_with_fallback',
+        fallback_zones: [],
+        profile_zones: [],
+      },
+      regime_weights: {},
+      score_expansion_factor: 1.5,
+      approximation_caveat: '',
+      timeframe_weights: {},
+      equation_summary_top_n: 5,
+    };
+
+    it('renders equation row when contributions_payload and headerContribution are provided', () => {
+      const items: ContributionItem[] = [
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 50, raw_value: 50, category_weight: 0.2, contribution: 5.0 },
+        { name: 'macd_line', category: 'trend', kind: 'indicator', score: 60, raw_value: 60, category_weight: 0.25, contribution: 8.0 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: 20.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      // ≈ symbol should appear in the equation row
+      expect(document.body.textContent).toContain('≈');
+    });
+
+    it('equation row is hidden when contributions_payload is absent', () => {
+      const snapshot: Snapshot = {
+        daily: {
+          data_available: true,
+          categories: [
+            'trend', 'momentum', 'volume', 'volatility',
+            'candlestick', 'structural', 'sentiment', 'fundamental', 'macro',
+          ],
+          resolved_period: '2026-05-12',
+          // contributions_payload intentionally absent
+          rsi_sparkline: [],
+        },
+        weekly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'candlestick', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+        monthly: {
+          data_available: false,
+          categories: ['trend', 'momentum', 'volume', 'volatility', 'structural'],
+          resolved_period: null,
+          resolved_period_label: null,
+          is_fallback: false,
+        },
+      };
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: 20.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      // No equation-specific content (no standalone ≈ followed by contribution chips)
+      // The header math chain also has = sign but not ≈ — only the equation row uses ≈
+      expect(document.body.textContent).not.toContain('≈');
+    });
+
+    it('equation row is hidden when headerContribution is null', () => {
+      const items: ContributionItem[] = [
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 50, raw_value: 50, category_weight: 0.2, contribution: 5.0 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={null}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      expect(document.body.textContent).not.toContain('≈');
+    });
+
+    it('renders "+ N others" suffix when items > topN', () => {
+      const items: ContributionItem[] = [
+        { name: 'a', category: 'trend', kind: 'indicator', score: 60, raw_value: 60, category_weight: 0.2, contribution: 10.0 },
+        { name: 'b', category: 'trend', kind: 'indicator', score: 55, raw_value: 55, category_weight: 0.2, contribution: 9.0 },
+        { name: 'c', category: 'trend', kind: 'indicator', score: 50, raw_value: 50, category_weight: 0.2, contribution: 8.0 },
+        { name: 'd', category: 'trend', kind: 'indicator', score: 45, raw_value: 45, category_weight: 0.2, contribution: 7.0 },
+        { name: 'e', category: 'trend', kind: 'indicator', score: 40, raw_value: 40, category_weight: 0.2, contribution: 6.0 },
+        { name: 'f', category: 'trend', kind: 'indicator', score: 35, raw_value: 35, category_weight: 0.2, contribution: 5.0 },
+        { name: 'g', category: 'trend', kind: 'indicator', score: 30, raw_value: 30, category_weight: 0.2, contribution: 4.0 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: 50.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      // 7 items, topN=5 → "2 others"
+      expect(document.body.textContent).toContain('2 others');
+    });
+
+    it('total rendered equals headerContribution.score, NOT sum of items', () => {
+      // sum of items = 5 + 3 = 8, but headerContribution.score = 15 (diverges by ≥0.5)
+      const items: ContributionItem[] = [
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 50, raw_value: 50, category_weight: 0.2, contribution: 5.0 },
+        { name: 'macd_line', category: 'trend', kind: 'indicator', score: 30, raw_value: 30, category_weight: 0.2, contribution: 3.0 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: 15.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      // The total shown should be 15.0, not 8.0
+      expect(document.body.textContent).toContain('15.0');
+      // Ensure 8.0 is NOT present as a total (the individual contributions 5.0 and 3.0 are fine)
+      // We check the equation total suffix: "+15.0" should appear
+      expect(document.body.textContent).toContain('+15.0');
+    });
+
+    it('≈ symbol appears in equation row text', () => {
+      const items: ContributionItem[] = [
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 50, raw_value: 50, category_weight: 0.2, contribution: 5.0 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 60.5 }}
+          indicatorScores={{ rsi_14: 57 }}
+          signalDirection={1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: 10.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      expect(document.body.textContent).toContain('≈');
+    });
+
+    it('negative contributions render with ▼ glyph in the equation row', () => {
+      const items: ContributionItem[] = [
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: -40, raw_value: -40, category_weight: 0.2, contribution: -4.5 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 35 }}
+          indicatorScores={{ rsi_14: -40 }}
+          signalDirection={-1}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: -10.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      expect(document.body.textContent).toContain('▼');
+    });
+
+    it('zero contribution items render 0.0', () => {
+      const items: ContributionItem[] = [
+        { name: 'rsi_14', category: 'momentum', kind: 'indicator', score: 0, raw_value: 0, category_weight: 0.2, contribution: 0 },
+      ];
+      const snapshot = makeSnapshotForEquation(items);
+      render(
+        <MatrixTable
+          title="Daily — Indicator Agreement"
+          indicators={{ rsi_14: 50 }}
+          indicatorScores={{ rsi_14: 0 }}
+          signalDirection={0}
+          timeframe="daily"
+          snapshot={snapshot}
+          headerContribution={{ weight: 0.60, score: 0.0 }}
+          scoringRules={SCORING_RULES_WITH_TOP5}
+        />,
+      );
+      // 0 contribution → "0.0" in muted text
+      expect(document.body.textContent).toContain('0.0');
+    });
+  });
 });

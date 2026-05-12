@@ -8,5 +8,6 @@
   "why_bullets": {"limit": 3},
   "signal_flip_lookback_days": 14,
   "pattern_row_limit": 5,
-  "verdict": {"max_lines": 5}
+  "verdict": {"max_lines": 5},
+  "equation": {"equation_summary_top_n": 5}
 }

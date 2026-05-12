@@ -21,6 +21,7 @@ import { useSnapshot } from '@/lib/hooks/useSnapshot';
 import { useScoringRules } from '@/lib/hooks/useScoringRules';
 import { ApiError } from '@/lib/api/client';
 import { computeTimeframeHeaderContributions } from '@/lib/scoring/timeframeHeaderContribution';
+import { summarizeCrossSection } from '@/lib/scoring/equationSummary';
 
 /**
  * Map a numeric composite score to a numeric direction for the indicator matrix.
@@ -89,6 +90,17 @@ export function DashboardPage() {
     [snapshot, scoringRules],
   );
 
+  /**
+   * Cross-section banner data: per-timeframe (weight × score) parts and total.
+   * Uses ≈ because the sum of parts does not exactly equal final_score due to
+   * Python-side clamping at scoring time.
+   * Null when all headerContributions entries are null/non-finite.
+   */
+  const crossSectionData = useMemo(
+    () => summarizeCrossSection(headerContributions),
+    [headerContributions],
+  );
+
   function handleLoad() {
     if (!inputTicker || !inputDate) return;
     setLoadedTicker(inputTicker);
@@ -152,6 +164,44 @@ export function DashboardPage() {
               snapshot={snapshot}
             />
             <div className="mb-4 space-y-4">
+              {crossSectionData && (
+                <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground tabular-nums">
+                  {crossSectionData.parts.map((part, idx) => {
+                    const tone =
+                      part.value > 0
+                        ? 'text-[hsl(var(--up))]'
+                        : part.value < 0
+                          ? 'text-[hsl(var(--down))]'
+                          : 'text-muted-foreground';
+                    const mag = Math.abs(part.value).toFixed(1);
+                    const sign = part.value < 0 ? '−' : '+';
+                    return (
+                      <span key={part.label}>
+                        {idx === 0 ? (
+                          <span className={`${tone} font-semibold`}>
+                            {sign}
+                            {mag}
+                          </span>
+                        ) : (
+                          <>
+                            <span className="mx-1.5">{sign}</span>
+                            <span className={`${tone} font-semibold`}>{mag}</span>
+                          </>
+                        )}
+                        <span className="text-[10px] text-muted-foreground ml-0.5">
+                          ({part.label})
+                        </span>
+                      </span>
+                    );
+                  })}
+                  <span className="mx-2">≈</span>
+                  <span className="font-semibold">
+                    {crossSectionData.total >= 0 ? '+' : '−'}
+                    {Math.abs(crossSectionData.total).toFixed(1)}
+                  </span>
+                  <span className="ml-2 text-[10px] text-muted-foreground">(final blended)</span>
+                </div>
+              )}
               <MatrixTable
                 title="Daily — Indicator Agreement"
                 indicators={snapshot.daily.indicators}

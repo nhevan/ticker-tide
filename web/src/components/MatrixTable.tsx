@@ -15,6 +15,7 @@
  */
 
 import { useState, useMemo, Fragment, type ReactNode } from 'react';
+import { summarizeSectionContributions } from '@/lib/scoring/equationSummary';
 import { INDICATOR_CATEGORY_MAP, INDICATOR_DISPLAY_LABELS } from '@/lib/scoring/categoryMap';
 import type { Category } from '@/lib/scoring/categoryMap';
 import { humanizePatternName } from '@/lib/scoring/patternLabels';
@@ -107,6 +108,7 @@ const PATTERN_CATEGORIES: Array<'candlestick' | 'structural'> = ['candlestick', 
 const AGGREGATE_CATEGORIES: Array<'sentiment' | 'fundamental' | 'macro'> = [
   'sentiment', 'fundamental', 'macro',
 ];
+
 
 /**
  * Render the Variant C header math chain for a timeframe section title.
@@ -477,6 +479,35 @@ export function MatrixTable({
     return map;
   }, [snapshot?.daily?.contributions_payload, snapshot?.weekly?.contributions_payload, timeframe]);
 
+  /**
+   * Section equation data: top-N contribution items + others count/sum + total.
+   * Dispatches on timeframe — does NOT use bracket notation on snapshot.
+   * topN comes from scoringRules?.equation_summary_top_n; falls back to null
+   * when scoringRules is absent (equation row stays hidden).
+   */
+  const sectionEquationData = useMemo(() => {
+    const topN = scoringRules?.equation_summary_top_n;
+    if (topN === undefined || topN === null) return null;
+    if (!Number.isFinite(headerContribution?.score ?? null)) return null;
+    const target = headerContribution?.score ?? null;
+    let items;
+    if (timeframe === 'daily') {
+      items = snapshot?.daily?.contributions_payload?.items;
+    } else if (timeframe === 'weekly') {
+      items = snapshot?.weekly?.contributions_payload?.items;
+    } else {
+      items = snapshot?.monthly?.contributions_payload?.items;
+    }
+    return summarizeSectionContributions(items, target, topN);
+  }, [
+    snapshot?.daily?.contributions_payload,
+    snapshot?.weekly?.contributions_payload,
+    snapshot?.monthly?.contributions_payload,
+    headerContribution,
+    scoringRules?.equation_summary_top_n,
+    timeframe,
+  ]);
+
   /** Toggle the explainer panel for an indicator row. Same row collapses; different row replaces.
    *  Indicators without a real explainer (i.e. not in INDICATORS_WITH_EXPLAINER) are no-ops at
    *  the function boundary — belt-and-suspenders even though the JSX also gates the onClick. */
@@ -495,6 +526,45 @@ export function MatrixTable({
         {title}
         {renderHeaderContribution(headerContribution)}
       </h3>
+      {sectionEquationData && (
+        <div className="mb-3 text-[11px] text-muted-foreground leading-relaxed tabular-nums">
+          {sectionEquationData.topItems.map((item, idx) => {
+            const tone =
+              item.value > 0
+                ? 'text-[hsl(var(--up))]'
+                : item.value < 0
+                  ? 'text-[hsl(var(--down))]'
+                  : 'text-muted-foreground';
+            const mag = Math.abs(item.value).toFixed(1);
+            if (idx === 0) {
+              const sign = item.value < 0 ? '−' : '+';
+              return (
+                <span key={item.label} className={`${tone} font-semibold`}>
+                  {sign}
+                  {mag}
+                </span>
+              );
+            }
+            const sep = item.value < 0 ? '−' : '+';
+            return (
+              <Fragment key={item.label}>
+                <span className="mx-1 text-muted-foreground">{sep}</span>
+                <span className={`${tone} font-semibold`}>{mag}</span>
+              </Fragment>
+            );
+          })}
+          {sectionEquationData.othersCount > 0 && (
+            <span className="ml-2 text-muted-foreground">
+              (+ {sectionEquationData.othersCount} others)
+            </span>
+          )}
+          <span className="mx-2">≈</span>
+          <span className="font-semibold">
+            {sectionEquationData.total >= 0 ? '+' : '−'}
+            {Math.abs(sectionEquationData.total).toFixed(1)}
+          </span>
+        </div>
+      )}
 
       {!hasData ? (
         <p className="text-sm text-muted-foreground">Indicator scores not available</p>
