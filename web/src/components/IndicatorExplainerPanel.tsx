@@ -14,6 +14,7 @@ import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import { RsiMappingChart } from '@/components/RsiMappingChart';
 import { CategoryShareBar } from '@/components/CategoryShareBar';
 import { MacdTrendChart } from '@/components/MacdTrendChart';
+import { MacdMappingChart } from '@/components/MacdMappingChart';
 import { CategoryWeightBar } from '@/components/CategoryWeightBar';
 import { ContributionMathChain } from '@/components/ContributionMathChain';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
@@ -198,7 +199,25 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
           </StepCard>
         );
       })()}
-      <StepCard stepNumber={4} heading="MACD line score" unavailable />
+      {/* Step 4 — MACD line score (mapping chart).
+          Renders the active scoring function (z-score curve with profile, or
+          linear fallback) with today's value marked. Requires the persisted
+          score; falls back to unavailable when absent. */}
+      {(() => {
+        const score = daily.indicator_scores?.['macd_line'];
+        if (typeof score !== 'number' || !Number.isFinite(score)) {
+          return <StepCard stepNumber={4} heading="MACD line score" unavailable />;
+        }
+        return (
+          <StepCard stepNumber={4} heading="MACD line score">
+            <MacdMappingChart
+              profile={daily.macd_line_profile ?? null}
+              today={macdValue}
+              score={score}
+            />
+          </StepCard>
+        );
+      })()}
       {/* Step 5 — Magnitude share in trend.
           Uses the generalised CategoryShareBar (renamed from MomentumShareBar);
           caller filters items to category === 'trend'. Falls back to unavailable
