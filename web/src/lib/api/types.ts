@@ -152,6 +152,8 @@ export interface DailySection {
   regime?: string | null;
   /** Per-ticker RSI percentile profile, or null if no profile exists. */
   rsi_profile?: RsiProfile | null;
+  /** Per-ticker MACD line z-score profile (mean + std), or null if absent. */
+  macd_line_profile?: { mean: number; std: number } | null;
   /** Zone label string from zone_label_for_rsi(), or null if RSI unavailable. */
   rsi_zone_label?: string | null;
   /** Parsed key_signals_data payload, or null for legacy rows. */
@@ -163,6 +165,18 @@ export interface DailySection {
    * never null, never absent. Configured via web.json sparkline.rsi_sparkline_days (default 100).
    */
   rsi_sparkline?: { date: string; value: number }[];
+  /**
+   * Last N working days of MACD line / signal / histogram values for this ticker,
+   * ordered ascending by date, bounded by the picked date. Rows with macd_line IS
+   * NULL are excluded. signal and histogram are independently nullable (may be null
+   * within a row). Configured via web.json sparkline.macd_sparkline_days (default 100).
+   */
+  macd_sparkline?: {
+    date: string;
+    macd_line: number;
+    signal: number | null;
+    histogram: number | null;
+  }[];
 }
 
 /** Weekly or monthly snapshot card data. */

@@ -136,6 +136,7 @@ def fetch_snapshot(
     weekly_weeks = sparkline_cfg.get("weekly_weeks", 6)
     monthly_months = sparkline_cfg.get("monthly_months", 6)
     rsi_sparkline_days = sparkline_cfg.get("rsi_sparkline_days", 100)
+    macd_sparkline_days = sparkline_cfg.get("macd_sparkline_days", 100)
 
     why_limit = config.get("why_bullets", {}).get("limit", 3)
     signal_flip_lookback = config.get("signal_flip_lookback_days", 14)
@@ -150,6 +151,7 @@ def fetch_snapshot(
             pattern_row_limit=pattern_row_limit,
             scorer_config=resolved_scorer_config,
             rsi_sparkline_days=rsi_sparkline_days,
+            macd_sparkline_days=macd_sparkline_days,
         ),
         "weekly": _build_weekly_section(
             conn, ticker, picked_date, weekly_weeks,
@@ -199,6 +201,7 @@ def _build_daily_section(
     pattern_row_limit: int = 5,
     scorer_config: Optional[dict] = None,
     rsi_sparkline_days: int = 100,
+    macd_sparkline_days: int = 100,
 ) -> dict[str, Any]:
     """
     Build the daily card data for a ticker and exact date.
@@ -263,6 +266,7 @@ def _build_daily_section(
     )
     sparkline = _fetch_daily_sparkline(conn, ticker, picked_date, sparkline_days)
     rsi_sparkline = _fetch_rsi_sparkline(conn, ticker, picked_date, rsi_sparkline_days)
+    macd_sparkline = _fetch_macd_sparkline(conn, ticker, picked_date, macd_sparkline_days)
     key_signals = _extract_key_signals(score_dict, limit=why_limit)
     earnings = _fetch_earnings(conn, ticker, picked_date)
     signal_flip = _fetch_signal_flip(
@@ -273,6 +277,7 @@ def _build_daily_section(
     # RSI explainer fields.
     regime = score_dict.get("regime")
     rsi_profile = _fetch_rsi_profile(conn, ticker)
+    macd_line_profile = _fetch_macd_line_profile(conn, ticker)
     rsi_value = indicators.get("rsi_14") if indicators else None
     rsi_zone_label: Optional[str]
     if rsi_value is not None:
@@ -299,6 +304,7 @@ def _build_daily_section(
         "recent_patterns": recent_patterns,
         "sparkline": sparkline,
         "rsi_sparkline": rsi_sparkline,
+        "macd_sparkline": macd_sparkline,
         "signal": score_dict.get("signal"),
         "confidence": score_dict.get("confidence"),
         "calibrated_score": score_dict.get("calibrated_score"),
@@ -310,6 +316,7 @@ def _build_daily_section(
         "indicator_scores": indicator_scores,
         "regime": regime,
         "rsi_profile": rsi_profile,
+        "macd_line_profile": macd_line_profile,
         "rsi_zone_label": rsi_zone_label,
         "contributions_payload": contributions_payload,
     }
@@ -533,6 +540,37 @@ def _fetch_rsi_profile(
         "mean": row["mean"],
         "std": row["std"],
     }
+
+
+def _fetch_macd_line_profile(
+    conn: sqlite3.Connection,
+    ticker: str,
+) -> Optional[dict]:
+    """
+    Fetch the macd_line z-score profile from indicator_profiles for a ticker.
+
+    MACD scoring uses z-score normalisation (mean + std), unlike RSI which
+    uses percentiles. Returns a dict with mean + std keys, or None if no
+    profile row exists for this ticker and indicator.
+
+    Parameters:
+        conn:   Open SQLite connection with row_factory=sqlite3.Row.
+        ticker: Ticker symbol.
+
+    Returns:
+        Profile dict with mean and std, or None.
+    """
+    try:
+        row = conn.execute(
+            "SELECT mean, std FROM indicator_profiles "
+            "WHERE ticker = ? AND indicator = 'macd_line'",
+            (ticker,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    return {"mean": row["mean"], "std": row["std"]}
 
 
 def _fetch_weekly_indicator_scores(
@@ -954,6 +992,48 @@ def _fetch_rsi_sparkline(
     )
     rows = cur.fetchall()
     return [{"date": r["date"], "value": float(r["rsi_14"])} for r in reversed(rows)]
+
+
+def _fetch_macd_sparkline(
+    conn: sqlite3.Connection,
+    ticker: str,
+    picked_date: str,
+    num_days: int,
+) -> list[dict[str, Any]]:
+    """
+    Fetch the last num_days MACD line / signal / histogram values from
+    indicators_daily for a ticker up to and including picked_date.
+
+    Excludes rows where macd_line IS NULL (insufficient bars for the 26-EMA);
+    signal and histogram are independently nullable and are emitted as None
+    when null.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        picked_date: Upper-bound date (YYYY-MM-DD).
+        num_days: Maximum number of rows to return.
+
+    Returns:
+        List of dicts with keys: date (str), macd_line (float),
+        signal (float | None), histogram (float | None). Empty list if no data.
+    """
+    cur = conn.execute(
+        "SELECT date, macd_line, macd_signal, macd_histogram FROM indicators_daily "
+        "WHERE ticker = ? AND date <= ? AND macd_line IS NOT NULL "
+        "ORDER BY date DESC LIMIT ?",
+        (ticker, picked_date, num_days),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "date": r["date"],
+            "macd_line": float(r["macd_line"]),
+            "signal": float(r["macd_signal"]) if r["macd_signal"] is not None else None,
+            "histogram": float(r["macd_histogram"]) if r["macd_histogram"] is not None else None,
+        }
+        for r in reversed(rows)
+    ]
 
 
 def _fetch_monthly_sparkline(

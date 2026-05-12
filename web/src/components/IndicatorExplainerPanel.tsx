@@ -12,7 +12,9 @@
 import { RsiTrendChart } from '@/components/RsiTrendChart';
 import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
 import { RsiMappingChart } from '@/components/RsiMappingChart';
-import { MomentumShareBar } from '@/components/MomentumShareBar';
+import { CategoryShareBar } from '@/components/CategoryShareBar';
+import { MacdTrendChart } from '@/components/MacdTrendChart';
+import { MacdMappingChart } from '@/components/MacdMappingChart';
 import { CategoryWeightBar } from '@/components/CategoryWeightBar';
 import { ContributionMathChain } from '@/components/ContributionMathChain';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
@@ -67,7 +69,235 @@ function StepCard({
   );
 }
 
-/** Placeholder shown for indicators other than rsi_14. */
+/**
+ * Render the 7-step MACD line trace.
+ *
+ * Scaffold only — Step 1 renders the real raw reading + interpretation;
+ * steps 2–7 are placeholder cards to be filled in per-step follow-up branches.
+ *
+ * Step 1 reads three raw values from `snapshot.daily.indicators`:
+ *   - macd_line, macd_signal, macd_histogram.
+ * Each is independently guarded with `Number.isFinite` because the DB columns
+ * are nullable (NaN → NULL is applied during indicator persistence).
+ */
+function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
+  const daily = snapshot.daily;
+  const regime = daily.regime ?? 'ranging';
+  const macdRaw = daily.indicators?.macd_line;
+  const signalRaw = daily.indicators?.macd_signal;
+  const histRaw = daily.indicators?.macd_histogram;
+
+  const macdValue = typeof macdRaw === 'number' && Number.isFinite(macdRaw) ? macdRaw : null;
+  const signalValue = typeof signalRaw === 'number' && Number.isFinite(signalRaw) ? signalRaw : null;
+  const histValue = typeof histRaw === 'number' && Number.isFinite(histRaw) ? histRaw : null;
+
+  if (macdValue === null || signalValue === null || histValue === null) {
+    return (
+      <div className="border-t border-border/40 bg-card px-4 py-3">
+        <StepCard stepNumber={1} heading="MACD line reading">
+          MACD not fully available for this date.
+        </StepCard>
+      </div>
+    );
+  }
+
+  const lineAboveSignal = macdValue > signalValue;
+  const histPositive = histValue > 0;
+  const bullish = lineAboveSignal && histPositive;
+  const bearish = !lineAboveSignal && !histPositive;
+  const verdict = bullish
+    ? 'a bullish MACD configuration'
+    : bearish
+      ? 'a bearish MACD configuration'
+      : 'a mixed MACD configuration';
+  const positionPhrase = lineAboveSignal ? 'above signal' : 'below signal';
+  const histPhrase = histPositive ? 'histogram is positive' : 'histogram is negative';
+
+  return (
+    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-2">
+      <StepCard stepNumber={1} heading="MACD line reading">
+        <div>
+          <span className="font-medium">Reading.</span> MACD line{' '}
+          <span className="font-mono">{macdValue.toFixed(2)}</span>, signal{' '}
+          <span className="font-mono">{signalValue.toFixed(2)}</span>, histogram{' '}
+          <span className="font-mono">{histValue.toFixed(2)}</span>.
+        </div>
+        <div className="mt-1">
+          <span className="font-medium">Interpretation.</span> Line sits {positionPhrase} and{' '}
+          {histPhrase} — {verdict}.
+        </div>
+      </StepCard>
+      {/* Step 2 — Trend chart.
+          Classic MACD: histogram bars (green ≥0, red <0) overlaid with
+          MACD line (solid) + signal line (dashed) on a zero baseline. */}
+      <StepCard stepNumber={2} heading="MACD trend">
+        <MacdTrendChart data={daily.macd_sparkline ?? []} />
+      </StepCard>
+      {/* Step 3 — Scoring path.
+          MACD uses z-score normalisation (when a per-ticker profile exists)
+          or a linear fallback (score = clamp(value × 20, ±100)) otherwise.
+          We do not generalise RsiPercentileStrip here because MACD doesn't
+          map onto a percentile metaphor — the scoring shape is fundamentally
+          different from RSI's. */}
+      {(() => {
+        const profile = daily.macd_line_profile ?? null;
+        if (profile && profile.std > 0) {
+          const z = (macdValue - profile.mean) / profile.std;
+          const zoneLabel =
+            z > 2
+              ? 'strongly bullish (z > 2)'
+              : z > 1
+                ? 'moderately bullish (1 < z ≤ 2)'
+                : z >= -1
+                  ? 'neutral band (−1 ≤ z ≤ 1)'
+                  : z >= -2
+                    ? 'moderately bearish (−2 ≤ z < −1)'
+                    : 'strongly bearish (z < −2)';
+          return (
+            <StepCard stepNumber={3} heading="Scoring path">
+              <p className="mb-2">
+                <span className="font-medium">Profile path (z-score).</span> This ticker has enough
+                MACD history for the engine to use its own distribution rather than the linear
+                fallback.
+              </p>
+              <div className="font-mono text-[10px] space-y-0.5">
+                <div className="text-muted-foreground">z = (MACD − mean) ÷ std</div>
+                <div className="text-foreground">
+                  = ({macdValue.toFixed(2)} − {profile.mean.toFixed(2)}) ÷ {profile.std.toFixed(2)}
+                </div>
+                <div className="text-foreground">
+                  = {(macdValue - profile.mean).toFixed(2)} ÷ {profile.std.toFixed(2)}
+                </div>
+                <div>
+                  = <span className="text-foreground font-semibold">{z.toFixed(2)}</span>
+                </div>
+              </div>
+              <p className="mt-2">
+                z falls in the <span className="text-primary font-medium">{zoneLabel}</span> band.
+              </p>
+              <p className="mt-2 text-[9px] text-muted-foreground italic">
+                <span className="not-italic font-mono">mean</span> and{' '}
+                <span className="not-italic font-mono">std</span> are this ticker's own MACD line
+                distribution over a rolling 504 trading-day (~2-year) window, sourced from{' '}
+                <span className="not-italic font-mono">indicator_profiles</span>. Z-scoring against
+                the ticker's own history (rather than a fixed cross-stock threshold) accounts for
+                MACD's price-dependent scale.
+              </p>
+            </StepCard>
+          );
+        }
+        return (
+          <StepCard stepNumber={3} heading="Scoring path">
+            <p className="mb-2">
+              <span className="font-medium">Fallback path (linear).</span> No per-ticker MACD
+              profile is available, so the engine falls back to a magnitude-scaled mapping.
+            </p>
+            <div className="font-mono text-[10px] space-y-0.5">
+              <div className="text-muted-foreground">score = clamp(MACD × 20, −100, +100)</div>
+              <div className="text-foreground">
+                = clamp({macdValue.toFixed(2)} × 20, −100, +100)
+              </div>
+              <div>
+                ={' '}
+                <span className="text-foreground font-semibold">
+                  {Math.max(-100, Math.min(100, macdValue * 20)).toFixed(1)}
+                </span>
+              </div>
+            </div>
+          </StepCard>
+        );
+      })()}
+      {/* Step 4 — MACD line score (mapping chart).
+          Renders the active scoring function (z-score curve with profile, or
+          linear fallback) with today's value marked. Requires the persisted
+          score; falls back to unavailable when absent. */}
+      {(() => {
+        const score = daily.indicator_scores?.['macd_line'];
+        if (typeof score !== 'number' || !Number.isFinite(score)) {
+          return <StepCard stepNumber={4} heading="MACD line score" unavailable />;
+        }
+        return (
+          <StepCard stepNumber={4} heading="MACD line score">
+            <MacdMappingChart
+              profile={daily.macd_line_profile ?? null}
+              today={macdValue}
+              score={score}
+            />
+          </StepCard>
+        );
+      })()}
+      {/* Step 5 — Magnitude share in trend.
+          Uses the generalised CategoryShareBar (renamed from MomentumShareBar);
+          caller filters items to category === 'trend'. Falls back to unavailable
+          when contributions_payload is missing. */}
+      {(() => {
+        const contributions = daily.contributions_payload ?? null;
+        if (!contributions) {
+          return <StepCard stepNumber={5} heading="Magnitude share in trend" unavailable />;
+        }
+        return (
+          <StepCard stepNumber={5} heading="Magnitude share in trend">
+            <CategoryShareBar
+              items={contributions.items.filter((item) => item.category === 'trend')}
+              activeName="macd_line"
+              category="trend"
+            />
+          </StepCard>
+        );
+      })()}
+
+      {/* Step 6 — Category weight × expansion.
+          Reuses CategoryWeightBar verbatim (already generic over any category).
+          activeName="trend" because macd_line's home category is trend. */}
+      {rules?.regime_weights && rules.regime_weights[regime] ? (
+        <StepCard stepNumber={6} heading="Category weight × expansion">
+          <CategoryWeightBar
+            weights={rules.regime_weights[regime]}
+            regime={regime}
+            expansion={rules.score_expansion_factor}
+            activeName="trend"
+          />
+        </StepCard>
+      ) : (
+        <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+      )}
+
+      {/* Step 7 — Net contribution.
+          Reuses ContributionMathChain verbatim (already generic over any indicator).
+          Requires the macd_line item from the persisted contributions payload;
+          falls back to unavailable when contributions or the item is missing. */}
+      {(() => {
+        const contributions = daily.contributions_payload ?? null;
+        const macdItem: ContributionItem | undefined = contributions?.items.find(
+          (item) => item.name === 'macd_line',
+        );
+        if (!contributions || !macdItem) {
+          return <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />;
+        }
+        const trendItems = contributions.items.filter((item) => item.category === 'trend');
+        const denom = trendItems.reduce((acc, item) => acc + Math.abs(item.score), 0);
+        return (
+          <StepCard stepNumber={7} heading="Net contribution to composite">
+            <ContributionMathChain
+              score={macdItem.score}
+              denom={denom}
+              regimeWeight={macdItem.category_weight}
+              expansion={contributions.expansion_factor}
+              finalContribution={macdItem.contribution}
+              activeName="macd_line"
+            />
+            <p className="mt-2 text-muted-foreground italic text-[10px]">
+              {rules?.approximation_caveat ??
+                'Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.'}
+            </p>
+          </StepCard>
+        );
+      })()}
+    </div>
+  );
+}
+
+/** Placeholder shown for indicators other than rsi_14 and macd_line. */
 function PlaceholderPanel({ indicator }: { indicator: string }) {
   return (
     <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-muted-foreground">
@@ -109,7 +339,7 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
   );
 
   return (
-    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-0">
+    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-2">
       {/* Step 1 — Raw value */}
       <StepCard stepNumber={1} heading="RSI(14) reading">
         RSI is {rsiValue.toFixed(1)}.
@@ -211,9 +441,10 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
               <StepCard stepNumber={5} heading="Magnitude share in momentum">
                 {/* activeName hardcoded here because this panel only renders for rsi_14;
                     the component itself supports any active indicator. */}
-                <MomentumShareBar
+                <CategoryShareBar
                   items={contributions.items.filter((item) => item.category === 'momentum')}
                   activeName="rsi_14"
+                  category="momentum"
                 />
               </StepCard>
 
@@ -283,6 +514,9 @@ export function IndicatorExplainerPanel({
 }: IndicatorExplainerPanelProps) {
   if (indicator === 'rsi_14') {
     return <RsiPanel snapshot={snapshot} rules={rules} />;
+  }
+  if (indicator === 'macd_line') {
+    return <MacdLinePanel snapshot={snapshot} rules={rules} />;
   }
   return <PlaceholderPanel indicator={indicator} />;
 }

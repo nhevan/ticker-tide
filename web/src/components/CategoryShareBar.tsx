@@ -1,14 +1,15 @@
 /**
- * MomentumShareBar — stacked horizontal bar showing how much each momentum
- * indicator contributes to the magnitude-weighted category rollup.
+ * CategoryShareBar — stacked horizontal bar showing how much each indicator in
+ * a single scoring category contributes to that category's magnitude rollup.
  *
  * Each non-zero indicator gets a segment proportional to |score| / Σ|score|.
- * The active indicator (e.g. 'rsi_14' when viewing the RSI explainer) is
- * highlighted in primary color. Zero-score indicators are listed separately
- * below the bar so the user can see them without inflating the visual.
+ * The active indicator (e.g. 'rsi_14' when viewing the RSI explainer, or
+ * 'macd_line' for MACD) is highlighted in primary color. Zero-score indicators
+ * are listed separately below the bar so the user can see them without
+ * inflating the visual.
  *
  * Below the bar:
- *   - A headline sentence "{active} accounts for X% of the absolute momentum signal"
+ *   - A headline sentence "{active} accounts for X% of the absolute {category} signal"
  *     (only when activeName matches an item with non-zero score).
  *   - One row per non-zero indicator with name, share%, and the |score|/denom math.
  *   - A divider, then the symbolic-first denominator expansion:
@@ -18,29 +19,32 @@
  *       = 246.4
  *
  * Empty/zero cases:
- *   - items.length === 0 → "No momentum components in contributions payload." muted italic.
- *   - All scores zero (denom === 0) → "Share undefined (all momentum components zero)." muted italic.
+ *   - items.length === 0 → "No {category} components in contributions payload." muted italic.
+ *   - All scores zero (denom === 0) → "Share undefined (all {category} components zero)." muted italic.
  *   - activeName not in items → bar renders without a highlighted segment (no headline sentence).
  *
- * @param items - ContributionItems pre-filtered by caller to `category === 'momentum'`.
- *                The component does NOT re-filter; passing other categories breaks the metaphor.
- * @param activeName - Name of the indicator to highlight (e.g. 'rsi_14'). Optional match.
+ * @param items - ContributionItems pre-filtered by caller to a single category.
+ *                The component does NOT re-filter; passing mixed categories breaks the metaphor.
+ * @param activeName - Name of the indicator to highlight (e.g. 'rsi_14', 'macd_line').
+ * @param category - Display name of the category (e.g. 'momentum', 'trend'). Used in prose only.
  * @returns The stacked bar + legend + denominator breakdown, or an empty-state message.
  */
 import type { ContributionItem } from '@/lib/api/types';
 
-interface MomentumShareBarProps {
-  /** ContributionItems pre-filtered to category === 'momentum'. */
+interface CategoryShareBarProps {
+  /** ContributionItems pre-filtered to a single category. */
   items: ContributionItem[];
   /** Name of the active indicator to highlight in primary color. */
   activeName: string;
+  /** Display name of the category (e.g. 'momentum', 'trend'). */
+  category: string;
 }
 
-export function MomentumShareBar({ items, activeName }: MomentumShareBarProps) {
+export function CategoryShareBar({ items, activeName, category }: CategoryShareBarProps) {
   if (items.length === 0) {
     return (
       <p className="text-xs text-muted-foreground italic">
-        No momentum components in contributions payload.
+        No {category} components in contributions payload.
       </p>
     );
   }
@@ -54,7 +58,7 @@ export function MomentumShareBar({ items, activeName }: MomentumShareBarProps) {
   if (denom === 0) {
     return (
       <p className="text-xs text-muted-foreground italic">
-        Share undefined (all momentum components zero).
+        Share undefined (all {category} components zero).
       </p>
     );
   }
@@ -76,7 +80,7 @@ export function MomentumShareBar({ items, activeName }: MomentumShareBarProps) {
           <span className="font-medium text-primary">
             {((Math.abs(activeItem.score) / denom) * 100).toFixed(1)}%
           </span>{' '}
-          of the absolute momentum signal.
+          of the absolute {category} signal.
         </p>
       )}
 

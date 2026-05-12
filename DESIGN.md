@@ -1614,8 +1614,28 @@ Process-static endpoint. Returns:
 
 Requires authentication. Served from `create_app()` closure; value is constant for the process lifetime. After editing `config/scorer.json`, restart the web service.
 
-### 15.5 Other indicators
+### 15.5 MACD line 7-step trace
 
-All indicators other than `rsi_14` render a "Detailed explanation coming soon." placeholder. Future indicators can add zone classifiers in `src/scorer/zone_labels.py` following the `zone_label_for_rsi()` pattern.
+For `indicator === "macd_line"` the panel renders a 7-step trace adapted to MACD's z-score scoring model (vs RSI's percentile zones):
+
+1. **Raw reading** — `snapshot.daily.indicators.macd_line`, `macd_signal`, `macd_histogram` (each independently nullable; UI guards every value with `Number.isFinite`). Rendered as a **Reading** line ("MACD line X, signal Y, histogram Z") and an **Interpretation** line ("Line sits above/below signal and histogram is positive/negative — a bullish / bearish / mixed MACD configuration"). The bullish/bearish/mixed verdict is derived from two booleans: `line > signal` and `histogram > 0`.
+2. **Trend chart** — `MacdTrendChart` (recharts `ComposedChart`). Renders `snapshot.daily.macd_sparkline` as three series sharing one axis: histogram bars (green ≥0, red <0) overlaid with MACD line (solid) and signal line (dashed) on a zero baseline. Symmetric y-domain (`±maxAbs × 1.15`) keeps the baseline visually centered. Window size from `web.json sparkline.macd_sparkline_days` (default 100); shape matches `_fetch_rsi_sparkline` but emits `{date, macd_line, signal, histogram}` rows (signal + histogram independently nullable, `macd_line IS NOT NULL` is the row gate).
+3. **Scoring path** — presence/absence of `snapshot.daily.macd_line_profile` (`{mean, std}` fetched by `_fetch_macd_line_profile` from `indicator_profiles`). Profile path renders the **z-score** derivation `z = (MACD − mean) ÷ std` with substituted values and the resulting band label (strongly/moderately bullish/bearish or neutral around 0). Fallback path renders the **linear** mapping `score = clamp(MACD × 20, −100, +100)`. Inline math (no separate component) — MACD does **not** use `RsiPercentileStrip`; the percentile metaphor does not apply to z-score normalisation, so that component remains RSI-specific.
+4. **Indicator score** — `MacdMappingChart`. Piecewise polyline on a value (x) vs score (y) plane with today's point marked. Profile path: 7 corner points at z ∈ {−3, −2, −1, 0, +1, +2, +3} placed at x = mean + z·std, mapped to scores {−100, −80, −40, 0, +40, +80, +100}. Fallback path: 3 corner points at (−5, −100), (0, 0), (+5, +100) — the `clamp(value × 20, ±100)` curve. The math table beneath the chart walks the substitution in four labelled stages: `MACD value` → `z-score` → `Bracket` → `Position in bracket` → `Base score`, ending with the persisted `Final score` from `snapshot.daily.indicator_scores.macd_line`.
+5. **Magnitude share in trend** — `CategoryShareBar` (generalised from `MomentumShareBar` when this panel was added — the component is now category-agnostic; callers pass items pre-filtered to a single category plus a display-name `category` prop). `|macd_line score| / Σ|score|` across **trend-category** items in the contributions payload (not momentum). `activeName="macd_line"`, `category="trend"` — the latter drives display prose only.
+6. **Category weight × expansion** — `CategoryWeightBar` reused verbatim with `activeName="trend"`. Shows the trend category's weight in the active regime and the score expansion factor, both from `/api/scoring-rules`.
+7. **Net contribution** — `ContributionMathChain` reused verbatim with `activeName="macd_line"`. Denominator `denom` is the **trend-category** |score| sum (not momentum); `contribution`, `category_weight`, and `expansion_factor` are read from the persisted `contributions_payload.items[macd_line]`. Falls back to "unavailable" when the payload is missing or the `macd_line` item is absent (older scoring runs predating trend-category persistence).
+
+#### Why this trace differs from RSI
+
+- **Percentile vs z-score** — MACD raw magnitude scales with the underlying price, so cross-stock thresholds are meaningless. RSI is bounded 0–100 so percentile profiles are natural. The profile schema is the same table (`indicator_profiles`), but MACD only consumes `mean` and `std` whereas RSI consumes p5/p20/p50/p80/p95.
+- **No `rsi_zone_label` analogue** — z-score bands are computed inline in the explainer from `z`; we do not persist a zone label string for MACD.
+- **No regime sign-flip** — RSI's score sign flips in `trending` regime (continuation logic). MACD's z-score mapping is regime-invariant, so the mapping chart has only one active curve (no dashed counterfactual line).
+
+### 15.6 Other indicators
+
+All indicators other than `rsi_14` and `macd_line` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
+
+Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic; per-indicator components (trend chart, scoring path, mapping chart) follow the templates in `Rsi*.tsx` or `Macd*.tsx`.
 
 
