@@ -114,7 +114,7 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
   const histPhrase = histPositive ? 'histogram is positive' : 'histogram is negative';
 
   return (
-    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-0">
+    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-2">
       <StepCard stepNumber={1} heading="MACD line reading">
         <div>
           <span className="font-medium">Reading.</span> MACD line{' '}
