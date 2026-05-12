@@ -172,37 +172,48 @@ export function RsiMappingChart({ profile, today, score, regime }: RsiMappingCha
             <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">RSI value</td>
             <td className="text-foreground">{today.toFixed(1)}</td>
           </tr>
-          <tr>
-            <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Zone</td>
-            <td className="text-foreground">
-              {bracketIndex === 0 ? '0' : `p${[5,20,50,80,95][bracketIndex - 1]}`}
-              {'–'}
-              {bracketIndex === 5 ? '100' : `p${[5,20,50,80,95][bracketIndex]}`}
-              {' ('}{zoneName}{')'}
-            </td>
-          </tr>
-          <tr>
-            <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Position in zone</td>
-            <td className="text-foreground">
-              {(t * 100).toFixed(0)}%{' '}
-              <span className="text-muted-foreground">
-                (= ({today.toFixed(1)} − {zoneLo.x.toFixed(1)}) ÷ ({zoneHi.x.toFixed(1)} − {zoneLo.x.toFixed(1)}) = {(today - zoneLo.x).toFixed(1)} ÷ {(zoneHi.x - zoneLo.x).toFixed(1)})
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Zone score range</td>
-            <td className="text-foreground">{sgn(zoneLo.y)} to {sgn(zoneHi.y)}</td>
-          </tr>
-          <tr>
-            <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Base score</td>
-            <td className="text-foreground">
-              {yToday.toFixed(1)}{' '}
-              <span className="text-muted-foreground">
-                (= {sgn(zoneLo.y)} + {t.toFixed(2)} × ({sgn(zoneHi.y - zoneLo.y)}))
-              </span>
-            </td>
-          </tr>
+          {(() => {
+            // Symbolic labels for zone endpoints. Bracket 0's lower bound is the
+            // absolute floor (0), and bracket 5's upper bound is the absolute
+            // ceiling (100); the four interior boundaries are named percentiles.
+            const PERCENTILE_LABELS = [5, 20, 50, 80, 95];
+            const loLabel = bracketIndex === 0 ? '0' : `p${PERCENTILE_LABELS[bracketIndex - 1]}`;
+            const hiLabel = bracketIndex === 5 ? '100' : `p${PERCENTILE_LABELS[bracketIndex]}`;
+            const loDisplay = bracketIndex === 0 ? '0' : `${loLabel} (${zoneLo.x.toFixed(1)})`;
+            const hiDisplay = bracketIndex === 5 ? '100' : `${hiLabel} (${zoneHi.x.toFixed(1)})`;
+            return (
+              <>
+                <tr>
+                  <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Zone</td>
+                  <td className="text-foreground">
+                    {loDisplay} – {hiDisplay} — {zoneName}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Position in zone</td>
+                  <td className="text-foreground">
+                    {(t * 100).toFixed(0)}%{' '}
+                    <span className="text-muted-foreground">
+                      (= (RSI − {loLabel}) ÷ ({hiLabel} − {loLabel}) = ({today.toFixed(1)} − {zoneLo.x.toFixed(1)}) ÷ ({zoneHi.x.toFixed(1)} − {zoneLo.x.toFixed(1)}) = {(today - zoneLo.x).toFixed(1)} ÷ {(zoneHi.x - zoneLo.x).toFixed(1)})
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Zone score range</td>
+                  <td className="text-foreground">{sgn(zoneLo.y)} to {sgn(zoneHi.y)}</td>
+                </tr>
+                <tr>
+                  <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Base score</td>
+                  <td className="text-foreground">
+                    {yToday.toFixed(1)}{' '}
+                    <span className="text-muted-foreground">
+                      (= score_lo + t × (score_hi − score_lo) = {sgn(zoneLo.y)} + {t.toFixed(2)} × ({sgn(zoneHi.y - zoneLo.y)}))
+                    </span>
+                  </td>
+                </tr>
+              </>
+            );
+          })()}
           <tr>
             <td className="text-muted-foreground pr-3 align-top whitespace-nowrap">Regime</td>
             <td className="text-foreground">{regime} ({regimeNote})</td>
