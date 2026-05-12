@@ -890,14 +890,14 @@ def test_indicator_profiles_monthly_columns(fresh_db: sqlite3.Connection) -> Non
 
 
 def test_scores_weekly_columns(fresh_db: sqlite3.Connection) -> None:
-    """scores_weekly contains composite, regime, 8 category scores, and key_signals."""
+    """scores_weekly contains composite, regime, 8 category scores, key_signals, and key_signals_data."""
     cursor = fresh_db.execute("PRAGMA table_info(scores_weekly)")
     columns = {row[1] for row in cursor.fetchall()}
     expected = {
         "ticker", "week_start", "composite_score", "regime",
         "trend_score", "momentum_score", "volume_score", "volatility_score",
         "candlestick_score", "structural_score", "fundamental_score", "macro_score",
-        "data_completeness", "key_signals",
+        "data_completeness", "key_signals", "key_signals_data",
     }
     assert columns == expected
 

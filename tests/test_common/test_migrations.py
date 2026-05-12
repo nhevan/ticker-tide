@@ -97,10 +97,10 @@ def test_migration_adds_column_to_old_schema(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_weekly_and_monthly_untouched_after_migration(tmp_path: Path) -> None:
+def test_weekly_has_key_signals_data_monthly_untouched_after_migration(tmp_path: Path) -> None:
     """
-    After migration, scores_weekly and scores_monthly must NOT have a
-    key_signals_data column — this feature is daily-only by design.
+    After migration, scores_weekly must have key_signals_data (added in
+    Migration 3); scores_monthly must NOT — key_signals_data is daily+weekly only.
     """
     db_file = str(tmp_path / "signals.db")
     conn = get_connection(db_file)
@@ -110,7 +110,7 @@ def test_weekly_and_monthly_untouched_after_migration(tmp_path: Path) -> None:
     weekly_columns = _get_column_names(conn, "scores_weekly")
     monthly_columns = _get_column_names(conn, "scores_monthly")
 
-    assert "key_signals_data" not in weekly_columns
+    assert "key_signals_data" in weekly_columns
     assert "key_signals_data" not in monthly_columns
     conn.close()
 
