@@ -560,6 +560,9 @@ def create_app(
         rsi_thresholds = resolved_scorer_config.get(
             "indicator_thresholds", {}
         ).get("rsi_14", {"oversold": 30.0, "overbought": 70.0})
+        stoch_k_thresholds = resolved_scorer_config.get(
+            "indicator_thresholds", {}
+        ).get("stoch_k", {"oversold": 20.0, "overbought": 80.0})
         regime_weights = resolved_scorer_config.get("adaptive_weights", {})
         expansion_factor = resolved_scorer_config.get("scoring", {}).get(
             "score_expansion_factor", 1.0
@@ -569,6 +572,18 @@ def create_app(
             "rsi": {
                 "thresholds": rsi_thresholds,
                 "scoring_method": "percentile_blended_with_fallback",
+                "fallback_zones": ["oversold", "below_mid", "above_mid", "overbought"],
+                "profile_zones": [
+                    "extreme_oversold", "oversold", "below_mid",
+                    "above_mid", "overbought", "extreme_overbought",
+                ],
+            },
+            # scoring_method is display-only; no frontend code currently branches on it.
+            # Stochastic %K uses a three-tier step function fallback (not the same as RSI's
+            # linear interpolation within percentile bands) — hence the distinct method string.
+            "stoch_k": {
+                "thresholds": stoch_k_thresholds,
+                "scoring_method": "percentile_profile_with_threshold_fallback",
                 "fallback_zones": ["oversold", "below_mid", "above_mid", "overbought"],
                 "profile_zones": [
                     "extreme_oversold", "oversold", "below_mid",

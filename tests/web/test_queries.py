@@ -22,6 +22,8 @@ from src.web.queries import (
     _fetch_earnings,
     _fetch_signal_flip,
     _fetch_recent_patterns,
+    _fetch_stoch_sparkline,
+    _fetch_stoch_k_profile,
     _build_daily_section,
     _build_weekly_section,
     _build_monthly_section,
@@ -1373,3 +1375,165 @@ class TestFetchRecentPatterns:
         # The existing patterns field rows must not have a days_ago key
         for pattern in result["patterns"]:
             assert "days_ago" not in pattern
+
+
+# ---------------------------------------------------------------------------
+# _fetch_stoch_sparkline tests
+# ---------------------------------------------------------------------------
+
+def _insert_stoch_rows(
+    conn: sqlite3.Connection,
+    ticker: str,
+    rows: list[tuple[str, float | None, float | None]],
+) -> None:
+    """Insert multiple (date, stoch_k, stoch_d) rows into indicators_daily for a ticker."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO indicators_daily(ticker, date, stoch_k, stoch_d) VALUES (?, ?, ?, ?)",
+        [(ticker, date, stoch_k, stoch_d) for date, stoch_k, stoch_d in rows],
+    )
+    conn.commit()
+
+
+class TestFetchStochSparkline:
+    """Tests for _fetch_stoch_sparkline()."""
+
+    def test_happy_path_multiple_rows(self, conn: sqlite3.Connection) -> None:
+        """Multiple rows with stoch_k are returned in ascending date order."""
+        _insert_stoch_rows(conn, "AAPL", [
+            ("2026-04-23", 25.0, 22.0),
+            ("2026-04-24", 35.0, 28.0),
+            ("2026-04-25", 55.0, 38.0),
+        ])
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert len(result) == 3
+        assert result[0]["date"] == "2026-04-23"
+        assert result[1]["date"] == "2026-04-24"
+        assert result[2]["date"] == "2026-04-25"
+
+    def test_null_stoch_k_row_excluded(self, conn: sqlite3.Connection) -> None:
+        """Rows where stoch_k IS NULL are excluded from the sparkline."""
+        _insert_stoch_rows(conn, "AAPL", [
+            ("2026-04-23", 25.0, 22.0),
+            ("2026-04-24", None, None),  # NULL stoch_k — must be excluded
+            ("2026-04-25", 55.0, 38.0),
+        ])
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        dates = [r["date"] for r in result]
+        assert "2026-04-24" not in dates
+        assert len(result) == 2
+
+    def test_null_stoch_d_row_kept_with_none_value(self, conn: sqlite3.Connection) -> None:
+        """
+        Rows where stoch_d IS NULL but stoch_k is present are kept with stoch_d=None.
+
+        Why stoch_d can be null while stoch_k is not:
+        stoch_d is a 3-period SMA of stoch_k. For the first 2 rows after stoch_k becomes
+        available (warm-up period), there are not yet 3 stoch_k values to average, so
+        stoch_d remains NULL while stoch_k is already defined.
+        """
+        _insert_stoch_rows(conn, "AAPL", [
+            ("2026-04-23", 25.0, None),  # stoch_k present, stoch_d null (warm-up)
+            ("2026-04-24", 35.0, 28.0),
+        ])
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert len(result) == 2
+        row_23 = next(r for r in result if r["date"] == "2026-04-23")
+        assert row_23["stoch_k"] == 25.0
+        assert row_23["stoch_d"] is None
+
+    def test_empty_result_when_no_rows(self, conn: sqlite3.Connection) -> None:
+        """Returns empty list when no rows exist."""
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert result == []
+
+    def test_le_picked_date_bound_respected(self, conn: sqlite3.Connection) -> None:
+        """Rows after picked_date are excluded."""
+        _insert_stoch_rows(conn, "AAPL", [
+            ("2026-04-24", 30.0, 25.0),
+            ("2026-04-25", 50.0, 35.0),
+            ("2026-04-26", 70.0, 55.0),  # after picked_date — must be excluded
+        ])
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        dates = [r["date"] for r in result]
+        assert "2026-04-26" not in dates
+        assert len(result) == 2
+
+    def test_limit_respected(self, conn: sqlite3.Connection) -> None:
+        """LIMIT parameter caps the number of returned rows."""
+        _insert_stoch_rows(conn, "AAPL", [
+            ("2026-04-21", 10.0, 8.0),
+            ("2026-04-22", 20.0, 15.0),
+            ("2026-04-23", 30.0, 22.0),
+            ("2026-04-24", 40.0, 30.0),
+            ("2026-04-25", 50.0, 38.0),
+        ])
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=3)
+        assert len(result) == 3
+
+    def test_ascending_order_verified(self, conn: sqlite3.Connection) -> None:
+        """Returned rows are in ascending date order (oldest first)."""
+        _insert_stoch_rows(conn, "AAPL", [
+            ("2026-04-25", 55.0, 45.0),
+            ("2026-04-23", 25.0, 20.0),
+            ("2026-04-24", 35.0, 30.0),
+        ])
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        dates = [r["date"] for r in result]
+        assert dates == sorted(dates)
+
+    def test_row_shape_has_stoch_k_and_stoch_d(self, conn: sqlite3.Connection) -> None:
+        """Each returned row has keys: date (str), stoch_k (float), stoch_d (float or None)."""
+        _insert_stoch_rows(conn, "AAPL", [("2026-04-25", 55.5, 45.3)])
+        result = _fetch_stoch_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert len(result) == 1
+        row = result[0]
+        assert set(row.keys()) == {"date", "stoch_k", "stoch_d"}
+        assert isinstance(row["date"], str)
+        assert isinstance(row["stoch_k"], float)
+        assert isinstance(row["stoch_d"], float)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_stoch_k_profile tests
+# ---------------------------------------------------------------------------
+
+def _insert_stoch_profile(conn: sqlite3.Connection, ticker: str) -> None:
+    """Insert a stoch_k profile row into indicator_profiles."""
+    conn.execute(
+        """INSERT OR REPLACE INTO indicator_profiles(ticker, indicator, p5, p20, p50, p80, p95, mean, std)
+           VALUES (?, 'stoch_k', 5.0, 20.0, 50.0, 80.0, 95.0, 50.0, 25.0)""",
+        (ticker,),
+    )
+    conn.commit()
+
+
+class TestFetchStochKProfile:
+    """Tests for _fetch_stoch_k_profile()."""
+
+    def test_row_present(self, conn: sqlite3.Connection) -> None:
+        """Returns profile dict when stoch_k row exists in indicator_profiles."""
+        _insert_stoch_profile(conn, "AAPL")
+        profile = _fetch_stoch_k_profile(conn, "AAPL")
+        assert profile is not None
+        assert profile["p5"] == 5.0
+        assert profile["p20"] == 20.0
+        assert profile["p50"] == 50.0
+        assert profile["p80"] == 80.0
+        assert profile["p95"] == 95.0
+        assert profile["mean"] == 50.0
+        assert profile["std"] == 25.0
+
+    def test_row_absent(self, conn: sqlite3.Connection) -> None:
+        """Returns None when no stoch_k row exists for the ticker."""
+        profile = _fetch_stoch_k_profile(conn, "AAPL")
+        assert profile is None
+
+    def test_table_missing_returns_none(self, tmp_path) -> None:
+        """Returns None (swallows OperationalError) when indicator_profiles table is missing."""
+        import sqlite3 as _sqlite3
+        raw_conn = _sqlite3.connect(str(tmp_path / "no_profiles.db"))
+        raw_conn.row_factory = _sqlite3.Row
+        # Do NOT create any tables — indicator_profiles does not exist.
+        profile = _fetch_stoch_k_profile(raw_conn, "AAPL")
+        assert profile is None
+        raw_conn.close()

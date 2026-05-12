@@ -19,7 +19,7 @@ from typing import Any, Optional
 # in lockstep with score_candlestick_patterns / score_structural_patterns.
 # Private-prefixed names are accepted here as the canonical source of truth.
 from src.scorer.pattern_scorer import _CANDLESTICK_WINDOW_DAYS, _STRUCTURAL_WINDOW_DAYS
-from src.scorer.zone_labels import zone_label_for_rsi
+from src.scorer.zone_labels import zone_label_for_rsi, zone_label_for_stoch_k
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,7 @@ def fetch_snapshot(
     monthly_months = sparkline_cfg.get("monthly_months", 6)
     rsi_sparkline_days = sparkline_cfg.get("rsi_sparkline_days", 100)
     macd_sparkline_days = sparkline_cfg.get("macd_sparkline_days", 100)
+    stoch_sparkline_days = sparkline_cfg.get("stoch_sparkline_days", 100)
 
     why_limit = config.get("why_bullets", {}).get("limit", 3)
     signal_flip_lookback = config.get("signal_flip_lookback_days", 14)
@@ -152,6 +153,7 @@ def fetch_snapshot(
             scorer_config=resolved_scorer_config,
             rsi_sparkline_days=rsi_sparkline_days,
             macd_sparkline_days=macd_sparkline_days,
+            stoch_sparkline_days=stoch_sparkline_days,
         ),
         "weekly": _build_weekly_section(
             conn, ticker, picked_date, weekly_weeks,
@@ -202,6 +204,7 @@ def _build_daily_section(
     scorer_config: Optional[dict] = None,
     rsi_sparkline_days: int = 100,
     macd_sparkline_days: int = 100,
+    stoch_sparkline_days: int = 100,
 ) -> dict[str, Any]:
     """
     Build the daily card data for a ticker and exact date.
@@ -236,10 +239,14 @@ def _build_daily_section(
         rsi_sparkline_days: Number of trading days to include in the RSI sparkline
                             (bounded by <= picked_date). Rows with rsi_14 IS NULL are
                             excluded. Returns [] when no data exists.
+        stoch_sparkline_days: Number of trading days to include in the Stochastic %K/%D
+                              sparkline (bounded by <= picked_date). Rows with stoch_k IS NULL
+                              are excluded. Returns [] when no data exists.
 
     Returns:
-        Daily section dict. Includes rsi_sparkline: list[dict[str, Any]] — always
-        present (may be empty list), never None.
+        Daily section dict. Includes rsi_sparkline, stoch_sparkline: list[dict[str, Any]] —
+        always present (may be empty list), never None.
+        Also includes stoch_k_profile (dict or None) and stoch_zone_label (str or None).
     """
     resolved_scorer_config = scorer_config if scorer_config is not None else {}
 
@@ -267,6 +274,7 @@ def _build_daily_section(
     sparkline = _fetch_daily_sparkline(conn, ticker, picked_date, sparkline_days)
     rsi_sparkline = _fetch_rsi_sparkline(conn, ticker, picked_date, rsi_sparkline_days)
     macd_sparkline = _fetch_macd_sparkline(conn, ticker, picked_date, macd_sparkline_days)
+    stoch_sparkline = _fetch_stoch_sparkline(conn, ticker, picked_date, stoch_sparkline_days)
     key_signals = _extract_key_signals(score_dict, limit=why_limit)
     earnings = _fetch_earnings(conn, ticker, picked_date)
     signal_flip = _fetch_signal_flip(
@@ -290,6 +298,20 @@ def _build_daily_section(
     else:
         rsi_zone_label = None
 
+    # Stoch %K explainer fields.
+    stoch_k_profile = _fetch_stoch_k_profile(conn, ticker)
+    stoch_k_value = indicators.get("stoch_k") if indicators else None
+    stoch_zone_label: Optional[str]
+    if stoch_k_value is not None:
+        stoch_thresholds = resolved_scorer_config.get(
+            "indicator_thresholds", {}
+        ).get("stoch_k", {"oversold": 20.0, "overbought": 80.0})
+        stoch_zone_label = zone_label_for_stoch_k(
+            float(stoch_k_value), stoch_k_profile, stoch_thresholds
+        )
+    else:
+        stoch_zone_label = None
+
     # Parse contributions payload; treat NULL as None without raising.
     contributions_payload: Optional[dict] = _parse_contributions_payload(
         score_dict.get("key_signals_data")
@@ -305,6 +327,7 @@ def _build_daily_section(
         "sparkline": sparkline,
         "rsi_sparkline": rsi_sparkline,
         "macd_sparkline": macd_sparkline,
+        "stoch_sparkline": stoch_sparkline,
         "signal": score_dict.get("signal"),
         "confidence": score_dict.get("confidence"),
         "calibrated_score": score_dict.get("calibrated_score"),
@@ -319,6 +342,8 @@ def _build_daily_section(
         "rsi_profile": rsi_profile,
         "macd_line_profile": macd_line_profile,
         "rsi_zone_label": rsi_zone_label,
+        "stoch_k_profile": stoch_k_profile,
+        "stoch_zone_label": stoch_zone_label,
         "contributions_payload": contributions_payload,
     }
 
@@ -1035,6 +1060,85 @@ def _fetch_macd_sparkline(
         }
         for r in reversed(rows)
     ]
+
+
+def _fetch_stoch_sparkline(
+    conn: sqlite3.Connection,
+    ticker: str,
+    picked_date: str,
+    num_days: int,
+) -> list[dict[str, Any]]:
+    """
+    Fetch the last num_days stoch_k / stoch_d values from indicators_daily for a ticker
+    up to and including picked_date.
+
+    Excludes rows where stoch_k IS NULL (insufficient bars for the Stochastic calculation).
+    stoch_d is a 3-period SMA of stoch_k and may be null for the first rows after stoch_k
+    becomes available (warm-up period). Such rows are kept in the result with stoch_d=None.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        picked_date: Upper-bound date (YYYY-MM-DD). No rows after this date are included.
+        num_days: Maximum number of rows to return.
+
+    Returns:
+        List of dicts with keys: date (str), stoch_k (float), stoch_d (float | None).
+        Empty list if no qualifying rows exist.
+    """
+    cur = conn.execute(
+        "SELECT date, stoch_k, stoch_d FROM indicators_daily "
+        "WHERE ticker = ? AND date <= ? AND stoch_k IS NOT NULL "
+        "ORDER BY date DESC LIMIT ?",
+        (ticker, picked_date, num_days),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "date": r["date"],
+            "stoch_k": float(r["stoch_k"]),
+            "stoch_d": float(r["stoch_d"]) if r["stoch_d"] is not None else None,
+        }
+        for r in reversed(rows)
+    ]
+
+
+def _fetch_stoch_k_profile(
+    conn: sqlite3.Connection,
+    ticker: str,
+) -> Optional[dict]:
+    """
+    Fetch the stoch_k percentile profile from indicator_profiles for a ticker.
+
+    Returns a dict with p5, p20, p50, p80, p95, mean, std keys, or None if
+    no profile row exists for this ticker and indicator.
+
+    Parameters:
+        conn:   Open SQLite connection with row_factory=sqlite3.Row.
+        ticker: Ticker symbol.
+
+    Returns:
+        Profile dict or None.
+    """
+    try:
+        row = conn.execute(
+            "SELECT p5, p20, p50, p80, p95, mean, std FROM indicator_profiles "
+            "WHERE ticker = ? AND indicator = 'stoch_k'",
+            (ticker,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    return {
+        "p5": row["p5"],
+        "p20": row["p20"],
+        "p50": row["p50"],
+        "p80": row["p80"],
+        "p95": row["p95"],
+        "mean": row["mean"],
+        "std": row["std"],
+    }
 
 
 def _fetch_monthly_sparkline(

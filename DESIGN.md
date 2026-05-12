@@ -1674,9 +1674,25 @@ Each part = `headerContribution.weight × headerContribution.score` for that tim
 
 **Monthly asymmetry.** The per-section monthly equation row is hidden today because `contributions_payload` is not yet persisted for monthly rows. The cross-section banner still includes monthly because `headerContributions.monthly` is derivable from `snapshot.monthly.composite_score` and the redistributed timeframe weight — no payload needed. This asymmetry is intentional and will resolve naturally when monthly `contributions_payload` is wired.
 
-### 15.6 Other indicators
+### 15.6 Stochastic %K — backend wiring (frontend pending)
 
-All indicators other than `rsi_14` and `macd_line` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
+Backend data exposed for the Stochastic %K explainer panel:
+
+- **`daily.stoch_sparkline`** — list of `{ date, stoch_k, stoch_d }` rows (stoch_d may be null during warm-up). Bounded by `<= picked_date`, excludes `stoch_k IS NULL` rows. Length capped by `sparkline.stoch_sparkline_days` (default 100).
+- **`daily.stoch_k_profile`** — percentile profile dict (`p5/p20/p50/p80/p95/mean/std`) from `indicator_profiles`, or `null` when no profile exists for the ticker.
+- **`daily.stoch_zone_label`** — zone string from `zone_label_for_stoch_k()`: six profile-path labels or four fallback-path labels. `null` when `stoch_k` is not available in `indicators_daily` for the picked date.
+- **`/api/scoring-rules` → `stoch_k`** — thresholds (`oversold=20`, `overbought=80`), `scoring_method`, `fallback_zones`, `profile_zones`. Thresholds read from `config/scorer.json indicator_thresholds.stoch_k`.
+
+Scoring notes:
+- Scorer path: `score_with_percentile(stoch_k, profile, higher_is_bullish=oscillator_higher_is_bullish)` when profile exists; three-tier step function fallback (±60 / linear ±30) otherwise.
+- `higher_is_bullish` is regime-aware (`False` in ranging, `True` in trending).
+- `stoch_d` is computed/stored but not scored as an independent indicator.
+
+Frontend 7-step explainer panel is pending — tracked in next-up.
+
+### 15.7 Other indicators
+
+All indicators other than `rsi_14`, `macd_line`, and `stoch_k` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
 
 Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic; per-indicator components (trend chart, scoring path, mapping chart) follow the templates in `Rsi*.tsx` or `Macd*.tsx`.
 

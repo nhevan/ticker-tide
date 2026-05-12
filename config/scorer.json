@@ -1,6 +1,7 @@
 {
   "indicator_thresholds": {
-    "rsi_14": {"oversold": 30.0, "overbought": 70.0}
+    "rsi_14": {"oversold": 30.0, "overbought": 70.0},
+    "stoch_k": {"oversold": 20.0, "overbought": 80.0}
   },
   "regime_detection": {
     "adx_trending_threshold": 25,

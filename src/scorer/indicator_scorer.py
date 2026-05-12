@@ -527,6 +527,9 @@ def score_all_indicators(
             result["stoch_k"] = score_with_percentile(stoch_k, profile_stoch, higher_is_bullish=oscillator_higher_is_bullish)
         else:
             # Fixed fallback: 80=overbought, 20=oversold in ranging; flip sign in trending.
+            # NOTE: These literals duplicate config/scorer.json indicator_thresholds.stoch_k
+            # (oversold=20.0, overbought=80.0). A follow-on refactor should read from scorer
+            # config so the threshold is configurable without changing this code.
             if stoch_k >= 80:
                 raw = -60.0
             elif stoch_k <= 20:

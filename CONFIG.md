@@ -216,6 +216,8 @@ requires re-running the scorer: `python scripts/run_scorer.py --force`.
 |---|---|---|---|
 | `indicator_thresholds.rsi_14.oversold` | float | `30.0` | RSI at or below this value is scored as oversold (bullish in ranging regime) |
 | `indicator_thresholds.rsi_14.overbought` | float | `70.0` | RSI at or above this value is scored as overbought (bearish in ranging regime) |
+| `indicator_thresholds.stoch_k.oversold` | float | `20.0` | Stochastic %K at or below this value is oversold (bullish in ranging regime). Used by the `/api/scoring-rules` endpoint to advertise thresholds; the scorer fallback path currently hardcodes these same values (follow-on refactor pending). |
+| `indicator_thresholds.stoch_k.overbought` | float | `80.0` | Stochastic %K at or above this value is overbought (bearish in ranging regime). Same note as above. |
 
 > **Note on `score_expansion_factor` and persisted payloads:** `scores_daily.key_signals_data`
 > stores per-indicator contribution payloads at scoring time, including the expansion factor
@@ -575,6 +577,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `sparkline.monthly_months` | int | `6` | Number of monthly candle rows to include in the monthly sparkline |
 | `sparkline.rsi_sparkline_days` | int | `100` | Number of trading-day rows to include in the RSI trend chart shown in the RSI explainer panel (step 2). Rows with `rsi_14 IS NULL` are excluded. Bounded by `<= picked_date`. Changing this affects only the RSI explainer chart density; no pipeline phase re-run is needed (the snapshot is computed at read time). |
 | `sparkline.macd_sparkline_days` | int | `100` | Number of trading-day rows to include in the MACD trend chart shown in the MACD line explainer panel (step 2). Rows with `macd_line IS NULL` are excluded; `macd_signal` and `macd_histogram` are independently nullable and surface as `null` within a row. Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
+| `sparkline.stoch_sparkline_days` | int | `100` | Number of trading-day rows to include in the Stochastic %K/%D trend chart shown in the Stoch %K explainer panel (step 2, pending). Rows with `stoch_k IS NULL` are excluded; `stoch_d` is independently nullable (warm-up period) and surfaces as `null` within a row. Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
 | `ai_reasoner.model` | string | `claude-sonnet-4-20250514` | Anthropic model to use for web LLM analysis |
 | `ai_reasoner.max_tokens` | int | `800` | Maximum tokens in Claude's response |
 | `ai_reasoner.temperature` | float | `0.3` | Sampling temperature for Claude |
@@ -628,7 +631,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `web.json port` | `sudo systemctl restart ticker-tide-web` |
 | `web.json login_rate_limit.*` | None — applies on next login attempt |
 | `web.json llm_rate_limit.*` | None — applies on next LLM request |
-| `web.json sparkline.*` | None — applies on next snapshot load (includes `rsi_sparkline_days`, `macd_sparkline_days`) |
+| `web.json sparkline.*` | None — applies on next snapshot load (includes `rsi_sparkline_days`, `macd_sparkline_days`, `stoch_sparkline_days`) |
 | `web.json ai_reasoner.*` | None — applies on next LLM request |
 | `web.json why_bullets.*` | None — applies on next snapshot load |
 | `web.json signal_flip_lookback_days` | None — applies on next snapshot load |

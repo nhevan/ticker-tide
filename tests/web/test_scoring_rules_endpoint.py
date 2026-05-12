@@ -42,6 +42,7 @@ _TEST_WEB_CONFIG = {
 _TEST_SCORER_CONFIG = {
     "indicator_thresholds": {
         "rsi_14": {"oversold": 30.0, "overbought": 70.0},
+        "stoch_k": {"oversold": 20.0, "overbought": 80.0},
     },
     "adaptive_weights": {
         "trending": {"trend": 0.30, "momentum": 0.20, "volume": 0.10, "volatility": 0.05,
@@ -205,4 +206,53 @@ class TestScoringRulesEndpoint:
             assert "daily" in entry
             assert "weekly" in entry
             assert "monthly" in entry
+
+    def test_response_has_stoch_k_block(self, client: TestClient) -> None:
+        """Response contains stoch_k key with the four expected sub-keys."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert "stoch_k" in data
+        stoch_k = data["stoch_k"]
+        assert "thresholds" in stoch_k
+        assert "scoring_method" in stoch_k
+        assert "fallback_zones" in stoch_k
+        assert "profile_zones" in stoch_k
+
+    def test_stoch_k_thresholds_come_from_config(self, client: TestClient) -> None:
+        """stoch_k thresholds in response match the scorer_config (not hardcoded literals)."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["stoch_k"]["thresholds"]["oversold"] == 20.0
+        assert data["stoch_k"]["thresholds"]["overbought"] == 80.0
+
+    def test_stoch_k_fallback_zones_exact(self, client: TestClient) -> None:
+        """stoch_k fallback_zones match the documented contract."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["stoch_k"]["fallback_zones"] == [
+            "oversold", "below_mid", "above_mid", "overbought"
+        ]
+
+    def test_stoch_k_profile_zones_exact(self, client: TestClient) -> None:
+        """stoch_k profile_zones match the documented contract."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["stoch_k"]["profile_zones"] == [
+            "extreme_oversold", "oversold", "below_mid",
+            "above_mid", "overbought", "extreme_overbought",
+        ]
+
+    def test_existing_rsi_block_unchanged(self, client: TestClient) -> None:
+        """Adding the stoch_k block must not alter the existing rsi block."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        rsi = data["rsi"]
+        assert rsi["thresholds"]["oversold"] == 30.0
+        assert rsi["thresholds"]["overbought"] == 70.0
+        assert rsi["scoring_method"] == "percentile_blended_with_fallback"
+        assert rsi["fallback_zones"] == ["oversold", "below_mid", "above_mid", "overbought"]
+        assert rsi["profile_zones"] == [
+            "extreme_oversold", "oversold", "below_mid",
+            "above_mid", "overbought", "extreme_overbought",
+        ]
 
