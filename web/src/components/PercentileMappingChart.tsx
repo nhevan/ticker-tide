@@ -1,5 +1,5 @@
 /**
- * RsiMappingChart — visualises how an indicator value (default: RSI(14)) becomes its scored output.
+ * PercentileMappingChart — visualises how an indicator value becomes its scored output via score_with_percentile. Used by indicators that have a per-ticker percentile profile (RSI, Stoch %K).
  *
  * Renders the piecewise mapping function defined by `score_with_percentile`
  * in src/scorer/indicator_scorer.py:158-184, using the loaded ticker's
@@ -20,7 +20,7 @@
  * @param label - Human-readable indicator name shown in chart prose (default: 'RSI').
  * @returns The chart + math table, or null if any required numeric input is non-finite.
  */
-interface RsiMappingChartProps {
+interface PercentileMappingChartProps {
   profile: { p5: number; p20: number; p50: number; p80: number; p95: number };
   today: number;
   score: number;
@@ -57,7 +57,7 @@ function mappingCornerPoints(
   ];
 }
 
-export function RsiMappingChart({ profile, today, score, regime, label = 'RSI' }: RsiMappingChartProps) {
+export function PercentileMappingChart({ profile, today, score, regime, label = 'RSI' }: PercentileMappingChartProps) {
   // REQUIRED guard: Number.isFinite catches both NaN and null/undefined coerced to NaN.
   if (
     !Number.isFinite(today) ||
@@ -74,7 +74,7 @@ export function RsiMappingChart({ profile, today, score, regime, label = 'RSI' }
   // Warn (but render) if regime is unrecognised — guards future backend drift.
   if (regime !== 'trending' && regime !== 'ranging' && regime !== 'volatile') {
     // eslint-disable-next-line no-console
-    console.warn(`RsiMappingChart(${label}): unrecognised regime "${regime}", treating as ranging.`);
+    console.warn(`PercentileMappingChart(${label}): unrecognised regime "${regime}", treating as ranging.`);
   }
 
   const trending = regime === 'trending';

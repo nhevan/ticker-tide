@@ -1638,7 +1638,7 @@ For `indicator === "macd_line"` the panel renders a 7-step trace adapted to MACD
 
 1. **Raw reading** — `snapshot.daily.indicators.macd_line`, `macd_signal`, `macd_histogram` (each independently nullable; UI guards every value with `Number.isFinite`). Rendered as a **Reading** line ("MACD line X, signal Y, histogram Z") and an **Interpretation** line ("Line sits above/below signal and histogram is positive/negative — a bullish / bearish / mixed MACD configuration"). The bullish/bearish/mixed verdict is derived from two booleans: `line > signal` and `histogram > 0`.
 2. **Trend chart** — `MacdTrendChart` (recharts `ComposedChart`). Renders `snapshot.daily.macd_sparkline` as three series sharing one axis: histogram bars (green ≥0, red <0) overlaid with MACD line (solid) and signal line (dashed) on a zero baseline. Symmetric y-domain (`±maxAbs × 1.15`) keeps the baseline visually centered. Window size from `web.json sparkline.macd_sparkline_days` (default 100); shape matches `_fetch_rsi_sparkline` but emits `{date, macd_line, signal, histogram}` rows (signal + histogram independently nullable, `macd_line IS NOT NULL` is the row gate).
-3. **Scoring path** — presence/absence of `snapshot.daily.macd_line_profile` (`{mean, std}` fetched by `_fetch_macd_line_profile` from `indicator_profiles`). Profile path renders the **z-score** derivation `z = (MACD − mean) ÷ std` with substituted values and the resulting band label (strongly/moderately bullish/bearish or neutral around 0). Fallback path renders the **linear** mapping `score = clamp(MACD × 20, −100, +100)`. Inline math (no separate component) — MACD does **not** use `RsiPercentileStrip`; the percentile metaphor does not apply to z-score normalisation, so that component remains RSI-specific.
+3. **Scoring path** — presence/absence of `snapshot.daily.macd_line_profile` (`{mean, std}` fetched by `_fetch_macd_line_profile` from `indicator_profiles`). Profile path renders the **z-score** derivation `z = (MACD − mean) ÷ std` with substituted values and the resulting band label (strongly/moderately bullish/bearish or neutral around 0). Fallback path renders the **linear** mapping `score = clamp(MACD × 20, −100, +100)`. Inline math (no separate component) — MACD does **not** use `PercentileStrip`; the percentile metaphor does not apply to z-score normalisation.
 4. **Indicator score** — `MacdMappingChart`. Piecewise polyline on a value (x) vs score (y) plane with today's point marked. Profile path: 7 corner points at z ∈ {−3, −2, −1, 0, +1, +2, +3} placed at x = mean + z·std, mapped to scores {−100, −80, −40, 0, +40, +80, +100}. Fallback path: 3 corner points at (−5, −100), (0, 0), (+5, +100) — the `clamp(value × 20, ±100)` curve. The math table beneath the chart walks the substitution in four labelled stages: `MACD value` → `z-score` → `Bracket` → `Position in bracket` → `Base score`, ending with the persisted `Final score` from `snapshot.daily.indicator_scores.macd_line`.
 5. **Magnitude share in trend** — `CategoryShareBar` (generalised from `MomentumShareBar` when this panel was added — the component is now category-agnostic; callers pass items pre-filtered to a single category plus a display-name `category` prop). `|macd_line score| / Σ|score|` across **trend-category** items in the contributions payload (not momentum). `activeName="macd_line"`, `category="trend"` — the latter drives display prose only.
 6. **Category weight × expansion** — `CategoryWeightBar` reused verbatim with `activeName="trend"`. Shows the trend category's weight in the active regime and the score expansion factor, both from `/api/scoring-rules`.
@@ -1674,46 +1674,43 @@ Each part = `headerContribution.weight × headerContribution.score` for that tim
 
 **Monthly asymmetry.** The per-section monthly equation row is hidden today because `contributions_payload` is not yet persisted for monthly rows. The cross-section banner still includes monthly because `headerContributions.monthly` is derivable from `snapshot.monthly.composite_score` and the redistributed timeframe weight — no payload needed. This asymmetry is intentional and will resolve naturally when monthly `contributions_payload` is wired.
 
-### 15.6 Stochastic %K — 7-step trace (Steps 1–4 live; Steps 5–7 pending)
+### 15.6 Stochastic %K — 7-step trace
 
-For `indicator === "stoch_k"` the panel renders a 7-step trace mirroring RSI structurally. Steps 1–4 use real backend data; Steps 5–7 remain on dummy values pending subsequent wiring tasks.
+For `indicator === "stoch_k"` the panel renders a 7-step trace mirroring RSI structurally. All 7 steps use real backend data.
 
 #### Backend data
 
 - **`daily.stoch_sparkline`** — list of `{ date, stoch_k, stoch_d }` rows (stoch_d may be null during warm-up). Bounded by `<= picked_date`, excludes `stoch_k IS NULL` rows. Length capped by `sparkline.stoch_sparkline_days` (default 100).
 - **`daily.stoch_k_profile`** — percentile profile dict (`p5/p20/p50/p80/p95/mean/std`) from `indicator_profiles`, or `null` when no profile exists for the ticker.
-- **`daily.stoch_zone_label`** — zone string from `zone_label_for_stoch_k()`: six profile-path labels or four fallback-path labels. `null` when `stoch_k` is not available in `indicators_daily` for the picked date.
+- **`daily.stoch_zone_label`** — zone string from `zone_label_for_stoch_k()`: six profile-path labels (`STOCH_ZONE_LABEL_DESCRIPTIONS`) or four fallback-path labels (`STOCH_FALLBACK_ZONE_DESCRIPTIONS`). `null` when `stoch_k` is not available in `indicators_daily` for the picked date.
 - **`daily.indicator_scores.stoch_k`** — persisted indicator score (−100 to +100) from `indicator_scores_daily`.
 - **`/api/scoring-rules` → `stoch_k`** — thresholds (`oversold=20`, `overbought=80`), `scoring_method`, `fallback_zones`, `profile_zones`.
 
-#### Steps (live)
+#### Steps
 
-1. **Raw value** — `snapshot.daily.indicators.stoch_k` and `stoch_d`. Displays `%K`, `%D`, and their spread with a sign-coloured chip. Fallback prose when unavailable.
-2. **Zone label + trend chart** — `StochTrendChart` fed by `daily.stoch_sparkline`. Zone chip from `daily.stoch_zone_label`; description resolved via `STOCH_ZONE_LABEL_DESCRIPTIONS` (profile path, six labels) or `STOCH_FALLBACK_ZONE_DESCRIPTIONS` (fallback path, four labels). Fallback prose shown when sparkline or zone label is absent.
-3. **Scoring path** — `RsiPercentileStrip` reused with `label="Stoch %K"` when a profile is present; prose-only fallback when absent. Regime sign-flip note (trending vs mean-reversion). Same `score_with_percentile` path as RSI.
+1. **Raw value** — `snapshot.daily.indicators.stoch_k` and `stoch_d`. Displays `%K`, `%D`, and their spread (`%K − %D`) with a sign-coloured chip. Prose explains that %K measures where today's close sits within the 14-session high/low range (0 = at the period low, 100 = at the period high). Fallback prose when unavailable.
+2. **Zone label + trend chart** — `StochTrendChart` fed by `daily.stoch_sparkline` (dual-line %K + %D, 80/20 reference bands, 100-day window). Zone chip from `daily.stoch_zone_label`; description resolved via `STOCH_ZONE_LABEL_DESCRIPTIONS` (profile path, six labels) or `STOCH_FALLBACK_ZONE_DESCRIPTIONS` (fallback path, four labels). Fallback prose shown when sparkline or zone label is absent.
+3. **Scoring path** — `PercentileStrip` with `label="Stoch %K"` when a profile is present; prose-only fallback when absent. Regime sign-flip note: in a `trending` regime, the oscillator's sign flips (overbought → bullish); in `ranging` or `volatile` it is mean-reverting (overbought → bearish). Same `score_with_percentile` path as RSI. Steps 3 & 4 share `PercentileStrip` and `PercentileMappingChart` with the RSI panel via the `label` prop.
 4. **Indicator score** — `snapshot.daily.indicator_scores.stoch_k`.
    - No score → `StepCard unavailable`.
-   - Score present + profile + valid regime + all five profile percentiles finite → `RsiMappingChart profile={stochProfile} today={kValue} score={stochScore} regime={...} label="Stoch %K"`. The same six-zone smooth curve as RSI; the `label` prop (added in this task) drives all user-facing prose inside the chart so it reads "Stoch %K value" / "(Stoch %K − p20) ÷ ...".
-   - Score present but no profile or unrecognised regime → fallback prose describing the piecewise scorer math: %K ≤ 20 caps at +60, %K ≥ 80 caps at −60, linear gradient (50 − %K) ÷ 50 × 30 through the middle; sign flips in trending regime.
-
-#### Steps (pending)
-
-5. **Magnitude share in momentum** — to be wired from `contributions_payload` (dummy items currently).
-6. **Category weight × expansion** — to be wired from `/api/scoring-rules` (dummy weights currently).
-7. **Net contribution** — to be wired from `contributions_payload.items[stoch_k]` (dummy values currently).
+   - Score present + profile + valid regime + all five profile percentiles finite → `PercentileMappingChart profile={stochProfile} today={kValue} score={stochScore} regime={...} label="Stoch %K"`. The same six-zone smooth curve as RSI; the `label` prop drives all user-facing prose inside the chart so it reads "Stoch %K value" / "(Stoch %K − p20) ÷ ...".
+   - Score present but no profile or unrecognised regime → fallback prose describing the piecewise scorer at `indicator_scorer.py:533–539`: %K ≤ 20 caps at +60, %K ≥ 80 caps at −60, linear gradient `(50 − %K) ÷ 50 × 30` through the middle (±18 at edges); sign flips in trending regime.
+5. **Magnitude share in momentum** — `CategoryShareBar` over `contributions.items.filter(item => item.category === 'momentum')` with `activeName="stoch_k"`. Component renders the headline share % and denominator expansion itself.
+6. **Category weight × expansion** — `CategoryWeightBar` from `rules.regime_weights[regime]` (CURRENT config) with `expansion={rules.score_expansion_factor}` and `activeName="momentum"`. Fallback prose uses persisted `stochItem.category_weight` and `contributions.expansion_factor` when rules are undefined.
+7. **Net contribution** — `ContributionMathChain` with `score={stochItem.score}`, `denom` computed inline as Σ|momentum scores|, `regimeWeight={stochItem.category_weight}`, `expansion={contributions.expansion_factor}`, `finalContribution={stochItem.contribution}`. Caveat from `rules.approximation_caveat`.
 
 #### Scoring notes
 
 - Scorer path: `score_with_percentile(stoch_k, profile, higher_is_bullish=oscillator_higher_is_bullish)` when profile exists; three-tier step function fallback (±60 / linear ±30) otherwise.
-- `higher_is_bullish` is regime-aware (`False` in ranging, `True` in trending).
+- `higher_is_bullish` is regime-aware (`False` in ranging/volatile, `True` in trending). The regime ternary at `src/scorer/indicator_scorer.py:487` checks `regime === 'trending'`, so `volatile` joins `ranging` in mean-reversion.
 - `stoch_d` is computed/stored but not scored as an independent indicator.
-- The 80/20 fallback thresholds are currently hardcoded literals in `indicator_scorer.py:533-539`; a follow-on refactor will read them from `config/scorer.json` via `scoring-rules`.
-- File rename (`RsiMappingChart.tsx` → `MappingChart.tsx`, `RsiPercentileStrip.tsx` → `PercentileStrip.tsx`) is deferred to Task #11 (tear-down).
+- The 80/20 fallback thresholds are currently hardcoded literals in `indicator_scorer.py:533–539`; a follow-on refactor will read them from `config/scorer.json` via `scoring-rules`.
+- Steps 3 & 4 (`PercentileStrip`, `PercentileMappingChart`) are shared with the RSI panel via the `label` prop — not RSI-specific components.
 
 ### 15.7 Other indicators
 
 All indicators other than `rsi_14`, `macd_line`, and `stoch_k` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
 
-Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic; per-indicator components (trend chart, scoring path, mapping chart) follow the templates in `Rsi*.tsx` or `Macd*.tsx`.
+Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic. For `score_with_percentile`-scored indicators, `PercentileStrip.tsx` and `PercentileMappingChart.tsx` can be reused directly via the `label` prop. For indicators with a different scoring model (e.g. z-score like MACD), use `Macd*.tsx` as templates for new per-indicator components.
 
 

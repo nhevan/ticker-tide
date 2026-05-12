@@ -145,8 +145,8 @@ For adding a click-to-expand explainer panel for an indicator (parallel to the e
 
 #### Per-indicator components — NEEDS NEW or GENERALISE
 - Step 2 trend chart: new `<X>TrendChart.tsx`. Use `RsiTrendChart.tsx` as a template. Different sparkline data shape (signed, unbounded, bounded differently) and reference bands per indicator.
-- Step 3 percentile strip: `RsiPercentileStrip.tsx` currently hardcodes the 0–100 RSI range. Generalise on first use (parameterise the value range) for unbounded indicators like MACD or CCI.
-- Step 4 mapping chart: new `<X>MappingChart.tsx`. Use `RsiMappingChart.tsx` as a template. Mapping curve shape differs per indicator (RSI uses six zones around percentile profile; MACD/CCI have different scoring functions).
+- Step 3 percentile strip: `PercentileStrip.tsx` is already generic over any bounded 0–100 indicator via the `label` prop. RSI and Stoch %K both consume it; reuse for any other 0–100 oscillator (Williams %R, MFI).
+- Step 4 mapping chart: `PercentileMappingChart.tsx` is generic over `score_with_percentile`-scored indicators via the `label` prop. Reuse for any indicator that scores through that path. For indicators that score differently (e.g. MACD via z-score), write a new `<X>MappingChart.tsx`.
 
 #### Backend extensions — IF NEEDED
 - Per-indicator sparkline field on `snapshot.daily` (template: `_fetch_rsi_sparkline` in `src/web/queries.py`).

@@ -1,5 +1,5 @@
 /**
- * RsiPercentileStrip — visual position of today's indicator value on the
+ * PercentileStrip — visual position of today's indicator value on the
  * per-ticker historical distribution. Generic over any bounded 0–100
  * indicator; the indicator label is parameterised via the `label` prop.
  *
@@ -19,7 +19,7 @@
  */
 import { useId } from 'react';
 
-interface RsiPercentileStripProps {
+interface PercentileStripProps {
   profile: { p5: number; p20: number; p50: number; p80: number; p95: number };
   today: number;
   zoneLabel: string | null;
@@ -27,13 +27,13 @@ interface RsiPercentileStripProps {
   label?: string;
 }
 
-export function RsiPercentileStrip({
+export function PercentileStrip({
   profile,
   today,
   zoneLabel,
   zoneDescription,
   label = 'RSI',
-}: RsiPercentileStripProps) {
+}: PercentileStripProps) {
   // REQUIRED: defensive null/NaN guard. DB columns are nullable; TS type lies.
   // Use Number.isFinite — isNaN(null) returns false in JS and would silently pass.
   if (

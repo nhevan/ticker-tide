@@ -10,8 +10,8 @@
  */
 
 import { RsiTrendChart } from '@/components/RsiTrendChart';
-import { RsiPercentileStrip } from '@/components/RsiPercentileStrip';
-import { RsiMappingChart } from '@/components/RsiMappingChart';
+import { PercentileStrip } from '@/components/PercentileStrip';
+import { PercentileMappingChart } from '@/components/PercentileMappingChart';
 import { CategoryShareBar } from '@/components/CategoryShareBar';
 import { MacdTrendChart } from '@/components/MacdTrendChart';
 import { MacdMappingChart } from '@/components/MacdMappingChart';
@@ -155,9 +155,9 @@ function MacdLinePanel({ snapshot, rules }: { snapshot: Snapshot; rules: Scoring
       {/* Step 3 — Scoring path.
           MACD uses z-score normalisation (when a per-ticker profile exists)
           or a linear fallback (score = clamp(value × 20, ±100)) otherwise.
-          We do not generalise RsiPercentileStrip here because MACD doesn't
-          map onto a percentile metaphor — the scoring shape is fundamentally
-          different from RSI's. */}
+          PercentileStrip applies to percentile-profile indicators only (RSI,
+          Stoch %K); MACD does not map onto a percentile metaphor — the
+          scoring shape is fundamentally different. */}
       {(() => {
         const profile = daily.macd_line_profile ?? null;
         if (profile && profile.std > 0) {
@@ -418,7 +418,7 @@ function StochKPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRu
         Number.isFinite(stochProfile.p80) &&
         Number.isFinite(stochProfile.p95) &&
         kValue !== null ? (
-          <RsiPercentileStrip
+          <PercentileStrip
             profile={stochProfile}
             today={kValue}
             zoneLabel={zoneLabel}
@@ -458,7 +458,7 @@ function StochKPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRu
         Number.isFinite(stochProfile.p80) &&
         Number.isFinite(stochProfile.p95) ? (
         <StepCard stepNumber={4} heading="Stochastic %K score">
-          <RsiMappingChart
+          <PercentileMappingChart
             profile={stochProfile}
             today={kValue}
             score={stochScore}
@@ -629,7 +629,7 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
       <StepCard stepNumber={3} heading="Scoring path">
         {rsiProfile ? (
           <>
-            <RsiPercentileStrip
+            <PercentileStrip
               profile={rsiProfile}
               today={rsiValue}
               zoneLabel={zoneLabel}
@@ -662,7 +662,7 @@ function RsiPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
         <>
           <StepCard stepNumber={4} heading="RSI score">
             {rsiProfile && (regime === 'trending' || regime === 'ranging' || regime === 'volatile') ? (
-              <RsiMappingChart
+              <PercentileMappingChart
                 profile={rsiProfile}
                 today={rsiValue}
                 score={rsiScore}
