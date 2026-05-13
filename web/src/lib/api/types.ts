@@ -212,6 +212,20 @@ export interface DailySection {
   stoch_k_profile?: StochKProfile | null;
   /** Zone label string from zone_label_for_stoch_k(), or null when stoch_k is unavailable for the date. */
   stoch_zone_label?: string | null;
+  /**
+   * Single-series ADX sparkline for the last N working days (configured
+   * via web.json sparkline.adx_sparkline_days, default 100). Always present
+   * when data_available is true — empty array when no ADX data exists,
+   * never null, never absent on a live response. Optional here only for
+   * forward-compat with legacy snapshot fixtures.
+   */
+  adx_sparkline?: { date: string; adx: number }[];
+  /**
+   * Server-computed ADX zone label from zone_label_for_adx. One of
+   * "ranging" | "weak_trend_developing" | "developing_trend" | "strong_trend",
+   * or null when the daily ADX value is null.
+   */
+  adx_zone_label?: string | null;
 }
 
 /** Weekly or monthly snapshot card data. */

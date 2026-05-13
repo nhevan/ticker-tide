@@ -18,6 +18,7 @@ import { MacdMappingChart } from '@/components/MacdMappingChart';
 import { CategoryWeightBar } from '@/components/CategoryWeightBar';
 import { ContributionMathChain } from '@/components/ContributionMathChain';
 import { StochTrendChart } from '@/components/StochTrendChart';
+import { AdxTrendChart } from '@/components/AdxTrendChart';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -54,6 +55,21 @@ const STOCH_FALLBACK_ZONE_DESCRIPTIONS: Record<string, string> = {
   below_mid: 'Between oversold and the midpoint',
   above_mid: 'Between the midpoint and overbought',
   overbought: 'Above the fixed overbought threshold (80)',
+};
+
+/** Human-friendly prose fragments for ADX zone label strings.
+ *
+ * ADX has no profile/fallback path split — score_adx is always fixed-band,
+ * so a single descriptions dict suffices. Boundary semantics match
+ * zone_label_for_adx's `>=` checks: at exactly 20 the label is
+ * weak_trend_developing, at exactly 25 it is developing_trend, at exactly
+ * 40 it is strong_trend.
+ */
+const ADX_ZONE_LABEL_DESCRIPTIONS: Record<string, string> = {
+  ranging: 'ADX below 20 — no clear trend; mean-reversion regime.',
+  weak_trend_developing: 'ADX from 20 to below 25 — early trend signal.',
+  developing_trend: 'ADX from 25 to below 40 — established trend.',
+  strong_trend: 'ADX at or above 40 — strong trend in progress.',
 };
 
 interface IndicatorExplainerPanelProps {
@@ -553,6 +569,300 @@ function StochKPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRu
 // End StochKPanel block.
 // =====================================================================
 
+// =====================================================================
+// [PROTOTYPE] AdxPanel — mockup scaffolding for the visual pick.
+// Dummy data, inline SVG. Removed/promoted per task plan.
+// =====================================================================
+
+/** [PROTOTYPE] Generate dummy 100-day ADX series for mockups. */
+function buildDummyAdxSeries(): { date: string; adx: number }[] {
+  const out: { date: string; adx: number }[] = [];
+  let v = 22;
+  for (let i = 0; i < 100; i++) {
+    v += (Math.sin(i / 7) + Math.sin(i / 17)) * 3 + (Math.random() - 0.5) * 3;
+    v = Math.max(8, Math.min(55, v));
+    const date = `2026-${String(Math.floor(i / 30) + 1).padStart(2, '0')}-${String((i % 30) + 1).padStart(2, '0')}`;
+    out.push({ date, adx: v });
+  }
+  return out;
+}
+
+
+/** Compute ADX → score per src/scorer/indicator_scorer.py score_adx (4 piecewise segments). */
+function scoreAdxLocal(v: number): number {
+  if (v >= 40) return 80.0;
+  if (v >= 25) return 40.0 + ((v - 25) / 15) * 40.0;
+  if (v >= 20) return ((v - 20) / 5) * 20.0;
+  return -20.0 + (v / 20) * 20.0;
+}
+
+/** [PROTOTYPE A] Mapping chart: piecewise-linear curve mirroring score_adx, asymmetric y-range. */
+function AdxMappingChartProtoA({ value }: { value: number }) {
+  const w = 560;
+  const h = 180;
+  const pad = { l: 32, r: 16, t: 14, b: 22 };
+  const innerW = w - pad.l - pad.r;
+  const innerH = h - pad.t - pad.b;
+  const xFor = (v: number) => pad.l + (v / 100) * innerW;
+  // Y range: -20 (bottom) to +80 (top) — asymmetric.
+  const yFor = (s: number) => pad.t + ((80 - s) / 100) * innerH;
+  // Path segments — note discontinuity at x=25 (jumps 20 → 40).
+  const segLow = `M${xFor(0).toFixed(1)},${yFor(-20).toFixed(1)} L${xFor(20).toFixed(1)},${yFor(0).toFixed(1)}`;
+  const segWeak = `M${xFor(20).toFixed(1)},${yFor(0).toFixed(1)} L${xFor(25).toFixed(1)},${yFor(20).toFixed(1)}`;
+  const segDev = `M${xFor(25).toFixed(1)},${yFor(40).toFixed(1)} L${xFor(40).toFixed(1)},${yFor(80).toFixed(1)}`;
+  const segStrong = `M${xFor(40).toFixed(1)},${yFor(80).toFixed(1)} L${xFor(100).toFixed(1)},${yFor(80).toFixed(1)}`;
+  const score = scoreAdxLocal(value);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: h }} preserveAspectRatio="none">
+      <line x1={pad.l} x2={pad.l + innerW} y1={yFor(0)} y2={yFor(0)} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.3} />
+      <path d={segLow} fill="none" stroke="hsl(var(--foreground))" strokeWidth={1.75} />
+      <path d={segWeak} fill="none" stroke="hsl(var(--foreground))" strokeWidth={1.75} />
+      <path d={segDev} fill="none" stroke="hsl(var(--foreground))" strokeWidth={1.75} />
+      <path d={segStrong} fill="none" stroke="hsl(var(--foreground))" strokeWidth={1.75} />
+      {/* Discontinuity markers at x=25 */}
+      <circle cx={xFor(25)} cy={yFor(20)} r={2.5} fill="hsl(var(--background))" stroke="hsl(var(--foreground))" strokeWidth={1.2} />
+      <circle cx={xFor(25)} cy={yFor(40)} r={2.5} fill="hsl(var(--foreground))" />
+      {[20, 25, 40].map((p) => (
+        <line key={p} x1={xFor(p)} x2={xFor(p)} y1={pad.t} y2={pad.t + innerH} stroke="hsl(var(--muted-foreground))" strokeDasharray="2 3" strokeOpacity={0.25} />
+      ))}
+      <circle cx={xFor(value)} cy={yFor(score)} r={4.5} fill="hsl(var(--primary))" stroke="hsl(var(--card))" strokeWidth={1.5} />
+      <text x={xFor(value) + 6} y={yFor(score) - 6} fontSize={10} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--primary))">
+        ADX {value.toFixed(1)} → {score.toFixed(1)}
+      </text>
+      <text x={pad.l - 4} y={yFor(80) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--up))" textAnchor="end">+80</text>
+      <text x={pad.l - 4} y={yFor(40) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--up))" textAnchor="end">+40</text>
+      <text x={pad.l - 4} y={yFor(0) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="end">0</text>
+      <text x={pad.l - 4} y={yFor(-20) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--down))" textAnchor="end">−20</text>
+      {[0, 20, 25, 40, 60, 80, 100].map((v) => (
+        <text key={v} x={xFor(v)} y={pad.t + innerH + 12} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="middle">{v}</text>
+      ))}
+    </svg>
+  );
+}
+
+/** [PROTOTYPE B] Mapping chart: zone-tinted bands with the curve overlaid. */
+function AdxMappingChartProtoB({ value }: { value: number }) {
+  const w = 560;
+  const h = 180;
+  const pad = { l: 32, r: 16, t: 14, b: 22 };
+  const innerW = w - pad.l - pad.r;
+  const innerH = h - pad.t - pad.b;
+  const xFor = (v: number) => pad.l + (v / 100) * innerW;
+  const yFor = (s: number) => pad.t + ((80 - s) / 100) * innerH;
+  const score = scoreAdxLocal(value);
+  const zones: { x0: number; x1: number; fill: string; opacity: number; label: string }[] = [
+    { x0: 0, x1: 20, fill: 'hsl(var(--muted-foreground))', opacity: 0.10, label: 'ranging' },
+    { x0: 20, x1: 25, fill: 'hsl(var(--up))', opacity: 0.06, label: 'weak' },
+    { x0: 25, x1: 40, fill: 'hsl(var(--up))', opacity: 0.12, label: 'developing' },
+    { x0: 40, x1: 100, fill: 'hsl(var(--up))', opacity: 0.20, label: 'strong' },
+  ];
+  const segLow = `M${xFor(0).toFixed(1)},${yFor(-20).toFixed(1)} L${xFor(20).toFixed(1)},${yFor(0).toFixed(1)}`;
+  const segWeak = `M${xFor(20).toFixed(1)},${yFor(0).toFixed(1)} L${xFor(25).toFixed(1)},${yFor(20).toFixed(1)}`;
+  const segDev = `M${xFor(25).toFixed(1)},${yFor(40).toFixed(1)} L${xFor(40).toFixed(1)},${yFor(80).toFixed(1)}`;
+  const segStrong = `M${xFor(40).toFixed(1)},${yFor(80).toFixed(1)} L${xFor(100).toFixed(1)},${yFor(80).toFixed(1)}`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: h }} preserveAspectRatio="none">
+      {zones.map((z) => (
+        <g key={z.x0}>
+          <rect x={xFor(z.x0)} y={pad.t} width={xFor(z.x1) - xFor(z.x0)} height={innerH} fill={z.fill} fillOpacity={z.opacity} />
+          <text x={(xFor(z.x0) + xFor(z.x1)) / 2} y={pad.t + 10} fontSize={8} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="middle">{z.label}</text>
+        </g>
+      ))}
+      <line x1={pad.l} x2={pad.l + innerW} y1={yFor(0)} y2={yFor(0)} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.4} />
+      <path d={segLow} fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} />
+      <path d={segWeak} fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} />
+      <path d={segDev} fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} />
+      <path d={segStrong} fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} />
+      <circle cx={xFor(25)} cy={yFor(20)} r={2.5} fill="hsl(var(--background))" stroke="hsl(var(--foreground))" strokeWidth={1.2} />
+      <circle cx={xFor(25)} cy={yFor(40)} r={2.5} fill="hsl(var(--foreground))" />
+      <circle cx={xFor(value)} cy={yFor(score)} r={4.5} fill="hsl(var(--primary))" stroke="hsl(var(--card))" strokeWidth={1.5} />
+      <text x={xFor(value) + 6} y={yFor(score) - 6} fontSize={10} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--primary))">
+        ADX {value.toFixed(1)} → {score.toFixed(1)}
+      </text>
+      <text x={pad.l - 4} y={yFor(80) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--up))" textAnchor="end">+80</text>
+      <text x={pad.l - 4} y={yFor(0) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="end">0</text>
+      <text x={pad.l - 4} y={yFor(-20) + 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--down))" textAnchor="end">−20</text>
+      {[20, 25, 40].map((v) => (
+        <text key={v} x={xFor(v)} y={pad.t + innerH + 12} fontSize={9} fontFamily="JetBrains Mono, monospace" fill="hsl(var(--muted-foreground))" textAnchor="middle">{v}</text>
+      ))}
+    </svg>
+  );
+}
+
+/** [PROTOTYPE] ADX panel — full 7-step skeleton mirroring StochKPanel.
+ * Steps 1 & 2 use real backend data. Steps 3–7 use dummy values —
+ * wired per task plan. */
+function AdxPanelPrototype({ snapshot }: { snapshot: Snapshot }) {
+  const daily = snapshot.daily;
+  const series = buildDummyAdxSeries();
+  const liveAdx = daily.indicators?.adx;
+  const adxValue: number | null = Number.isFinite(liveAdx as number) ? (liveAdx as number) : null;
+  const valueForMapping = adxValue ?? series[series.length - 1].adx;
+
+  // Real backend fields — wired for Steps 1 & 2.
+  // Filter non-finite adx values defensively: DB columns are nullable even
+  // when TS types say `number`, and the chart's path math would NaN-out on
+  // a single bad row (recipe gotcha #4).
+  const sparkline = (daily.adx_sparkline ?? []).filter((p) => Number.isFinite(p.adx));
+  const zoneLabel = daily.adx_zone_label ?? null;
+
+  const dummyScore = adxValue !== null ? scoreAdxLocal(adxValue) : 32.0;
+  const regime = (daily.regime ?? 'ranging') as string;
+  const dummyDenom = 142.0;
+  const dummyExpansion = 1.08;
+  const dummyTrendWeight = 0.34;
+  const dummyFinalContribution = (dummyScore * Math.abs(dummyScore) / dummyDenom) * dummyTrendWeight * dummyExpansion;
+  const dummyTrendItems: ContributionItem[] = [
+    { name: 'adx', category: 'trend', kind: 'indicator', score: dummyScore, raw_value: dummyScore, category_weight: dummyTrendWeight, contribution: 0 },
+    { name: 'macd_line', category: 'trend', kind: 'indicator', score: 28, raw_value: 28, category_weight: dummyTrendWeight, contribution: 0 },
+    { name: 'sma_50_200', category: 'trend', kind: 'indicator', score: -15, raw_value: -15, category_weight: dummyTrendWeight, contribution: 0 },
+    { name: 'ema_spread', category: 'trend', kind: 'indicator', score: 12, raw_value: 12, category_weight: dummyTrendWeight, contribution: 0 },
+  ];
+  const dummyCategoryWeights = { momentum: 0.28, trend: dummyTrendWeight, volatility: 0.14, volume: 0.10, breadth: 0.08, valuation: 0.06 };
+
+  return (
+    <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-foreground">
+      <div className="mb-3 rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
+        [PROTOTYPE] Steps 3-7 use dummy values — wired in order per task plan. Steps 1 &amp; 2 now use real backend data.
+      </div>
+
+      {/* Step 1 — Raw value */}
+      <StepCard stepNumber={1} heading="ADX reading">
+        {adxValue !== null && zoneLabel !== null ? (
+          <>
+            <p>
+              ADX = <span className="font-mono font-semibold">{adxValue.toFixed(2)}</span>.
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-muted text-foreground rounded-sm">
+                {zoneLabel}
+              </span>
+              <span>{ADX_ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? zoneLabel}</span>
+            </div>
+            <p className="mt-2 text-muted-foreground">
+              ADX measures trend strength over the last 14 sessions on a 0–100 scale (direction-agnostic — it does not say whether the trend is up or down).
+            </p>
+          </>
+        ) : adxValue !== null ? (
+          <p>
+            ADX = <span className="font-mono font-semibold">{adxValue.toFixed(2)}</span>.{' '}
+            <span className="text-muted-foreground italic">Zone label unavailable.</span>
+          </p>
+        ) : (
+          <p className="text-muted-foreground italic">ADX reading unavailable for this date.</p>
+        )}
+      </StepCard>
+
+      {/* Step 2 — Trend chart (REAL) */}
+      <StepCard stepNumber={2} heading="Trend strength over time">
+        {sparkline.length > 1 ? (
+          <AdxTrendChart data={sparkline} />
+        ) : (
+          <p className="text-muted-foreground italic">Sparkline unavailable for this date.</p>
+        )}
+        {zoneLabel && adxValue !== null ? (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-muted text-foreground rounded-sm">
+              {zoneLabel}
+            </span>
+            <span>{ADX_ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? zoneLabel}</span>
+          </div>
+        ) : (
+          <p className="text-muted-foreground italic mt-2">Zone unavailable for this date.</p>
+        )}
+      </StepCard>
+
+      {/* Step 3 — Scoring path (prose + reference table, no percentile strip) */}
+      <StepCard stepNumber={3} heading="Scoring path">
+        <p>
+          ADX is scored by a <span className="font-semibold">fixed-band piecewise function</span>, not by a per-ticker percentile profile. The same four bands apply to every ticker and the score is always direction-agnostic (no regime sign-flip).
+        </p>
+        <div className="mt-3 overflow-hidden rounded border border-border">
+          <table className="w-full text-[11px]">
+            <thead className="bg-muted/30 text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1 text-left font-semibold">Band</th>
+                <th className="px-2 py-1 text-left font-semibold">ADX range</th>
+                <th className="px-2 py-1 text-left font-semibold">Score range</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              <tr className="border-t border-border"><td className="px-2 py-1">ranging / no trend</td><td className="px-2 py-1">0 – 20</td><td className="px-2 py-1">−20 → 0</td></tr>
+              <tr className="border-t border-border"><td className="px-2 py-1">weak trend developing</td><td className="px-2 py-1">20 – 25</td><td className="px-2 py-1">0 → +20</td></tr>
+              <tr className="border-t border-border"><td className="px-2 py-1">developing trend</td><td className="px-2 py-1">25 – 40</td><td className="px-2 py-1">+40 → +80</td></tr>
+              <tr className="border-t border-border"><td className="px-2 py-1">strong trend</td><td className="px-2 py-1">≥ 40</td><td className="px-2 py-1">+80 (cap)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-muted-foreground text-[10px]">
+          Note the score jump at ADX = 25 (from +20 to +40). The directional pair (DI+/DI−) is not stored in this codebase, so ADX scores trend strength only.
+        </p>
+      </StepCard>
+
+      {/* Step 4 — Mapping chart (picked: Variant B — zone-tinted bands with curve overlay) */}
+      <StepCard stepNumber={4} heading="ADX score">
+        <p>
+          ADX {valueForMapping.toFixed(1)} maps to a score of{' '}
+          <span className={`font-mono font-semibold ${dummyScore >= 0 ? 'text-up' : 'text-down'}`}>{dummyScore >= 0 ? '+' : ''}{dummyScore.toFixed(1)}</span>{' '}
+          (range −20 to +80; ADX never strongly bearish):
+        </p>
+        <div className="mt-3">
+          <AdxMappingChartProtoB value={valueForMapping} />
+        </div>
+      </StepCard>
+
+      {/* Step 5 — Magnitude share in trend */}
+      <StepCard stepNumber={5} heading="Magnitude share in trend">
+        <p className="text-muted-foreground">
+          ADX's |score| within the trend category{' '}
+          <span>[PROTOTYPE — dummy items]</span>:
+        </p>
+        <div className="mt-3">
+          <CategoryShareBar items={dummyTrendItems} activeName="adx" category="trend" />
+        </div>
+      </StepCard>
+
+      {/* Step 6 — Category weight × expansion */}
+      <StepCard stepNumber={6} heading="Category weight × expansion">
+        <p>
+          Trend's base weight in the <span className="font-mono">{regime}</span> regime is{' '}
+          <span className="font-mono font-semibold">{(dummyTrendWeight * 100).toFixed(0)}%</span>, scaled by the cross-section expansion factor{' '}
+          <span className="font-mono font-semibold">×{dummyExpansion.toFixed(2)}</span>{' '}
+          <span className="text-muted-foreground">[PROTOTYPE — dummy]</span>.
+        </p>
+        <div className="mt-3">
+          <CategoryWeightBar weights={dummyCategoryWeights} regime={regime} expansion={dummyExpansion} activeName="trend" />
+        </div>
+      </StepCard>
+
+      {/* Step 7 — Net contribution */}
+      <StepCard stepNumber={7} heading="Net contribution to composite">
+        <p>
+          Final contribution of ADX to today's composite score{' '}
+          <span className="text-muted-foreground">[PROTOTYPE — dummy]</span>:
+        </p>
+        <div className="mt-3">
+          <ContributionMathChain
+            score={dummyScore}
+            denom={dummyDenom}
+            regimeWeight={dummyTrendWeight}
+            expansion={dummyExpansion}
+            finalContribution={dummyFinalContribution}
+            activeName="adx"
+          />
+        </div>
+        <p className="mt-2 text-muted-foreground italic text-[10px]">
+          Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.
+        </p>
+      </StepCard>
+    </div>
+  );
+}
+
+// =====================================================================
+// End [PROTOTYPE] AdxPanel block.
+// =====================================================================
+
 /** Placeholder shown for indicators other than rsi_14 and macd_line. */
 function PlaceholderPanel({ indicator }: { indicator: string }) {
   return (
@@ -781,6 +1091,10 @@ export function IndicatorExplainerPanel({
   if (indicator === 'stoch_k') {
     return <StochKPanel snapshot={snapshot} rules={rules} />;
   }
+  if (indicator === 'adx') {
+    // [PROTOTYPE] — temporary dispatch for visual variant pick; promoted per task plan.
+    return <AdxPanelPrototype snapshot={snapshot} />;
+  }
   return <PlaceholderPanel indicator={indicator} />;
 }
 
@@ -796,4 +1110,5 @@ export const INDICATORS_WITH_EXPLAINER: ReadonlySet<string> = new Set([
   'rsi_14',
   'macd_line',
   'stoch_k',
+  'adx', // Steps 1-2 real; Steps 3-7 still prototype-wired (in progress per task plan).
 ]);
