@@ -21,12 +21,13 @@ interface SignalBadgeProps {
 export function SignalBadge({ signal }: SignalBadgeProps) {
   if (!signal) return null;
 
+  const normalized = signal.toUpperCase();
   const colorClass =
-    signal === 'BULLISH'
-      ? 'bg-green-100 text-green-800 border-green-200'
-      : signal === 'BEARISH'
-        ? 'bg-red-100 text-red-800 border-red-200'
-        : 'bg-gray-100 text-gray-700 border-gray-200';
+    normalized === 'BULLISH'
+      ? 'border-transparent bg-[hsl(var(--up)/0.18)] text-[hsl(var(--up))]'
+      : normalized === 'BEARISH'
+        ? 'border-transparent bg-[hsl(var(--down)/0.18)] text-[hsl(var(--down))]'
+        : 'border-transparent bg-muted text-muted-foreground';
 
   return <Badge className={cn('font-mono text-xs', colorClass)}>{signal}</Badge>;
 }

@@ -161,7 +161,7 @@ describe('DashboardPage', () => {
     } as unknown as ReturnType<typeof useSnapshot>);
 
     renderDashboard();
-    expect(screen.getByText('BULLISH')).toBeInTheDocument();
+    expect(screen.getAllByText('BULLISH').length).toBeGreaterThanOrEqual(1);
   });
 
   describe('cross-section banner', () => {

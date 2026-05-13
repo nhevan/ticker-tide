@@ -165,7 +165,10 @@ export function DashboardPage() {
               snapshot={snapshot}
             />
             <div className="mb-4">
-              <ModelInputsTable payload={snapshot.daily.calibrator_payload} />
+              <ModelInputsTable
+                payload={snapshot.daily.calibrator_payload}
+                signal={snapshot.daily.signal}
+              />
             </div>
             <div className="mb-4 space-y-4">
               {crossSectionData && (

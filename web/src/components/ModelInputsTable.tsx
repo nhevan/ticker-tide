@@ -19,6 +19,13 @@
  */
 
 import type { CalibratorPayload, CalibratorContribution } from '@/lib/api/types';
+import { SignalBadge } from '@/components/SignalBadge';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -73,16 +80,76 @@ function DriverColumn({ rows, up }: ColumnProps) {
         ) : (
           rows.map((r) => (
             <tr key={r.name} className="border-b border-border/30 last:border-b-0">
-              <td className="py-1 pr-3 font-mono text-[11px] text-foreground/90" title={r.name}>
-                <span className="block max-w-[10rem] overflow-hidden text-ellipsis whitespace-nowrap">
-                  {r.name}
-                </span>
+              <td className="py-1 pr-3 font-mono text-[11px] text-foreground/90">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="block max-w-[10rem] overflow-hidden text-ellipsis whitespace-nowrap cursor-help">
+                      {r.name}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    className="font-mono text-[11px] leading-snug border border-border/60 shadow-md text-popover-foreground"
+                    style={{ backgroundColor: 'hsl(var(--card))', opacity: 1 }}
+                  >
+                    <div className="space-y-0.5 tabular-nums">
+                      <div className="text-muted-foreground text-[10px] uppercase tracking-wider mb-0.5">
+                        {r.name}
+                      </div>
+                      <div>
+                        μ ={' '}
+                        <span className="text-foreground">
+                          {Number.isFinite(r.mean) ? r.mean.toFixed(4) : '—'}
+                        </span>
+                      </div>
+                      <div>
+                        σ ={' '}
+                        <span className="text-foreground">
+                          {Number.isFinite(r.std) ? r.std.toFixed(4) : '—'}
+                        </span>
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
               </td>
               <td className="py-1 px-2 text-right text-foreground/70">
                 {Number.isFinite(r.raw) ? fmtRaw(r.raw) : '—'}
               </td>
               <td className="py-1 px-2 text-right text-foreground/70">
-                {Number.isFinite(r.z) ? fmt2(r.z) : '—'}
+                {Number.isFinite(r.z) &&
+                Number.isFinite(r.raw) &&
+                Number.isFinite(r.mean) &&
+                Number.isFinite(r.std) ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
+                        {fmt2(r.z)}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="top"
+                      className="font-mono text-[11px] leading-snug border border-border/60 shadow-md text-popover-foreground"
+                      style={{ backgroundColor: 'hsl(var(--card))', opacity: 1 }}
+                    >
+                      <div className="space-y-0.5 tabular-nums">
+                        <div>
+                          z = (raw − μ) ÷ σ
+                        </div>
+                        <div className="text-muted-foreground">
+                          {'  '}= ({r.raw.toFixed(2)} − {r.mean.toFixed(2)}) ÷{' '}
+                          {r.std.toFixed(2)}
+                        </div>
+                        <div className="text-foreground">
+                          {'  '}= {fmt2(r.z)}
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                ) : Number.isFinite(r.z) ? (
+                  fmt2(r.z)
+                ) : (
+                  '—'
+                )}
               </td>
               <td className="py-1 px-2 text-right text-foreground/70">
                 {Number.isFinite(r.weight) ? fmtWeight(r.weight) : '—'}
@@ -112,6 +179,8 @@ function DriverColumn({ rows, up }: ColumnProps) {
 
 interface ModelInputsTableProps {
   payload: CalibratorPayload | null | undefined;
+  /** Classified signal (BULLISH / NEUTRAL / BEARISH) shown as a badge in the header. */
+  signal?: string | null;
 }
 
 /**
@@ -121,7 +190,7 @@ interface ModelInputsTableProps {
  * Falls back to a muted one-liner when calibrator data is absent so the section
  * remains visually present.
  */
-export function ModelInputsTable({ payload }: ModelInputsTableProps) {
+export function ModelInputsTable({ payload, signal }: ModelInputsTableProps) {
   const hasData =
     payload != null &&
     Array.isArray(payload.contributions) &&
@@ -130,9 +199,12 @@ export function ModelInputsTable({ payload }: ModelInputsTableProps) {
   if (!hasData) {
     return (
       <section className="rounded-md border border-border/60 bg-card p-4 mb-4">
-        <h3 className="text-sm font-semibold tracking-wide text-foreground mb-2">
-          Model inputs
-        </h3>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-semibold tracking-wide text-foreground">
+            Model inputs
+          </h3>
+          <SignalBadge signal={signal} />
+        </div>
         <p className="text-xs text-muted-foreground">
           Calibrator data not available for this date.
         </p>
@@ -140,7 +212,7 @@ export function ModelInputsTable({ payload }: ModelInputsTableProps) {
     );
   }
 
-  const { intercept, prediction, contributions } = payload!;
+  const { intercept, prediction, contributions, in_sample_r2 } = payload!;
 
   // Step 1: drop non-finite contributions.
   const finite = contributions.filter((c) => Number.isFinite(c.contribution));
@@ -165,37 +237,49 @@ export function ModelInputsTable({ payload }: ModelInputsTableProps) {
   const sumPosDisplay = fmt2(sumPos);
   const sumNegDisplay = fmt2(sumNeg);
 
-  return (
-    <section className="rounded-md border border-border/60 bg-card p-4 mb-4">
-      {/* Header row */}
-      <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-wide text-foreground">
-          Model inputs
-        </h3>
-        <div className="text-xs text-muted-foreground tabular-nums">
-          intercept {interceptDisplay}{' '}
-          <span className="text-emerald-500">Σ⁺ {sumPosDisplay}</span>{' '}
-          <span className="text-rose-500">Σ⁻ {sumNegDisplay}</span>{' '}
-          = prediction{' '}
-          <span className="font-semibold text-foreground">{predictionDisplay}</span>
-        </div>
-      </div>
+  const r2Display = Number.isFinite(in_sample_r2) ? in_sample_r2.toFixed(3) : '—';
 
-      {/* Two-column split */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-emerald-500/80 mb-1">
-            drivers up ({positives.length})
+  return (
+    <TooltipProvider delayDuration={150}>
+      <section className="rounded-md border border-border/60 bg-card p-4 mb-4">
+        {/* Header row */}
+        <div className="flex items-baseline justify-between gap-4 mb-3">
+          <div className="flex items-baseline gap-3">
+            <h3 className="text-sm font-semibold tracking-wide text-foreground">
+              Model inputs
+            </h3>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              R² <span className="text-foreground">{r2Display}</span>
+            </span>
           </div>
-          <DriverColumn rows={positives} up={true} />
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-rose-500/80 mb-1">
-            drivers down ({negatives.length})
+          <div className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
+            <span>
+              intercept {interceptDisplay}{' '}
+              <span className="text-emerald-500">Σ⁺ {sumPosDisplay}</span>{' '}
+              <span className="text-rose-500">Σ⁻ {sumNegDisplay}</span>{' '}
+              = prediction{' '}
+              <span className="font-semibold text-foreground">{predictionDisplay}</span>
+            </span>
+            <SignalBadge signal={signal} />
           </div>
-          <DriverColumn rows={negatives} up={false} />
         </div>
-      </div>
-    </section>
+
+        {/* Two-column split */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-emerald-500/80 mb-1">
+              drivers up ({positives.length})
+            </div>
+            <DriverColumn rows={positives} up={true} />
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-rose-500/80 mb-1">
+              drivers down ({negatives.length})
+            </div>
+            <DriverColumn rows={negatives} up={false} />
+          </div>
+        </div>
+      </section>
+    </TooltipProvider>
   );
 }

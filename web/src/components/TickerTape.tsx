@@ -197,8 +197,6 @@ export function TickerTape({ ticker, snapshot, isLoading, error }: TickerTapePro
                 >
                   <SignalClassificationTooltip
                     daily={snapshot!.daily}
-                    weekly={snapshot!.weekly?.data_available ? snapshot!.weekly : null}
-                    monthly={snapshot!.monthly?.data_available ? snapshot!.monthly : null}
                   />
                 </PopoverContent>
               </Popover>
