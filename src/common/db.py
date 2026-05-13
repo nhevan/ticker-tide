@@ -83,6 +83,13 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         5. Add ``calibrator_payload TEXT`` column to ``scores_daily`` if absent.
            Stores the per-feature ridge regression decomposition as a JSON TEXT blob
            so the signal-classification tooltip can render Step 2b.
+        6. Add ``confidence_modifiers TEXT`` and ``confidence_base REAL`` columns to
+           ``scores_daily`` if absent. ``confidence_modifiers`` is a JSON dict of the
+           7 per-rule modifier values (timeframe_agreement, volume_confirmation,
+           indicator_consensus, earnings_proximity, vix_extreme, atr_expanding,
+           missing_data). ``confidence_base`` is the calibrated-score-derived base
+           passed into ``compute_full_confidence`` (not ``abs(final_score)``).
+           Both are NULL for rows written before this migration ran.
 
     Parameters:
         conn: An open sqlite3.Connection to the target database.
@@ -199,6 +206,30 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             logger.info("Applied migration: added scores_daily.calibrator_payload")
         else:
             logger.debug("Migration scores_daily.calibrator_payload already present — nothing to do")
+
+    # Migration 6: scores_daily.confidence_modifiers and confidence_base columns.
+    # confidence_modifiers is a JSON TEXT dict of the 7 per-rule modifier values
+    # produced by compute_confidence_modifiers(). confidence_base is the
+    # calibrated-score-derived base value passed into compute_full_confidence()
+    # (equal to min(abs(calibrated_score), 8.0) * 10.0 when calibrated_score is
+    # available, or abs(final_score) * 0.3 during cold start). Both are NULL for
+    # rows written before this migration ran.
+    # Fresh databases created by create_all_tables already include both columns.
+    if table_exists:
+        existing_cols_m6 = {row[1] for row in conn.execute("PRAGMA table_info(scores_daily)").fetchall()}
+        if "confidence_modifiers" not in existing_cols_m6:
+            conn.execute("ALTER TABLE scores_daily ADD COLUMN confidence_modifiers TEXT;")
+            conn.commit()
+            logger.info("Applied migration: added scores_daily.confidence_modifiers")
+        else:
+            logger.debug("Migration scores_daily.confidence_modifiers already present — nothing to do")
+
+        if "confidence_base" not in existing_cols_m6:
+            conn.execute("ALTER TABLE scores_daily ADD COLUMN confidence_base REAL;")
+            conn.commit()
+            logger.info("Applied migration: added scores_daily.confidence_base")
+        else:
+            logger.debug("Migration scores_daily.confidence_base already present — nothing to do")
 
 
 def _build_schema_statements() -> list[str]:
@@ -733,6 +764,8 @@ def _build_schema_statements() -> list[str]:
             raw_daily_score REAL,
             sector_etf_score REAL,
             calibrator_payload TEXT,
+            confidence_modifiers TEXT,
+            confidence_base REAL,
             UNIQUE(ticker, date)
         )""",
 

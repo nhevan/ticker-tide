@@ -16,6 +16,7 @@
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TimeframeSummaryTable } from '@/components/TimeframeSummaryTable';
+import { ConfidenceBreakdown } from '@/components/ConfidenceBreakdown';
 import { useGenerateVerdict, useVerdict } from '@/lib/hooks/useVerdict';
 import { ApiError } from '@/lib/api/client';
 import type { Snapshot } from '@/lib/api/types';
@@ -43,6 +44,12 @@ export function VerdictBlock({ ticker, date, snapshot }: VerdictBlockProps) {
     generate.error instanceof ApiError
       ? generate.error.detail
       : generate.error?.message ?? null;
+
+  const daily = snapshot.daily;
+  const showBreakdown =
+    daily.confidence_modifiers != null &&
+    Number.isFinite(daily.confidence_base) &&
+    Number.isFinite(daily.confidence);
 
   return (
     <div className="mb-4 rounded-lg border bg-card p-4">
@@ -91,6 +98,22 @@ export function VerdictBlock({ ticker, date, snapshot }: VerdictBlockProps) {
           <TimeframeSummaryTable snapshot={snapshot} />
         </div>
       </div>
+
+      {showBreakdown && (
+        <ConfidenceBreakdown
+          confidence={daily.confidence as number}
+          base={daily.confidence_base as number}
+          modifiers={daily.confidence_modifiers as Record<string, number>}
+          dailyScore={daily.daily_score ?? null}
+          weeklyScore={daily.weekly_score ?? null}
+          trendScore={daily.scores?.trend ?? null}
+          volumeScore={daily.scores?.volume ?? null}
+          earningsDate={daily.earnings?.next?.date ?? null}
+          scoringDate={daily.resolved_period}
+          calibratedScore={daily.calibrated_score ?? null}
+          indicatorScores={daily.indicator_scores ?? null}
+        />
+      )}
     </div>
   );
 }

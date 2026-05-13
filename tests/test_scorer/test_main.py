@@ -237,6 +237,110 @@ class TestSaveScoreToDb:
         assert row is not None
         assert row["calibrator_payload"] == payload_json
 
+    def test_save_score_persists_confidence_modifiers_as_json(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        Round-trip: confidence_modifiers JSON dict is written to scores_daily and
+        reads back as a parseable string containing exactly the 7 expected keys.
+        """
+        from src.scorer.main import save_score_to_db
+
+        modifiers = {
+            "timeframe_agreement": 10.0,
+            "volume_confirmation": 10.0,
+            "indicator_consensus": 5.0,
+            "earnings_proximity": 0.0,
+            "vix_extreme": 0.0,
+            "atr_expanding": 0.0,
+            "missing_data": 0.0,
+        }
+        score = {
+            "ticker": "AAPL",
+            "date": SCORING_DATE,
+            "signal": "BULLISH",
+            "confidence": 46.58,
+            "final_score": 45.0,
+            "regime": "trending",
+            "daily_score": 50.0,
+            "weekly_score": 35.0,
+            "trend_score": 60.0,
+            "momentum_score": 40.0,
+            "volume_score": 30.0,
+            "volatility_score": -10.0,
+            "candlestick_score": 20.0,
+            "structural_score": 50.0,
+            "sentiment_score": 15.0,
+            "fundamental_score": 25.0,
+            "macro_score": 30.0,
+            "data_completeness": json.dumps({"news": True}),
+            "key_signals": json.dumps(["RSI rising"]),
+            "confidence_modifiers": json.dumps(modifiers),
+            "confidence_base": 21.58,
+        }
+        save_score_to_db(db_connection, score)
+
+        row = db_connection.execute(
+            "SELECT confidence_modifiers FROM scores_daily WHERE ticker=? AND date=?",
+            ("AAPL", SCORING_DATE),
+        ).fetchone()
+        assert row is not None
+        assert row["confidence_modifiers"] is not None
+        parsed = json.loads(row["confidence_modifiers"])
+        expected_keys = {
+            "timeframe_agreement", "volume_confirmation", "indicator_consensus",
+            "earnings_proximity", "vix_extreme", "atr_expanding", "missing_data",
+        }
+        assert set(parsed.keys()) == expected_keys
+
+    def test_save_score_persists_confidence_base(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        Round-trip: confidence_base REAL is written to scores_daily and reads
+        back as the float value that was stored.
+        """
+        from src.scorer.main import save_score_to_db
+
+        expected_base = 21.58
+        score = {
+            "ticker": "AAPL",
+            "date": SCORING_DATE,
+            "signal": "BULLISH",
+            "confidence": 46.58,
+            "final_score": 45.0,
+            "regime": "trending",
+            "daily_score": 50.0,
+            "weekly_score": 35.0,
+            "trend_score": 60.0,
+            "momentum_score": 40.0,
+            "volume_score": 30.0,
+            "volatility_score": -10.0,
+            "candlestick_score": 20.0,
+            "structural_score": 50.0,
+            "sentiment_score": 15.0,
+            "fundamental_score": 25.0,
+            "macro_score": 30.0,
+            "data_completeness": json.dumps({"news": True}),
+            "key_signals": json.dumps(["RSI rising"]),
+            "confidence_modifiers": json.dumps({"timeframe_agreement": 10.0,
+                                                "volume_confirmation": 10.0,
+                                                "indicator_consensus": 5.0,
+                                                "earnings_proximity": 0.0,
+                                                "vix_extreme": 0.0,
+                                                "atr_expanding": 0.0,
+                                                "missing_data": 0.0}),
+            "confidence_base": expected_base,
+        }
+        save_score_to_db(db_connection, score)
+
+        row = db_connection.execute(
+            "SELECT confidence_base FROM scores_daily WHERE ticker=? AND date=?",
+            ("AAPL", SCORING_DATE),
+        ).fetchone()
+        assert row is not None
+        assert row["confidence_base"] == pytest.approx(expected_base)
+
 
 # ---------------------------------------------------------------------------
 # score_ticker

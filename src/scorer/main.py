@@ -439,8 +439,9 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
              sentiment_score, fundamental_score, macro_score,
              calibrated_score, model_r2,
              data_completeness, key_signals, key_signals_data,
-             raw_daily_score, sector_etf_score, calibrator_payload)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             raw_daily_score, sector_etf_score, calibrator_payload,
+             confidence_modifiers, confidence_base)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score["ticker"],
@@ -469,6 +470,8 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
             score.get("raw_daily_score"),
             score.get("sector_etf_score"),
             score.get("calibrator_payload"),
+            score.get("confidence_modifiers"),
+            score.get("confidence_base"),
         ),
     )
     db_conn.commit()
@@ -827,6 +830,8 @@ def score_ticker(
         "raw_daily_score": raw_daily,
         "sector_etf_score": sector_etf_score,
         "calibrator_payload": calibrator_payload_json,
+        "confidence_modifiers": json.dumps(confidence_result["modifiers"]),
+        "confidence_base": confidence_result["base"],
     }
 
     # 20. Save to DB

@@ -322,6 +322,25 @@ export interface DailySection {
    * NULL when the ticker has no sector_etf mapping.
    */
   sector_etf?: string | null;
+  /**
+   * Weekly composite score from scores_daily.weekly_score.
+   * Used by ConfidenceBreakdown to render the timeframe_agreement why-text.
+   * NULL when no weekly score was available at scoring time.
+   */
+  weekly_score?: number | null;
+  /**
+   * Per-rule confidence modifier values from scores_daily.confidence_modifiers,
+   * parsed from JSON. Keys: timeframe_agreement, volume_confirmation,
+   * indicator_consensus, earnings_proximity, vix_extreme, atr_expanding,
+   * missing_data. NULL for rows written before Migration 6 ran.
+   */
+  confidence_modifiers?: Record<string, number> | null;
+  /**
+   * Calibrated-score-derived confidence base from scores_daily.confidence_base.
+   * Equals min(abs(calibrated_score), 8.0) * 10.0 when calibration is available,
+   * or abs(final_score) * 0.3 during cold start. NULL for pre-Migration-6 rows.
+   */
+  confidence_base?: number | null;
 }
 
 /** Weekly or monthly snapshot card data. */

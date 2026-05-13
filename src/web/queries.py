@@ -439,6 +439,9 @@ def _build_daily_section(
         "raw_daily_score": score_dict.get("raw_daily_score"),
         "sector_etf_score": score_dict.get("sector_etf_score"),
         "sector_etf": score_dict.get("sector_etf"),
+        "weekly_score": score_dict.get("weekly_score"),
+        "confidence_modifiers": json.loads(score_dict["confidence_modifiers"]) if score_dict.get("confidence_modifiers") else None,
+        "confidence_base": score_dict.get("confidence_base"),
     }
 
 
