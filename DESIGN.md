@@ -1707,18 +1707,18 @@ For `indicator === "stoch_k"` the panel renders a 7-step trace mirroring RSI str
 - The 80/20 fallback thresholds are currently hardcoded literals in `indicator_scorer.py:533–539`; a follow-on refactor will read them from `config/scorer.json` via `scoring-rules`.
 - Steps 3 & 4 (`PercentileStrip`, `PercentileMappingChart`) are shared with the RSI panel via the `label` prop — not RSI-specific components.
 
-### 15.7 ADX (Average Directional Index) — backend wiring
+### 15.7 ADX (Average Directional Index) — 7-step trace
 
-Backend wiring landed; frontend panel pending (follow-up commit).
+All 7 steps wired to real backend data (commits: `94d24f9` backend, `4ecc075` Steps 1+2, `701d9a1` Steps 3+4, `1bf0b44` Steps 5+6+7).
 
 #### Backend data
 
 - **`daily.adx_sparkline`** — list of `{ date, adx }` rows (single-series, no secondary line). Bounded by `<= picked_date`, excludes `adx IS NULL` rows. Length capped by `sparkline.adx_sparkline_days` (default 100, `config/web.json`).
 - **`daily.adx_zone_label`** — zone string from `zone_label_for_adx()`: four fixed-band labels (`ranging`, `weak_trend_developing`, `developing_trend`, `strong_trend`). `null` when `adx` is not available in `indicators_daily` for the picked date.
 - **`daily.indicator_scores.adx`** — persisted indicator score (−20 to +80) from `indicator_scores_daily`.
-- **`/api/scoring-rules` → `adx`** — fixed-band piecewise descriptor with 4 bands, `discontinuity_at=25.0`, `score_range=[-20.0, 80.0]`. No `profile_zones` or `thresholds` (oversold/overbought) — ADX is a trend-strength indicator, not an oscillator.
+- **`/api/scoring-rules` → `adx`** — fixed-band piecewise descriptor with 4 bands, `discontinuity_at=25.0`. No `profile_zones` or `thresholds` (oversold/overbought) — ADX is a trend-strength indicator, not an oscillator.
 
-**Note: `adx_profile` is deliberately absent from the snapshot.** ADX is in `PROFILE_FREE_INDICATORS` — `score_adx()` uses hardcoded literals and does not read from `indicator_profiles`. Exposing the profile on the snapshot would mislead callers.
+**Note: `adx_profile` is deliberately absent from the snapshot.** ADX is in `PROFILE_FREE_INDICATORS` — `score_adx()` uses hardcoded literals and does not read from `indicator_profiles`. Exposing the profile on the snapshot would mislead callers. `score_range` is also intentionally absent from `AdxRules` in the TypeScript types — `AdxMappingChart` derives the axis extents from the `bands` array directly.
 
 #### ADX scoring model
 
@@ -1736,9 +1736,29 @@ ADX < 20:       score = −20 + ADX / 20 × 20          (ranging, −20→0)
 - `config/scorer.json` `indicator_thresholds.adx` — display-only thresholds read by `/api/scoring-rules`. Must be kept manually in sync with the literals in `score_adx()` (`indicator_scorer.py:381-407`). The scorer does NOT read from config at runtime.
 - `config/web.json` `sparkline.adx_sparkline_days` — window size for `daily.adx_sparkline`.
 
-#### Full 7-step trace
+#### Steps
 
-Full 7-step frontend trace will be added in the follow-up commit when the frontend panel is promoted from prototype.
+1. **ADX reading** — `daily.indicators.adx` displayed as a mono value. Zone label chip from `daily.adx_zone_label` resolved via `ADX_ZONE_LABEL_DESCRIPTIONS` (four labels: `ranging`, `weak_trend_developing`, `developing_trend`, `strong_trend`). Direction-agnostic prose: "ADX measures trend strength over the last 14 sessions on a 0–100 scale — it does not say whether the trend is up or down." Fallback prose when either value or zone label is absent.
+
+2. **Trend strength over time** — `AdxTrendChart` fed by `daily.adx_sparkline` (single-line raw SVG, y-axis 0–80, shaded zone bands at the 20/25/40 boundaries, 100-day window). Zone chip + description repeated below the chart. Sparkline rows with non-finite `adx` are filtered before render (`Number.isFinite` guard). Fallback prose when fewer than 2 data points.
+
+3. **Scoring path** — 4-row reference table wired from `rules.adx.bands` when `/api/scoring-rules` has loaded; a hardcoded fallback for the ~100ms loading window (not a permanent config-safety net). Each row shows band name, ADX range, and score range (capped bands display as `N (cap)`). Discontinuity note: score jumps from +20 to +40 at ADX = `rules.adx.discontinuity_at` (default 25). Prose notes that DI+/DI− are not in this codebase, so ADX scores trend strength only. No percentile strip — ADX is in `PROFILE_FREE_INDICATORS`.
+
+4. **ADX score** — `daily.indicator_scores.adx` (persisted). If score or value is absent: `StepCard unavailable`. If score present but `adxRules` not yet loaded: prose fallback ("ADX = X → score Y. Mapping chart unavailable (rules not yet loaded)."). If all present: `AdxMappingChart` with `value`, `score`, `bands`, and `discontinuityAt` props. Chart uses an asymmetric y-axis (−20 to +80), zone-tinted bands computed from the `bands` prop, a piecewise curve overlay, and discontinuity markers at `discontinuityAt`. Chart derives its own axis extents from `bands` — no separate `score_range` field is used.
+
+5. **Magnitude share in trend** — `CategoryShareBar` over `contributions.items.filter(item => item.category === 'trend')` with `activeName="adx"`. Component renders the headline share percentage and the denominator expansion itself.
+
+6. **Category weight × expansion** — `CategoryWeightBar` from `rules.regime_weights[regime]` (CURRENT config) with `expansion={rules.score_expansion_factor}` and `activeName="trend"`. Fallback prose uses persisted `adxItem.category_weight` and `contributions.expansion_factor` when `rules.regime_weights` is undefined.
+
+7. **Net contribution** — `ContributionMathChain` with `score={adxItem.score}`, `denom` computed inline as `Σ|trend item scores|`, `regimeWeight={adxItem.category_weight}`, `expansion={contributions.expansion_factor}`, `finalContribution={adxItem.contribution}`, `activeName="adx"`. Caveat from `rules.approximation_caveat` (falls back to hardcoded prose if undefined).
+
+#### Architectural notes vs. RSI / Stoch %K
+
+- **No percentile components** — `PercentileStrip` and `PercentileMappingChart` are not used. ADX scoring is fixed-band, not `score_with_percentile`.
+- **No regime sign-flip** — the score function is identical in trending, ranging, and volatile regimes. ADX is direction-agnostic by construction.
+- **No profile on snapshot** — `adx_profile` is intentionally absent. `PROFILE_FREE_INDICATORS` guards the scorer; the snapshot field would mislead callers into thinking a profile exists.
+- **Asymmetric score range (−20 to +80)** — the y-axis in `AdxMappingChart` is asymmetric by design (not ±100 like RSI/Stoch). The chart derives min/max from `bands` directly rather than accepting a `score_range` prop.
+- **`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`** — reused unchanged from the RSI and Stoch %K panels.
 
 ### 15.8 Other indicators
 
