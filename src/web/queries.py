@@ -170,6 +170,33 @@ def fetch_snapshot(
     }
 
 
+def _parse_calibrator_payload(raw: Optional[str]) -> Optional[dict]:
+    """
+    Parse a calibrator payload from its stored JSON string representation.
+
+    Treats SQL NULL (None) and malformed JSON as a valid absent-payload state,
+    returning None without raising. This is consistent with the convention that
+    the column is nullable — rows written before this column was added will have
+    NULL, and callers should render graceful fallbacks.
+
+    Parameters:
+        raw: The raw TEXT value from a calibrator_payload column, or None.
+
+    Returns:
+        Parsed dict, or None when raw is None or JSON is malformed.
+    """
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Malformed calibrator_payload JSON — returning None: %s",
+            exc,
+        )
+        return None
+
+
 def _parse_contributions_payload(raw: Optional[str]) -> Optional[dict]:
     """
     Parse a contributions payload from its stored JSON string representation.
@@ -370,6 +397,11 @@ def _build_daily_section(
         score_dict.get("key_signals_data")
     )
 
+    # Parse calibrator payload; treat NULL as None without raising.
+    calibrator_payload: Optional[dict] = _parse_calibrator_payload(
+        score_dict.get("calibrator_payload")
+    )
+
     return {
         "data_available": True,
         "categories": _DAILY_CATEGORIES,
@@ -403,6 +435,7 @@ def _build_daily_section(
         "cci_20_profile": cci_20_profile,
         "cci_zone_label": cci_zone_label,
         "contributions_payload": contributions_payload,
+        "calibrator_payload": calibrator_payload,
         "raw_daily_score": score_dict.get("raw_daily_score"),
         "sector_etf_score": score_dict.get("sector_etf_score"),
         "sector_etf": score_dict.get("sector_etf"),

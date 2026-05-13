@@ -439,8 +439,8 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
              sentiment_score, fundamental_score, macro_score,
              calibrated_score, model_r2,
              data_completeness, key_signals, key_signals_data,
-             raw_daily_score, sector_etf_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             raw_daily_score, sector_etf_score, calibrator_payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score["ticker"],
@@ -468,6 +468,7 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
             key_signals_data,
             score.get("raw_daily_score"),
             score.get("sector_etf_score"),
+            score.get("calibrator_payload"),
         ),
     )
     db_conn.commit()
@@ -731,6 +732,8 @@ def score_ticker(
     )
     calibrated_score = calibration_result["calibrated_score"]
     model_r2 = calibration_result["model_r2"]
+    calibrator_payload_obj = calibration_result.get("calibrator_payload")
+    calibrator_payload_json = json.dumps(calibrator_payload_obj) if calibrator_payload_obj is not None else None
 
     # Use calibrated_score for signal classification when available;
     # fall back to final_score (static composite) during cold start.
@@ -823,6 +826,7 @@ def score_ticker(
         "key_signals_data": contributions_json,
         "raw_daily_score": raw_daily,
         "sector_etf_score": sector_etf_score,
+        "calibrator_payload": calibrator_payload_json,
     }
 
     # 20. Save to DB

@@ -12,7 +12,7 @@
  */
 
 import { useScoringRules } from '@/lib/hooks/useScoringRules';
-import type { DailySection, TimeframeSection } from '@/lib/api/types';
+import type { CalibratorPayload, DailySection, TimeframeSection } from '@/lib/api/types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,162 @@ function fmt1(n: number): string {
 /** Format a number with sign prefix, 2 decimal places. */
 function fmt2(n: number): string {
   return n >= 0 ? `+${n.toFixed(2)}` : n.toFixed(2);
+}
+
+/** Format a number with sign prefix, 4 decimal places (for ridge weights). */
+function fmt4(n: number): string {
+  return n >= 0 ? `+${n.toFixed(4)}` : n.toFixed(4);
+}
+
+// ── Step2b sub-component ──────────────────────────────────────────────────────
+
+interface Step2bProps {
+  calibratorPayload: CalibratorPayload | null;
+  calibratedScore: number | null;
+  resolvedPeriod: string;
+}
+
+/**
+ * Step 2b — renders the per-feature ridge regression decomposition.
+ *
+ * Three rendering paths:
+ *   1. calibratedScore === null → nothing rendered (cold start; handled by Step 2a).
+ *   2. calibratorPayload === null but calibratedScore !== null → legacy row fallback line.
+ *   3. Both present → full math chain (intercept + top-5 expanded + remaining compact + sum).
+ */
+function Step2b({ calibratorPayload, calibratedScore, resolvedPeriod }: Step2bProps) {
+  // Cold start: calibrated_score is null → Step 2b is entirely absent.
+  if (calibratedScore === null) {
+    return null;
+  }
+
+  // Legacy row: calibrator ran but payload was not captured.
+  if (calibratorPayload === null) {
+    return (
+      <div className="mb-3">
+        <div className="mb-1 font-sans text-[11px] font-semibold text-foreground">
+          Step 2b — calibrator decomposition
+        </div>
+        <div className="pl-2 font-sans text-[10px] text-muted-foreground">
+          Decomposition not captured for this row (pre-{resolvedPeriod} data).
+        </div>
+      </div>
+    );
+  }
+
+  const { intercept, prediction, training_samples, in_sample_r2, contributions } = calibratorPayload;
+
+  // Guard: intercept and prediction must be finite.
+  if (!Number.isFinite(intercept) || !Number.isFinite(prediction)) {
+    return (
+      <div className="mb-3">
+        <div className="mb-1 font-sans text-[11px] font-semibold text-foreground">
+          Step 2b — calibrator decomposition
+        </div>
+        <div className="pl-2 font-sans text-[10px] text-muted-foreground">
+          Decomposition data is non-finite — cannot display.
+        </div>
+      </div>
+    );
+  }
+
+  // Sort by |contribution| descending; top 5 get expanded blocks, rest compact.
+  const sorted = [...contributions]
+    .filter(c => Number.isFinite(c.contribution))
+    .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+
+  const top5 = sorted.slice(0, 5);
+  const remaining = sorted.slice(5);
+
+  // Sum over the same filtered list we render — single source of truth.
+  const contribSum = sorted.reduce((acc, c) => acc + c.contribution, 0);
+  const computedSum = intercept + contribSum;
+  const off = computedSum - prediction;
+  const showRounding = Math.abs(off) > 0.01;
+
+  return (
+    <div className="mb-3">
+      <div className="mb-1 font-sans text-[11px] font-semibold text-foreground">
+        Step 2b — how the calibrator got {fmt2(prediction)}
+      </div>
+      <div className="pl-2">
+        <div className="mb-1 font-sans text-[10px] text-muted-foreground">
+          ridge regression on past {training_samples} signals, in-sample R² ={' '}
+          {Number.isFinite(in_sample_r2) ? in_sample_r2.toFixed(3) : '—'}{' '}
+          (low values expected — markets are noisy)
+        </div>
+        <div className="mb-1 text-muted-foreground">
+          calibrated = intercept + Σ (weight&#x1D62; · z&#x1D62;){'   '}where z&#x1D62; = (x&#x1D62; − μ&#x1D62;) / σ&#x1D62;
+        </div>
+        <div className="mb-1">
+          <span className="text-muted-foreground">intercept</span>{' '}
+          <span className="text-foreground">= {fmt2(intercept)}</span>
+        </div>
+
+        {/* Top 5 contributors — expanded 3-line blocks */}
+        {top5.map((item) => (
+          <div key={item.name} className="mb-1.5 space-y-0.5">
+            <div>
+              <span className="text-muted-foreground">{item.name}</span>
+              {'   '}
+              <span className="text-foreground">contrib = {fmt2(item.contribution)}</span>
+            </div>
+            {Number.isFinite(item.raw) && Number.isFinite(item.mean) && Number.isFinite(item.std) && Number.isFinite(item.z) ? (
+              <>
+                <div className="pl-4 text-muted-foreground">
+                  z = (raw − μ) / σ = ({fmt2(item.raw)} − {fmt2(item.mean)}) / {item.std.toFixed(2)} = {fmt2(item.z)}
+                </div>
+                <div className="pl-4 text-muted-foreground">
+                  contrib = z · weight = {fmt2(item.z)} · {fmt4(item.weight)} = {fmt2(item.contribution)}
+                </div>
+              </>
+            ) : null}
+          </div>
+        ))}
+
+        {/* Remaining contributors — compact single-line */}
+        {remaining.length > 0 && (
+          <div className="mb-1 space-y-0.5">
+            {remaining.map((item) => (
+              <div key={item.name} className="text-muted-foreground">
+                <span>{item.name}</span>
+                {'   '}
+                z={Number.isFinite(item.z) ? fmt2(item.z) : '—'} · w={Number.isFinite(item.weight) ? fmt4(item.weight) : '—'} ={' '}
+                <span className="text-foreground">{Number.isFinite(item.contribution) ? fmt2(item.contribution) : '—'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Sum line */}
+        <div className="mt-1 space-y-0.5">
+          <div className="text-muted-foreground">
+            sum = intercept + Σ contributions = {fmt2(intercept)} + {fmt2(contribSum)} = {fmt2(computedSum)}
+          </div>
+          <div className="text-foreground">
+            ≈ prediction ({fmt2(prediction)})
+            {showRounding && (
+              <span className="ml-1 font-sans text-[10px] text-muted-foreground">
+                (off by {fmt2(off)} — rounding)
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="mt-2 space-y-0.5 font-sans text-[10px] leading-relaxed text-muted-foreground">
+          <div>
+            The model retrains nightly — these weights and contributions are as-of {resolvedPeriod}{' '}
+            and will differ on other dates.
+          </div>
+          <div>
+            z: how many σ above/below the training-window mean. Weight: ridge coefficient on the
+            standardized feature; units are % excess return per σ.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -276,10 +432,10 @@ export function SignalClassificationTooltip({
         </div>
       </div>
 
-      {/* Step 2 — pick effective score */}
+      {/* Step 2a — pick effective score */}
       <div className="mb-3">
         <div className="mb-1 font-sans text-[11px] font-semibold text-foreground">
-          Step 2 — pick effective score
+          Step 2a — pick effective score
         </div>
         <div className="pl-2">
           <div className="mb-2 font-sans text-[10px] text-muted-foreground">
@@ -340,6 +496,13 @@ export function SignalClassificationTooltip({
           </div>
         </div>
       </div>
+
+      {/* Step 2b — calibrator decomposition */}
+      <Step2b
+        calibratorPayload={daily.calibrator_payload ?? null}
+        calibratedScore={calibratedScore}
+        resolvedPeriod={daily.resolved_period}
+      />
 
       {/* Step 3 — classify against thresholds */}
       <div>

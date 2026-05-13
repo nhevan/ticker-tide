@@ -80,6 +80,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
            ``scores_daily`` if absent. These expose the pre-sector-adjustment daily
            score and the sector ETF composite score so the frontend signal-classification
            tooltip can reconstruct the sector adjustment math chain.
+        5. Add ``calibrator_payload TEXT`` column to ``scores_daily`` if absent.
+           Stores the per-feature ridge regression decomposition as a JSON TEXT blob
+           so the signal-classification tooltip can render Step 2b.
 
     Parameters:
         conn: An open sqlite3.Connection to the target database.
@@ -182,6 +185,20 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             logger.info("Applied migration: added scores_daily.sector_etf_score")
         else:
             logger.debug("Migration scores_daily.sector_etf_score already present — nothing to do")
+
+    # Migration 5: scores_daily.calibrator_payload column.
+    # Stores the per-feature decomposition of the ridge regression prediction as a
+    # JSON TEXT blob. NULL for rows written before this migration ran (pre-migration
+    # rows get a graceful "Decomposition not captured" fallback in the UI).
+    # Fresh databases created by create_all_tables already include this column.
+    if table_exists:
+        existing_cols_m5 = {row[1] for row in conn.execute("PRAGMA table_info(scores_daily)").fetchall()}
+        if "calibrator_payload" not in existing_cols_m5:
+            conn.execute("ALTER TABLE scores_daily ADD COLUMN calibrator_payload TEXT;")
+            conn.commit()
+            logger.info("Applied migration: added scores_daily.calibrator_payload")
+        else:
+            logger.debug("Migration scores_daily.calibrator_payload already present — nothing to do")
 
 
 def _build_schema_statements() -> list[str]:
@@ -715,6 +732,7 @@ def _build_schema_statements() -> list[str]:
             key_signals_data TEXT,
             raw_daily_score REAL,
             sector_etf_score REAL,
+            calibrator_payload TEXT,
             UNIQUE(ticker, date)
         )""",
 

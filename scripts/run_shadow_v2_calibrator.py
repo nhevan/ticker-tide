@@ -59,7 +59,7 @@ from src.common.config import (  # noqa: E402
     get_training_excluded_tickers,
     load_config,
 )
-from src.common.db import get_connection  # noqa: E402
+from src.common.db import get_connection, run_migrations  # noqa: E402
 from src.scorer.main import score_ticker  # noqa: E402
 
 logging.basicConfig(
@@ -186,6 +186,7 @@ def _run_shadow_scoring(
     excluded: set[str] = get_training_excluded_tickers()
 
     conn = get_connection(shadow_db_path)
+    run_migrations(conn)
 
     today = date.today()
     daily_months: int = scorer_config.get("historical_scoring", {}).get(

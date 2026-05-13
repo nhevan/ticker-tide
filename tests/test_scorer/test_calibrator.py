@@ -17,6 +17,8 @@ import numpy as np
 import pytest
 
 from src.scorer.calibrator import (
+    FEATURE_NAMES,
+    build_calibrator_payload,
     build_feature_vector,
     compute_excess_return,
     fetch_training_data,
@@ -617,3 +619,242 @@ class TestCalibrateScore:
         # With deterministic correlated training data, bullish features should
         # produce a positive or at least not strongly negative calibrated score
         assert result["calibrated_score"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_calibrator_payload
+# ---------------------------------------------------------------------------
+
+def _make_payload_args(
+    intercept: float = 1.0,
+    prediction: float = 3.5,
+    n_training_samples: int = 100,
+    model_r2: float = 0.12,
+) -> dict:
+    """Return a minimal valid kwargs dict for build_calibrator_payload."""
+    n = len(FEATURE_NAMES)
+    x_new_raw = [float(i) for i in range(n)]
+    col_mean = [0.0] * n
+    col_std = [1.0] * n
+    feature_weights = [0.1] * n
+    return {
+        "feature_names": FEATURE_NAMES,
+        "x_new_raw": x_new_raw,
+        "col_mean": col_mean,
+        "col_std": col_std,
+        "feature_weights": feature_weights,
+        "intercept": intercept,
+        "prediction": prediction,
+        "model_r2": model_r2,
+        "n_training_samples": n_training_samples,
+    }
+
+
+class TestBuildCalibratorPayload:
+    """Tests for build_calibrator_payload — pure function, no DB side-effects."""
+
+    def test_build_calibrator_payload_shape(self):
+        """Payload has correct shape: feature_count == len(contributions) == len(FEATURE_NAMES)."""
+        args = _make_payload_args()
+        payload = build_calibrator_payload(**args)
+
+        assert payload["feature_count"] == len(FEATURE_NAMES)
+        assert len(payload["contributions"]) == len(FEATURE_NAMES)
+        assert payload["feature_count"] == len(payload["contributions"])
+
+    def test_build_calibrator_payload_all_feature_names_present_in_order(self):
+        """All 17 feature names appear in the contributions list in canonical order."""
+        args = _make_payload_args()
+        payload = build_calibrator_payload(**args)
+
+        names_in_payload = [c["name"] for c in payload["contributions"]]
+        assert names_in_payload == FEATURE_NAMES
+
+    def test_build_calibrator_payload_contribution_keys(self):
+        """Each contribution dict has exactly the 7 expected keys."""
+        expected_keys = {"name", "raw", "mean", "std", "z", "weight", "contribution"}
+        args = _make_payload_args()
+        payload = build_calibrator_payload(**args)
+
+        for item in payload["contributions"]:
+            assert set(item.keys()) == expected_keys, (
+                f"Contribution for {item.get('name')!r} has unexpected keys: {set(item.keys())}"
+            )
+
+    def test_build_calibrator_payload_sum_invariant(self):
+        """intercept + sum(contributions) ≈ prediction within 1e-6."""
+        n = len(FEATURE_NAMES)
+        # Use non-trivial values so the sum actually exercises the math.
+        x_new_raw = [float(i * 2 - n) for i in range(n)]
+        col_mean = [float(i) for i in range(n)]
+        col_std = [1.0 + float(i) * 0.1 for i in range(n)]
+        feature_weights = [0.05 * (i + 1) for i in range(n)]
+        intercept = 0.5
+
+        # Compute expected prediction from the formula.
+        z_values = [(x_new_raw[i] - col_mean[i]) / col_std[i] for i in range(n)]
+        expected_sum = intercept + sum(z_values[i] * feature_weights[i] for i in range(n))
+
+        payload = build_calibrator_payload(
+            feature_names=FEATURE_NAMES,
+            x_new_raw=x_new_raw,
+            col_mean=col_mean,
+            col_std=col_std,
+            feature_weights=feature_weights,
+            intercept=intercept,
+            prediction=expected_sum,
+            model_r2=0.1,
+            n_training_samples=50,
+        )
+
+        computed_sum = payload["intercept"] + sum(
+            c["contribution"] for c in payload["contributions"]
+        )
+        assert abs(computed_sum - payload["prediction"]) < 1e-6
+
+    def test_build_calibrator_payload_excludes_intercept_from_features(self):
+        """
+        The 17th feature weight must NOT equal weights[-1] when called correctly.
+
+        This catches the zip-too-far bug: if the caller accidentally passes all 18
+        weights (features + intercept) as feature_weights, the last contribution would
+        incorrectly receive the ridge intercept coefficient. The correct contract is
+        that feature_weights has length 17 (feature_weights[:len(FEATURE_NAMES)]).
+        """
+        n = len(FEATURE_NAMES)
+        feature_weights = [0.1 * (i + 1) for i in range(n)]  # 17 elements
+        intercept_value = 9999.99  # conspicuously different value
+
+        args = _make_payload_args(intercept=intercept_value)
+        args["feature_weights"] = feature_weights
+
+        payload = build_calibrator_payload(**args)
+
+        last_contribution_weight = payload["contributions"][-1]["weight"]
+        assert last_contribution_weight != intercept_value, (
+            "The intercept value must NOT appear as a feature weight in contributions"
+        )
+
+    def test_build_calibrator_payload_top_level_fields(self):
+        """Payload contains intercept, prediction, training_samples, in_sample_r2, feature_count."""
+        args = _make_payload_args(intercept=1.23, prediction=2.34, n_training_samples=77, model_r2=0.08)
+        payload = build_calibrator_payload(**args)
+
+        assert payload["intercept"] == pytest.approx(1.23)
+        assert payload["prediction"] == pytest.approx(2.34)
+        assert payload["training_samples"] == 77
+        assert payload["in_sample_r2"] == pytest.approx(0.08)
+        assert payload["feature_count"] == len(FEATURE_NAMES)
+
+    def test_constant_feature_does_not_crash(self):
+        """A feature with std=0 (replaced with 1.0 upstream) produces a finite contribution."""
+        n = len(FEATURE_NAMES)
+        args = _make_payload_args()
+        # col_std[0] is already 1.0 (simulating the 0→1.0 replacement in _fit_ridge)
+        args["col_std"] = [1.0] * n
+
+        payload = build_calibrator_payload(**args)
+
+        for item in payload["contributions"]:
+            assert isinstance(item["z"], float)
+            assert isinstance(item["contribution"], float)
+
+
+class TestFitRidgeReturnsShapeStableDict:
+    """Tests for _fit_ridge extended return dict shape."""
+
+    def test_fit_ridge_returns_shape_stable_dict(self):
+        """train_ridge_and_predict (≥2 samples) returns all 6 expected keys."""
+        from src.scorer.calibrator import train_ridge_and_predict
+        X_train = np.random.randn(10, 5)
+        y_train = np.random.randn(10)
+        x_new = np.random.randn(5)
+
+        result = train_ridge_and_predict(X_train, y_train, x_new, ridge_lambda=0.1)
+
+        expected_keys = {"prediction", "model_r2", "weights", "col_mean", "col_std", "x_new_scaled"}
+        assert expected_keys == set(result.keys()), (
+            f"Missing or extra keys: {set(result.keys()).symmetric_difference(expected_keys)}"
+        )
+
+    def test_fit_ridge_cold_start_returns_shape_stable_dict(self):
+        """train_ridge_and_predict with <2 samples returns shape-stable zero-vectors."""
+        from src.scorer.calibrator import train_ridge_and_predict
+        X_train = np.array([[1.0, 2.0, 3.0]])  # 1 sample → cold start
+        y_train = np.array([1.0])
+        x_new = np.array([1.0, 2.0, 3.0])
+
+        result = train_ridge_and_predict(X_train, y_train, x_new, ridge_lambda=0.1)
+
+        assert "col_mean" in result
+        assert "col_std" in result
+        assert "x_new_scaled" in result
+        assert len(result["col_mean"]) == 3
+        assert len(result["col_std"]) == 3
+        assert len(result["x_new_scaled"]) == 3
+
+
+class TestCalibratScoreReturnsPayload:
+    """Tests for calibrate_score returning calibrator_payload."""
+
+    def test_calibrate_score_returns_payload_when_calibrated(
+        self, db_connection, calibration_config,
+        sample_category_scores, sample_raw_indicators, sample_ema_positions,
+    ):
+        """Happy path: calibrated_score is not None → calibrator_payload is a non-None dict."""
+        _populate_training_data(db_connection, n_signals=50)
+
+        result = calibrate_score(
+            conn=db_connection,
+            scoring_date="2025-02-20",
+            category_scores=sample_category_scores,
+            raw_indicators=sample_raw_indicators,
+            ema_positions=sample_ema_positions,
+            config=calibration_config,
+        )
+
+        assert result["calibrated_score"] is not None
+        payload = result.get("calibrator_payload")
+        assert payload is not None
+        assert isinstance(payload, dict)
+        assert "contributions" in payload
+        assert len(payload["contributions"]) == len(FEATURE_NAMES)
+
+    def test_calibrate_score_returns_none_payload_when_disabled(
+        self, db_connection, calibration_config,
+        sample_category_scores, sample_raw_indicators, sample_ema_positions,
+    ):
+        """When calibration disabled, calibrator_payload is None."""
+        calibration_config["enabled"] = False
+
+        result = calibrate_score(
+            conn=db_connection,
+            scoring_date="2025-02-20",
+            category_scores=sample_category_scores,
+            raw_indicators=sample_raw_indicators,
+            ema_positions=sample_ema_positions,
+            config=calibration_config,
+        )
+
+        assert result["calibrated_score"] is None
+        assert result.get("calibrator_payload") is None
+
+    def test_calibrate_score_returns_none_payload_when_cold_start(
+        self, db_connection, calibration_config,
+        sample_category_scores, sample_raw_indicators, sample_ema_positions,
+    ):
+        """Cold start (empty DB) → calibrator_payload is None."""
+        calibration_config["min_training_samples"] = 30
+        # No data in DB
+
+        result = calibrate_score(
+            conn=db_connection,
+            scoring_date="2025-02-20",
+            category_scores=sample_category_scores,
+            raw_indicators=sample_raw_indicators,
+            ema_positions=sample_ema_positions,
+            config=calibration_config,
+        )
+
+        assert result["calibrated_score"] is None
+        assert result.get("calibrator_payload") is None

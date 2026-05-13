@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SignalClassificationTooltip } from '@/components/SignalClassificationTooltip';
-import type { DailySection, TimeframeSection, ScoringRules } from '@/lib/api/types';
+import type { CalibratorPayload, DailySection, TimeframeSection, ScoringRules } from '@/lib/api/types';
 
 // ── Mock useScoringRules ───────────────────────────────────────────────────────
 
@@ -107,10 +107,10 @@ describe('SignalClassificationTooltip', () => {
       <SignalClassificationTooltip daily={daily} weekly={weekly} monthly={monthly} />,
     );
 
-    // All three step headings must be visible.
+    // All step headings must be visible.
     expect(screen.getByText(/Step 1a —/i)).toBeInTheDocument();
     expect(screen.getByText(/Step 1b —/i)).toBeInTheDocument();
-    expect(screen.getByText(/Step 2 —/i)).toBeInTheDocument();
+    expect(screen.getByText(/Step 2a —/i)).toBeInTheDocument();
     expect(screen.getByText(/Step 3 —/i)).toBeInTheDocument();
 
     // Sector ETF symbol must appear in Step 1a.
@@ -125,6 +125,95 @@ describe('SignalClassificationTooltip', () => {
     // Final classification — effective=4.7 >= bullish=2 → BULLISH
     // Appears in both the formula row and the result row.
     expect(screen.getAllByText('BULLISH').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('payload_present_renders_math_chain: Step 2b shows decomposition when calibrator_payload is present', () => {
+    vi.mocked(useScoringRules).mockReturnValue({
+      data: MOCK_SCORING_RULES,
+    } as ReturnType<typeof useScoringRules>);
+
+    // Build a minimal calibrator payload with 17 features.
+    const featureNames = [
+      'trend_score', 'momentum_score', 'volume_score', 'volatility_score',
+      'fundamental_score', 'macro_score', 'rsi_14', 'adx', 'macd_histogram',
+      'stoch_k', 'bb_pctb', 'cmf_20', 'price_ema9_spread', 'ema9_ema21_spread',
+      'ema21_ema50_spread', 'weekly_score', 'monthly_score',
+    ];
+    const intercept = 0.5;
+    const contribs = featureNames.map((name, i) => ({
+      name,
+      raw: i * 1.0,
+      mean: 0.0,
+      std: 1.0,
+      z: i * 1.0,
+      weight: 0.1,
+      contribution: i * 0.1,
+    }));
+    const sumContribs = contribs.reduce((acc, c) => acc + c.contribution, 0);
+    const prediction = intercept + sumContribs;
+
+    const payload: CalibratorPayload = {
+      intercept,
+      prediction,
+      training_samples: 120,
+      in_sample_r2: 0.09,
+      feature_count: 17,
+      contributions: contribs,
+    };
+
+    const daily = makeDaily({ calibrated_score: prediction, calibrator_payload: payload });
+    render(
+      <SignalClassificationTooltip daily={daily} weekly={makeWeekly()} monthly={makeMonthly()} />,
+    );
+
+    // Step 2b header must appear.
+    expect(screen.getByText(/Step 2b —/i)).toBeInTheDocument();
+
+    // Training samples caption must mention 120 signals.
+    expect(screen.getByText(/120 signals/i)).toBeInTheDocument();
+
+    // The highest-|contribution| feature is monthly_score (index 16, contribution=1.6).
+    // Its name must appear in the top-5 expanded blocks.
+    expect(screen.getByText('monthly_score')).toBeInTheDocument();
+
+    // Sum reconciliation line must be present.
+    expect(screen.getByText(/≈ prediction/i)).toBeInTheDocument();
+  });
+
+  it('payload_null_suppresses_step_2b: legacy row shows fallback text, no math chain', () => {
+    vi.mocked(useScoringRules).mockReturnValue({
+      data: MOCK_SCORING_RULES,
+    } as ReturnType<typeof useScoringRules>);
+
+    // calibrated_score is present but calibrator_payload is null (pre-migration row).
+    const daily = makeDaily({ calibrated_score: 3.5, calibrator_payload: null });
+    render(
+      <SignalClassificationTooltip daily={daily} weekly={makeWeekly()} monthly={makeMonthly()} />,
+    );
+
+    // Fallback prose must appear.
+    expect(screen.getByText(/Decomposition not captured/i)).toBeInTheDocument();
+
+    // No math chain labels.
+    expect(screen.queryByText(/training_samples/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/≈ prediction/i)).not.toBeInTheDocument();
+  });
+
+  it('calibrated_null_suppresses_step_2b_entirely: cold start has no Step 2b at all', () => {
+    vi.mocked(useScoringRules).mockReturnValue({
+      data: MOCK_SCORING_RULES,
+    } as ReturnType<typeof useScoringRules>);
+
+    // calibrated_score = null → Step 2b must not appear at all.
+    const daily = makeDaily({ calibrated_score: null, calibrator_payload: null });
+    render(
+      <SignalClassificationTooltip daily={daily} weekly={makeWeekly()} monthly={makeMonthly()} />,
+    );
+
+    // Step 2b heading must be absent.
+    expect(screen.queryByText(/Step 2b —/i)).not.toBeInTheDocument();
+    // Decomposition fallback must also be absent.
+    expect(screen.queryByText(/Decomposition not captured/i)).not.toBeInTheDocument();
   });
 
   it('cold start: shows cold-start label in Step 2, classification uses composite_score', () => {

@@ -264,3 +264,72 @@ def test_fresh_db_has_raw_daily_score_and_sector_etf_score_after_create(
     assert "raw_daily_score" in columns
     assert "sector_etf_score" in columns
     conn.close()
+
+
+def test_migration_5_adds_calibrator_payload_to_old_schema(tmp_path: Path) -> None:
+    """
+    Migration 5: if scores_daily was created without calibrator_payload,
+    run_migrations must add the column.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = sqlite3.connect(db_file)
+
+    # Minimal old-schema scores_daily without calibrator_payload.
+    conn.execute(
+        """CREATE TABLE scores_daily (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            signal TEXT,
+            confidence REAL,
+            final_score REAL,
+            key_signals TEXT,
+            key_signals_data TEXT,
+            raw_daily_score REAL,
+            sector_etf_score REAL,
+            UNIQUE(ticker, date)
+        )"""
+    )
+    conn.commit()
+
+    columns_before = _get_column_names(conn, "scores_daily")
+    assert "calibrator_payload" not in columns_before
+
+    run_migrations(conn)
+
+    columns_after = _get_column_names(conn, "scores_daily")
+    assert "calibrator_payload" in columns_after, (
+        "run_migrations must add calibrator_payload to scores_daily"
+    )
+    conn.close()
+
+
+def test_migration_5_is_idempotent(tmp_path: Path) -> None:
+    """
+    Calling run_migrations twice must not raise and calibrator_payload must
+    appear exactly once — no duplicate columns.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = get_connection(db_file)
+    create_all_tables(conn)
+
+    run_migrations(conn)
+    run_migrations(conn)  # must not raise
+
+    columns = _get_column_names(conn, "scores_daily")
+    assert columns.count("calibrator_payload") == 1
+    conn.close()
+
+
+def test_fresh_db_has_calibrator_payload_after_create(tmp_path: Path) -> None:
+    """
+    A database created via create_all_tables already has calibrator_payload
+    (it is in the CREATE TABLE statement); migration is a no-op for it.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = get_connection(db_file)
+    create_all_tables(conn)
+    run_migrations(conn)
+
+    columns = _get_column_names(conn, "scores_daily")
+    assert "calibrator_payload" in columns
+    conn.close()

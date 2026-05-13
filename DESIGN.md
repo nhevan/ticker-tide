@@ -344,7 +344,13 @@ Final confidence is clamped to [0, 100].
     individual stocks), train ridge on 17 features
     (6 category scores + 6 raw indicators + 3 EMA spreads + weekly_score + monthly_score), predict expected excess
     return for current signal → `calibrated_score`. Falls back to None (cold start)
-    if fewer than `min_training_samples` are available.
+    if fewer than `min_training_samples` are available. When calibration succeeds,
+    `calibrate_score()` also returns a `calibrator_payload` dict containing the per-feature
+    decomposition (`intercept`, `prediction`, `training_samples`, `in_sample_r2`, and a
+    `contributions` list with `{name, raw, mean, std, z, weight, contribution}` for each of
+    the 17 features). The payload is JSON-serialised by `score_ticker` and written to
+    `scores_daily.calibrator_payload`. Returns `None` for the payload on cold-start or
+    when calibration is disabled.
 11. Classify signal using `calibrated_score` if available, otherwise `final_score`. `effective_score`
     is a local variable only — it is never persisted.
 12. Compute confidence: base = `min(abs(calibrated_score), 8.0) * 10.0` when warm
@@ -776,6 +782,7 @@ Enable WAL mode on connection.
 - key_signals_data TEXT (nullable) — JSON contribution payload used by the `/why` command and the dashboard contribution matrix. See §11.1 below for the schema and approximation notes.
 - raw_daily_score REAL (nullable) — pre-sector-adjustment daily composite score (before `apply_sector_adjustment` is called). NULL on rows written before this column was added (migration-safe). Together with `daily_score`, allows the frontend to reconstruct `sector_adj = daily_score - raw_daily_score` (effective, clamp-aware adjustment).
 - sector_etf_score REAL (nullable) — the sector ETF composite score computed by `compute_sector_etf_score()` at the time of scoring. NULL when no sector ETF is mapped for the ticker, or on legacy rows. Used by the signal-classification tooltip to show the ETF score sub-line.
+- calibrator_payload TEXT (nullable) — JSON blob containing the per-feature ridge regression decomposition: `{intercept, prediction, training_samples, in_sample_r2, feature_count, contributions: [{name, raw, mean, std, z, weight, contribution}]}`. NULL on rows written before Migration 5, or when calibration is disabled / cold-start. Used by the signal-classification tooltip Step 2b to render the math chain explaining how the calibrated score was computed.
 - UNIQUE(ticker, date)
 
 **scores_weekly** — denormalized weekly composite snapshot for query/UI consumers (e.g., `/detail` and scatter views). NOT in the scoring critical path: the runtime `merge_timeframes()` still consumes the in-memory composite and writes the final ±100 to `scores_daily.final_score`. This table is a write-through projection so historical queries do not need to recompute weekly aggregates from `indicators_weekly`.

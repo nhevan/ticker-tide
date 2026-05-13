@@ -165,6 +165,9 @@ def train_ridge_and_predict(
             "prediction": 0.0,
             "model_r2": 0.0,
             "weights": [0.0] * (n_feats + 1),
+            "col_mean": [0.0] * n_feats,
+            "col_std": [1.0] * n_feats,
+            "x_new_scaled": [0.0] * n_feats,
         }
 
     # Suppress spurious BLAS warnings from Apple Accelerate on macOS.
@@ -218,6 +221,96 @@ def _fit_ridge(
         "prediction": prediction,
         "model_r2": model_r2,
         "weights": weights.tolist(),
+        "col_mean": col_mean.tolist(),
+        "col_std": col_std.tolist(),
+        "x_new_scaled": x_new_scaled.tolist(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Calibrator decomposition payload
+# ---------------------------------------------------------------------------
+
+def build_calibrator_payload(
+    feature_names: list[str],
+    x_new_raw: list[float],
+    col_mean: list[float],
+    col_std: list[float],
+    feature_weights: list[float],
+    intercept: float,
+    prediction: float,
+    model_r2: float,
+    n_training_samples: int,
+) -> dict:
+    """
+    Build a per-feature decomposition payload explaining a ridge regression prediction.
+
+    The identity implemented here is:
+        prediction ≈ intercept + Σ (weight_i × z_i)
+        where z_i = (x_new_raw[i] − col_mean[i]) / col_std[i]
+
+    The ``feature_weights`` argument must contain exactly len(feature_names)
+    weights — i.e. feature_weights[:len(FEATURE_NAMES)] from the ridge output.
+    The ridge intercept term (at index -1 of the full weights vector) must NOT
+    be passed here; it is passed separately via the ``intercept`` argument.
+
+    Parameters:
+        feature_names:     Ordered list of feature names (length N).
+        x_new_raw:         Raw (unstandardised) feature values for the current
+                           signal (length N).
+        col_mean:          Training-window column means used for standardisation
+                           (length N).
+        col_std:           Training-window column stds used for standardisation,
+                           with zeros already replaced by 1.0 (length N).
+        feature_weights:   Ridge coefficients for the N features only — must
+                           NOT include the intercept element (length N).
+        intercept:         Ridge intercept coefficient (the -1 element from the
+                           full weights vector).
+        prediction:        The calibrated score (output of the ridge model).
+        model_r2:          In-sample R² of the training fit.
+        n_training_samples: Number of rows used to train this model.
+
+    Returns:
+        Dict with keys:
+            intercept (float)
+            prediction (float)
+            training_samples (int)
+            in_sample_r2 (float)
+            feature_count (int)  — derived from len(contributions); NEVER a literal.
+            contributions (list[dict]) — each with keys:
+                name, raw, mean, std, z, weight, contribution.
+        Invariant: abs(intercept + sum(c["contribution"] for c in contributions) - prediction) < 1e-6
+        (holds when the prediction was computed from the same x_new_raw values).
+    """
+    n = len(feature_names)
+    if not (len(x_new_raw) == len(col_mean) == len(col_std) == len(feature_weights) == n):
+        raise ValueError(
+            f"build_calibrator_payload length mismatch: feature_names={n}, "
+            f"x_new_raw={len(x_new_raw)}, col_mean={len(col_mean)}, "
+            f"col_std={len(col_std)}, feature_weights={len(feature_weights)}"
+        )
+
+    contributions = []
+    for i in range(n):
+        z_value = (x_new_raw[i] - col_mean[i]) / col_std[i]
+        contrib_value = z_value * feature_weights[i]
+        contributions.append({
+            "name": feature_names[i],
+            "raw": x_new_raw[i],
+            "mean": col_mean[i],
+            "std": col_std[i],
+            "z": z_value,
+            "weight": feature_weights[i],
+            "contribution": contrib_value,
+        })
+
+    return {
+        "intercept": intercept,
+        "prediction": prediction,
+        "training_samples": n_training_samples,
+        "in_sample_r2": model_r2,
+        "feature_count": len(contributions),
+        "contributions": contributions,
     }
 
 
@@ -432,7 +525,7 @@ def calibrate_score(
     """
     if not config.get("enabled", True):
         logger.info("phase=%s calibration disabled", _PHASE)
-        return {"calibrated_score": None, "model_r2": 0.0, "weights": None}
+        return {"calibrated_score": None, "model_r2": 0.0, "weights": None, "calibrator_payload": None}
 
     min_samples = config.get("min_training_samples", 30)
     ridge_lambda = config.get("ridge_lambda", 0.1)
@@ -447,7 +540,7 @@ def calibrate_score(
             "phase=%s cold start — only %d training samples (need %d)",
             _PHASE, len(X_train), min_samples,
         )
-        return {"calibrated_score": None, "model_r2": 0.0, "weights": None}
+        return {"calibrated_score": None, "model_r2": 0.0, "weights": None, "calibrator_payload": None}
 
     # Build feature vector for the current signal
     x_new = np.array(build_feature_vector(
@@ -472,8 +565,32 @@ def calibrate_score(
         {name: round(w, 4) for name, w in zip(FEATURE_NAMES, result["weights"])},
     )
 
+    # Build per-feature decomposition payload. Isolate failures so a payload
+    # construction bug degrades to calibrator_payload=None rather than losing
+    # the score for this ticker.
+    try:
+        x_new_raw_list = x_new.tolist()
+        calibrator_payload: Optional[dict] = build_calibrator_payload(
+            feature_names=FEATURE_NAMES,
+            x_new_raw=x_new_raw_list,
+            col_mean=result["col_mean"],
+            col_std=result["col_std"],
+            feature_weights=result["weights"][:len(FEATURE_NAMES)],
+            intercept=result["weights"][-1],
+            prediction=result["prediction"],
+            model_r2=result["model_r2"],
+            n_training_samples=len(X_train),
+        )
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        logger.warning(
+            "phase=%s date=%s build_calibrator_payload failed (%s) — payload set to None",
+            _PHASE, scoring_date, exc,
+        )
+        calibrator_payload = None
+
     return {
         "calibrated_score": calibrated_score,
         "model_r2": model_r2,
         "weights": result["weights"],
+        "calibrator_payload": calibrator_payload,
     }

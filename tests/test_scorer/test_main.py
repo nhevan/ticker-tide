@@ -188,6 +188,55 @@ class TestSaveScoreToDb:
         ).fetchone()
         assert row["signal"] == "BEARISH"
 
+    def test_save_score_persists_calibrator_payload(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """Round-trip: calibrator_payload JSON is written and read back identically."""
+        from src.scorer.main import save_score_to_db
+        import json
+
+        payload = {
+            "intercept": 0.5,
+            "prediction": 2.3,
+            "training_samples": 80,
+            "in_sample_r2": 0.11,
+            "feature_count": 17,
+            "contributions": [{"name": "trend_score", "raw": 55.0, "mean": 0.0, "std": 1.0,
+                               "z": 55.0, "weight": 0.1, "contribution": 5.5}],
+        }
+        payload_json = json.dumps(payload)
+
+        score = {
+            "ticker": "AAPL",
+            "date": SCORING_DATE,
+            "signal": "BULLISH",
+            "confidence": 72.0,
+            "final_score": 45.0,
+            "regime": "trending",
+            "daily_score": 50.0,
+            "weekly_score": 35.0,
+            "trend_score": 60.0,
+            "momentum_score": 40.0,
+            "volume_score": 30.0,
+            "volatility_score": -10.0,
+            "candlestick_score": 20.0,
+            "structural_score": 50.0,
+            "sentiment_score": 15.0,
+            "fundamental_score": 25.0,
+            "macro_score": 30.0,
+            "data_completeness": json.dumps({"news": True}),
+            "key_signals": json.dumps(["RSI rising"]),
+            "calibrator_payload": payload_json,
+        }
+        save_score_to_db(db_connection, score)
+
+        row = db_connection.execute(
+            "SELECT calibrator_payload FROM scores_daily WHERE ticker=? AND date=?",
+            ("AAPL", SCORING_DATE),
+        ).fetchone()
+        assert row is not None
+        assert row["calibrator_payload"] == payload_json
+
 
 # ---------------------------------------------------------------------------
 # score_ticker

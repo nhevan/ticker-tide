@@ -115,6 +115,27 @@ export interface StochKProfile {
   std: number;
 }
 
+/** A single feature contribution item inside CalibratorPayload. */
+export interface CalibratorContribution {
+  name: string;
+  raw: number;
+  mean: number;
+  std: number;
+  z: number;
+  weight: number;
+  contribution: number;
+}
+
+/** The calibrator decomposition payload stored in scores_daily.calibrator_payload. */
+export interface CalibratorPayload {
+  intercept: number;
+  prediction: number;
+  training_samples: number;
+  in_sample_r2: number;
+  feature_count: number;
+  contributions: CalibratorContribution[];
+}
+
 /** A single indicator contribution item inside ContributionsPayload. */
 export interface ContributionItem {
   name: string;
@@ -224,6 +245,11 @@ export interface DailySection {
   rsi_zone_label?: string | null;
   /** Parsed key_signals_data payload, or null for legacy rows. */
   contributions_payload?: ContributionsPayload | null;
+  /**
+   * Parsed calibrator_payload JSON from scores_daily, or null for legacy rows written
+   * before Migration 5 ran, or null when calibration was disabled / cold-start.
+   */
+  calibrator_payload?: CalibratorPayload | null;
   /**
    * Last N working days of RSI(14) values for this ticker, ordered ascending by date,
    * bounded by the picked date. Rows with rsi_14 IS NULL are excluded.
