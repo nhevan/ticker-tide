@@ -13,6 +13,7 @@ import { TimeframeCard } from '@/components/TimeframeCard';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { VerdictBlock } from '@/components/VerdictBlock';
 import { MatrixTable } from '@/components/MatrixTable';
+import { ModelInputsTable } from '@/components/ModelInputsTable';
 import { TickerTape } from '@/components/TickerTape';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTickers } from '@/lib/hooks/useTickers';
@@ -163,6 +164,9 @@ export function DashboardPage() {
               date={loadedDate}
               snapshot={snapshot}
             />
+            <div className="mb-4">
+              <ModelInputsTable payload={snapshot.daily.calibrator_payload} />
+            </div>
             <div className="mb-4 space-y-4">
               {crossSectionData && (
                 <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground tabular-nums">

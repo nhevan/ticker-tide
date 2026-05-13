@@ -1581,6 +1581,20 @@ Three high-signal additions to the daily card only. Weekly and monthly cards are
 
 `_fetch_signal_flip(conn, ticker, picked_date, lookback_days)` returns the most recent flip within `[picked_date - lookback_days, picked_date]` (inclusive). Query: `ORDER BY date DESC, id DESC LIMIT 1` — mandatory `id DESC` tiebreaker defends against production duplicate/contradictory rows (ASTS ×3, LLY ×2). Lookback from `config["signal_flip_lookback_days"]` (default 14). Returns `None` when no qualifying row exists. UI renders a small badge in the daily card header using a 6-transition color/glyph lookup table (green ↑ toward BULLISH, red ↓ away from BULLISH, arrows for NEUTRAL transitions).
 
+### 14.7 Daily Model Inputs Table (daily-only)
+
+Rendered immediately above the "Daily — Indicator Agreement" matrix. Shows the calibrator decomposition that produced the day's `calibrated_score` — a feature-level breakdown of every term in the ridge regression sum.
+
+**Data source:** `scores_daily.calibrator_payload` (Migration 5, nullable TEXT/JSON). Surfaced on `snapshot.daily.calibrator_payload` by `_build_daily_section` in `queries.py`. See §4 scoring pipeline step 10 and the `calibrator_payload` column description at §4 (DB schema) for the full JSON shape: `{intercept, prediction, training_samples, in_sample_r2, feature_count, contributions: [{name, raw, mean, std, z, weight, contribution}]}`.
+
+**Layout — Variant C (split drivers):** Two-column grid, positive drivers (contribution > 0) on the left sorted descending, negative drivers (contribution < 0) on the right sorted ascending (most negative first). Exactly-zero contributions are dropped. Column headers show live counts `drivers up (N)` / `drivers down (N)`. Per-row columns: `feature` (raw snake_case from payload), `raw` (original indicator value), `z` (standardized: `(raw − mean) / std`), `w` (ridge weight), `contrib` (= `z × w`, coloured emerald for positive, rose for negative).
+
+**Header reconciliation line:** `intercept ±X + Σ⁺ +Y + Σ⁻ −Z = prediction ±W`. `intercept` and `prediction` are taken directly from the payload (not recomputed) to avoid floating-point drift. Σ⁺ / Σ⁻ are summed in-component from the filtered contribution arrays.
+
+**Empty state:** When `calibrator_payload` is null/undefined or `contributions` is empty (rows written before Migration 5, or cold-start), the section renders a muted one-liner — `Calibrator data not available for this date.` — rather than returning null, so users understand why the section is absent.
+
+**Frontend component:** `web/src/components/ModelInputsTable.tsx`. Props: `{ payload: CalibratorPayload | null | undefined }`. Per-cell `Number.isFinite` guards on every numeric field; non-finite values render `—`. This panel is daily-only; no equivalent exists for weekly or monthly timeframes.
+
 ---
 
 ## 15. Indicator Explainer
