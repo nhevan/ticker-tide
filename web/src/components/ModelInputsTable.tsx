@@ -92,8 +92,8 @@ function DriverColumn({ rows, up }: ColumnProps) {
                     className="font-mono text-[11px] leading-snug border border-border/60 shadow-md text-popover-foreground"
                     style={{ backgroundColor: 'hsl(var(--card))', opacity: 1 }}
                   >
-                    <div className="space-y-0.5 tabular-nums">
-                      <div className="text-muted-foreground text-[10px] uppercase tracking-wider mb-0.5">
+                    <div className="space-y-1 tabular-nums max-w-xs">
+                      <div className="text-muted-foreground text-[10px] uppercase tracking-wider">
                         {r.name}
                       </div>
                       <div>
@@ -108,6 +108,13 @@ function DriverColumn({ rows, up }: ColumnProps) {
                           {Number.isFinite(r.std) ? r.std.toFixed(4) : '—'}
                         </span>
                       </div>
+                      {Number.isFinite(r.mean) && Number.isFinite(r.std) ? (
+                        <div className="text-[10px] text-muted-foreground font-sans whitespace-normal pt-1 border-t border-border/40">
+                          <span className="font-mono text-foreground/80">{r.name}</span>{' '}
+                          usually wobbles ±{r.std.toFixed(2)} either side of{' '}
+                          {r.mean.toFixed(2)} across the training data.
+                        </div>
+                      ) : null}
                     </div>
                   </TooltipContent>
                 </Tooltip>
