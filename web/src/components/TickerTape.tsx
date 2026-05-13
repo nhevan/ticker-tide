@@ -12,11 +12,10 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import type { Snapshot } from '@/lib/api/types';
 import { SignalClassificationTooltip } from '@/components/SignalClassificationTooltip';
 
@@ -177,36 +176,32 @@ export function TickerTape({ ticker, snapshot, isLoading, error }: TickerTapePro
             </span>
             <span className="mx-1 text-muted-foreground">·</span>
             {hasData && signal ? (
-              <TooltipProvider delayDuration={0}>
-                <Tooltip open={pillOpen} onOpenChange={setPillOpen}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => setPillOpen((v) => !v)}
-                      className="focus:outline-none focus:ring-2 focus:ring-ring rounded-md"
-                    >
-                      <Badge
-                        data-signal={signal}
-                        className={`${signalPillClass(signal)} cursor-pointer`}
-                      >
-                        {KNOWN_SIGNALS.has(signal.toUpperCase()) ? pillLabel() : signal}
-                      </Badge>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="bottom"
-                    align="start"
-                    className="max-w-none p-0 bg-card text-card-foreground border-border shadow-xl backdrop-blur-none opacity-100"
-                    onPointerDownOutside={() => setPillOpen(false)}
+              <Popover open={pillOpen} onOpenChange={setPillOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="focus:outline-none focus:ring-2 focus:ring-ring rounded-md"
                   >
-                    <SignalClassificationTooltip
-                      daily={snapshot!.daily}
-                      weekly={snapshot!.weekly?.data_available ? snapshot!.weekly : null}
-                      monthly={snapshot!.monthly?.data_available ? snapshot!.monthly : null}
-                    />
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+                    <Badge
+                      data-signal={signal}
+                      className={`${signalPillClass(signal)} cursor-pointer`}
+                    >
+                      {KNOWN_SIGNALS.has(signal.toUpperCase()) ? pillLabel() : signal}
+                    </Badge>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="bottom"
+                  align="start"
+                  className="max-w-none p-0 bg-card text-card-foreground border-border shadow-xl"
+                >
+                  <SignalClassificationTooltip
+                    daily={snapshot!.daily}
+                    weekly={snapshot!.weekly?.data_available ? snapshot!.weekly : null}
+                    monthly={snapshot!.monthly?.data_available ? snapshot!.monthly : null}
+                  />
+                </PopoverContent>
+              </Popover>
             ) : (
               <Badge variant="outline">—</Badge>
             )}
