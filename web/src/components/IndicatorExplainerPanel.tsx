@@ -571,9 +571,8 @@ function StochKPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRu
 // =====================================================================
 
 // =====================================================================
-// AdxPanelPrototype — ADX explainer.
-// Steps 1-4 wired to real backend data.
-// Steps 5-7 still prototype-wired (dummy values) — next batch.
+// AdxPanel — ADX explainer.
+// All 7 steps wired to real backend data.
 // =====================================================================
 
 /**
@@ -586,10 +585,9 @@ function StochKPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRu
  *   falls back to hardcoded band values for the ~100ms loading window; Step 4
  *   shows a prose-only fallback.
  *
- * Steps 1-4 use real backend data. Steps 5-7 use dummy values —
- * wired per task plan.
+ * All 7 steps wired to real backend data.
  */
-function AdxPanelPrototype({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
+function AdxPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
   const daily = snapshot.daily;
   const liveAdx = daily.indicators?.adx;
   const adxValue: number | null = Number.isFinite(liveAdx as number) ? (liveAdx as number) : null;
@@ -611,25 +609,15 @@ function AdxPanelPrototype({ snapshot, rules }: { snapshot: Snapshot; rules: Sco
   const adxRules = rules?.adx ?? null;
 
   const regime = (daily.regime ?? 'ranging') as string;
-  const dummyDenom = 142.0;
-  const dummyExpansion = 1.08;
-  const dummyTrendWeight = 0.34;
-  const dummyScore = adxScore ?? 32.0;
-  const dummyFinalContribution = (dummyScore * Math.abs(dummyScore) / dummyDenom) * dummyTrendWeight * dummyExpansion;
-  const dummyTrendItems: ContributionItem[] = [
-    { name: 'adx', category: 'trend', kind: 'indicator', score: dummyScore, raw_value: dummyScore, category_weight: dummyTrendWeight, contribution: 0 },
-    { name: 'macd_line', category: 'trend', kind: 'indicator', score: 28, raw_value: 28, category_weight: dummyTrendWeight, contribution: 0 },
-    { name: 'sma_50_200', category: 'trend', kind: 'indicator', score: -15, raw_value: -15, category_weight: dummyTrendWeight, contribution: 0 },
-    { name: 'ema_spread', category: 'trend', kind: 'indicator', score: 12, raw_value: 12, category_weight: dummyTrendWeight, contribution: 0 },
-  ];
-  const dummyCategoryWeights = { momentum: 0.28, trend: dummyTrendWeight, volatility: 0.14, volume: 0.10, breadth: 0.08, valuation: 0.06 };
+
+  // Steps 5-7: real contributions payload and adx item.
+  const contributions = daily.contributions_payload ?? null;
+  const adxItem: ContributionItem | undefined = contributions?.items.find(
+    (item) => item.name === 'adx',
+  );
 
   return (
     <div className="border-t border-border/40 bg-card px-4 py-3 text-xs text-foreground">
-      <div className="mb-3 rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
-        [PROTOTYPE] Steps 5-7 use dummy values — wired in order per task plan. Steps 1-4 now use real backend data.
-      </div>
-
       {/* Step 1 — Raw value */}
       <StepCard stepNumber={1} heading="ADX reading">
         {adxValue !== null && zoneLabel !== null ? (
@@ -735,56 +723,78 @@ function AdxPanelPrototype({ snapshot, rules }: { snapshot: Snapshot; rules: Sco
         </StepCard>
       )}
 
-      {/* Step 5 — Magnitude share in trend */}
-      <StepCard stepNumber={5} heading="Magnitude share in trend">
-        <p className="text-muted-foreground">
-          ADX's |score| within the trend category{' '}
-          <span>[PROTOTYPE — dummy items]</span>:
-        </p>
-        <div className="mt-3">
-          <CategoryShareBar items={dummyTrendItems} activeName="adx" category="trend" />
-        </div>
-      </StepCard>
+      {!contributions || !adxItem ? (
+        <>
+          <StepCard stepNumber={5} heading="Magnitude share in trend">
+            {!contributions
+              ? 'Contribution breakdown not available for this date (legacy data).'
+              : 'ADX not found in contributions payload.'}
+          </StepCard>
+          <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+          <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />
+        </>
+      ) : (
+        <>
+          {/* Step 5 — Magnitude share in trend (REAL) */}
+          <StepCard stepNumber={5} heading="Magnitude share in trend">
+            <CategoryShareBar
+              items={contributions.items.filter((item) => item.category === 'trend')}
+              activeName="adx"
+              category="trend"
+            />
+          </StepCard>
 
-      {/* Step 6 — Category weight × expansion */}
-      <StepCard stepNumber={6} heading="Category weight × expansion">
-        <p>
-          Trend's base weight in the <span className="font-mono">{regime}</span> regime is{' '}
-          <span className="font-mono font-semibold">{(dummyTrendWeight * 100).toFixed(0)}%</span>, scaled by the cross-section expansion factor{' '}
-          <span className="font-mono font-semibold">×{dummyExpansion.toFixed(2)}</span>{' '}
-          <span className="text-muted-foreground">[PROTOTYPE — dummy]</span>.
-        </p>
-        <div className="mt-3">
-          <CategoryWeightBar weights={dummyCategoryWeights} regime={regime} expansion={dummyExpansion} activeName="trend" />
-        </div>
-      </StepCard>
+          {/* Step 6 — Category weight × expansion (REAL) */}
+          <StepCard stepNumber={6} heading="Category weight × expansion">
+            {/* activeName hardcoded to 'trend' (ADX's home category). expansion
+                comes from CURRENT config (rules); may differ slightly from the
+                persisted contributions.expansion_factor used in Step 7 if config
+                has drifted since the last scoring run. */}
+            {rules?.regime_weights && rules.regime_weights[regime] ? (
+              <CategoryWeightBar
+                weights={rules.regime_weights[regime]}
+                regime={regime}
+                expansion={rules.score_expansion_factor}
+                activeName="trend"
+              />
+            ) : (
+              <>
+                Trend weight in <span className="font-medium">{regime}</span> regime ={' '}
+                {adxItem.category_weight.toFixed(3)} × expansion{' '}
+                {contributions.expansion_factor.toFixed(2)}.
+              </>
+            )}
+          </StepCard>
 
-      {/* Step 7 — Net contribution */}
-      <StepCard stepNumber={7} heading="Net contribution to composite">
-        <p>
-          Final contribution of ADX to today's composite score{' '}
-          <span className="text-muted-foreground">[PROTOTYPE — dummy]</span>:
-        </p>
-        <div className="mt-3">
-          <ContributionMathChain
-            score={dummyScore}
-            denom={dummyDenom}
-            regimeWeight={dummyTrendWeight}
-            expansion={dummyExpansion}
-            finalContribution={dummyFinalContribution}
-            activeName="adx"
-          />
-        </div>
-        <p className="mt-2 text-muted-foreground italic text-[10px]">
-          Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.
-        </p>
-      </StepCard>
+          {/* Step 7 — Net contribution (REAL) */}
+          <StepCard stepNumber={7} heading="Net contribution to composite">
+            {(() => {
+              const trendItems = contributions.items.filter((item) => item.category === 'trend');
+              const denom = trendItems.reduce((acc, item) => acc + Math.abs(item.score), 0);
+              return (
+                <ContributionMathChain
+                  score={adxItem.score}
+                  denom={denom}
+                  regimeWeight={adxItem.category_weight}
+                  expansion={contributions.expansion_factor}
+                  finalContribution={adxItem.contribution}
+                  activeName="adx"
+                />
+              );
+            })()}
+            <p className="mt-2 text-muted-foreground italic text-[10px]">
+              {rules?.approximation_caveat ??
+                'Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.'}
+            </p>
+          </StepCard>
+        </>
+      )}
     </div>
   );
 }
 
 // =====================================================================
-// End AdxPanelPrototype block.
+// End AdxPanel block.
 // =====================================================================
 
 /** Placeholder shown for indicators other than rsi_14 and macd_line. */
@@ -1016,7 +1026,7 @@ export function IndicatorExplainerPanel({
     return <StochKPanel snapshot={snapshot} rules={rules} />;
   }
   if (indicator === 'adx') {
-    return <AdxPanelPrototype snapshot={snapshot} rules={rules} />;
+    return <AdxPanel snapshot={snapshot} rules={rules} />;
   }
   return <PlaceholderPanel indicator={indicator} />;
 }
@@ -1033,5 +1043,5 @@ export const INDICATORS_WITH_EXPLAINER: ReadonlySet<string> = new Set([
   'rsi_14',
   'macd_line',
   'stoch_k',
-  'adx', // Steps 1-4 real; Steps 5-7 still prototype-wired.
+  'adx', // All 7 steps wired to real backend data.
 ]);
