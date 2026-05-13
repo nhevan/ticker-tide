@@ -25,6 +25,8 @@ from src.web.queries import (
     _fetch_adx_sparkline,
     _fetch_stoch_sparkline,
     _fetch_stoch_k_profile,
+    _fetch_cci_sparkline,
+    _fetch_cci_profile,
     _build_daily_section,
     _build_weekly_section,
     _build_monthly_section,
@@ -1623,3 +1625,107 @@ class TestFetchAdxSparkline:
         """Returns empty list when no rows exist for the ticker."""
         result = _fetch_adx_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# CCI(20) sparkline and profile tests
+# ---------------------------------------------------------------------------
+
+def _insert_cci_rows(
+    conn: sqlite3.Connection,
+    ticker: str,
+    rows: list[tuple[str, float]],
+) -> None:
+    """Insert multiple (date, cci_20) rows into indicators_daily for a ticker."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO indicators_daily(ticker, date, cci_20) VALUES (?, ?, ?)",
+        [(ticker, date, cci) for date, cci in rows],
+    )
+    conn.commit()
+
+
+class TestFetchCciSparkline:
+    """Tests for _fetch_cci_sparkline()."""
+
+    def test_returns_expected_window(self, conn: sqlite3.Connection) -> None:
+        """Requesting 100 days returns up to 100 rows ascending by date."""
+        from datetime import date, timedelta
+
+        start = date(2025, 10, 1)
+        rows = [
+            ((start + timedelta(days=i)).isoformat(), float(10 * (i % 30) - 150))
+            for i in range(130)
+        ]
+        _insert_cci_rows(conn, "AAPL", rows)
+        # Pick a date far enough in to have 100 rows available.
+        result = _fetch_cci_sparkline(conn, "AAPL", "2026-04-25", num_days=100)
+        assert len(result) == 100
+        # Rows are in ascending date order.
+        dates = [r["date"] for r in result]
+        assert dates == sorted(dates)
+
+    def test_returns_cci_key(self, conn: sqlite3.Connection) -> None:
+        """Each returned dict has a 'cci' key (not 'value' or 'cci_20')."""
+        _insert_cci_rows(conn, "AAPL", [("2026-04-24", 55.5)])
+        result = _fetch_cci_sparkline(conn, "AAPL", "2026-04-24", num_days=10)
+        assert len(result) == 1
+        assert "cci" in result[0]
+        assert abs(result[0]["cci"] - 55.5) < 0.001
+
+    def test_excludes_null_cci_rows(self, conn: sqlite3.Connection) -> None:
+        """Rows where cci_20 IS NULL are excluded from results."""
+        conn.execute(
+            "INSERT OR REPLACE INTO indicators_daily(ticker, date, cci_20) VALUES (?, ?, NULL)",
+            ("AAPL", "2026-04-23"),
+        )
+        conn.commit()
+        result = _fetch_cci_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert result == []
+
+    def test_empty_result_when_no_rows(self, conn: sqlite3.Connection) -> None:
+        """Returns empty list when no cci_20 rows exist."""
+        result = _fetch_cci_sparkline(conn, "AAPL", "2026-04-25", num_days=10)
+        assert result == []
+
+
+class TestFetchCciProfile:
+    """Tests for _fetch_cci_profile()."""
+
+    def _insert_cci_profile(
+        self,
+        conn: sqlite3.Connection,
+        ticker: str,
+        regime: str = "ranging",
+    ) -> None:
+        """Insert a cci_20 row in indicator_profiles."""
+        conn.execute(
+            "INSERT OR REPLACE INTO indicator_profiles("
+            "  ticker, indicator, p5, p20, p50, p80, p95, mean, std"
+            ") VALUES (?, 'cci_20', ?, ?, ?, ?, ?, ?, ?)",
+            (ticker, -150.0, -60.0, 0.0, 60.0, 150.0, 0.0, 80.0),
+        )
+        conn.commit()
+
+    def test_returns_persisted_percentiles(self, conn: sqlite3.Connection) -> None:
+        """Returns dict with p5/p20/p50/p80/p95/mean/std when profile row exists."""
+        self._insert_cci_profile(conn, "AAPL", "ranging")
+        result = _fetch_cci_profile(conn, "AAPL")
+        assert result is not None
+        assert abs(result["p5"] - (-150.0)) < 0.001
+        assert abs(result["p20"] - (-60.0)) < 0.001
+        assert abs(result["p50"] - 0.0) < 0.001
+        assert abs(result["p80"] - 60.0) < 0.001
+        assert abs(result["p95"] - 150.0) < 0.001
+        assert "mean" in result
+        assert "std" in result
+
+    def test_returns_none_when_missing(self, conn: sqlite3.Connection) -> None:
+        """Returns None when no cci_20 profile row exists for the ticker."""
+        result = _fetch_cci_profile(conn, "AAPL")
+        assert result is None
+
+    def test_returns_none_for_different_ticker(self, conn: sqlite3.Connection) -> None:
+        """Returns None when profile exists for a different ticker, not AAPL."""
+        self._insert_cci_profile(conn, "MSFT", "ranging")
+        result = _fetch_cci_profile(conn, "AAPL")
+        assert result is None

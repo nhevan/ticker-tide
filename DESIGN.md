@@ -1760,10 +1760,80 @@ ADX < 20:       score = −20 + ADX / 20 × 20          (ranging, −20→0)
 - **Asymmetric score range (−20 to +80)** — the y-axis in `AdxMappingChart` is asymmetric by design (not ±100 like RSI/Stoch). The chart derives min/max from `bands` directly rather than accepting a `score_range` prop.
 - **`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`** — reused unchanged from the RSI and Stoch %K panels.
 
-### 15.8 Other indicators
+### 15.8 CCI(20) — 7-step trace
 
-All indicators other than `rsi_14`, `macd_line`, `stoch_k`, and `adx` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
+For `indicator === "cci_20"` the panel renders a 7-step trace. CCI is an unbounded oscillator (canonical ±100/±200 thresholds); it scores through `score_with_percentile` when a profile exists, or through a 5-zone fallback when it does not.
 
-Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic. For `score_with_percentile`-scored indicators, `PercentileStrip.tsx` and `PercentileMappingChart.tsx` can be reused directly via the `label` prop. For indicators with a different scoring model (e.g. z-score like MACD), use `Macd*.tsx` as templates for new per-indicator components.
+#### Backend data
+
+- **`daily.cci_sparkline`** — list of `{ date, cci }` rows. Bounded by `<= picked_date`, excludes `cci_20 IS NULL` rows. Length capped by `sparkline.cci_sparkline_days` (default 100, `config/web.json`).
+- **`daily.cci_20_profile`** — percentile profile dict (`p5/p20/p50/p80/p95/mean/std`) from `indicator_profiles` where `indicator='cci_20'`, or `null` when no profile exists.
+- **`daily.cci_zone_label`** — zone string from `zone_label_for_cci()` in `src/scorer/zone_labels.py`. Profile path yields six labels (`extreme_oversold`, `oversold`, `below_mid`, `above_mid`, `overbought`, `extreme_overbought`); fallback path yields five (`hyper_oversold`, `oversold`, `neutral`, `overbought`, `hyper_overbought`) against fixed ±100/±200 thresholds. `null` when `cci_20` is not available for the picked date.
+- **`daily.indicator_scores.cci_20`** — persisted indicator score (−100 to +100) from `indicator_scores_daily`.
+- **`/api/scoring-rules` → `cci`** — fallback thresholds (`hyper_oversold: −200`, `oversold: −100`, `overbought: 100`, `hyper_overbought: 200`), `fallback_zones`, `profile_zones`.
+
+#### CCI scoring model
+
+CCI uses `score_with_percentile` when a profile is available (same path as RSI and Stoch %K). Without a profile, the fallback is a 5-zone step function:
+```
+CCI ≤ −200:  score = +100  (hyper_oversold — extreme bullish)
+CCI ≤ −100:  score = +60   (oversold — bullish)
+CCI < +100:  score = 0     (neutral)
+CCI < +200:  score = −60   (overbought — bearish)
+CCI ≥ +200:  score = −100  (hyper_overbought — extreme bearish)
+```
+The sign convention matches RSI: lower CCI (oversold territory) is bullish in ranging/volatile regime; higher is bearish. Regime sign-flip applies in trending regime (continuation logic via `higher_is_bullish`).
+
+**Note on `zone_label_for_cci` fallback path.** CCI has 5 fallback zones (vs RSI's 4) so the fallback is implemented inline rather than delegating to `_zone_label_fallback()`.
+
+#### Config
+
+- `config/web.json` `sparkline.cci_sparkline_days` — window size for `daily.cci_sparkline`.
+- `/api/scoring-rules` `cci.thresholds` — advertises the fallback ±100/±200 thresholds.
+
+#### Domain handling
+
+CCI is unbounded, so `PercentileStrip` and `PercentileMappingChart` receive an explicit `domain` prop. The panel computes:
+```
+cciDomain = [
+  Math.min(profile.p5, cciValue, −200),
+  Math.max(profile.p95, cciValue, +200)
+]
+```
+This ensures ±200 is always visible in the chart while expanding if the current reading or profile extremes exceed that range.
+
+Both shared components accept `domain?: [number, number]` (default `[0, 100]`). RSI and Stoch %K pass no `domain` prop and continue to receive `[0, 100]` — their rendering is unchanged (zero callsite diff).
+
+#### Steps
+
+1. **CCI reading** — `daily.indicators.cci_20` displayed as a mono value with a sign colour. Zone label chip from `daily.cci_zone_label` resolved via `CCI_ZONE_LABEL_DESCRIPTIONS` (profile path, 6 labels) or `CCI_FALLBACK_ZONE_DESCRIPTIONS` (fallback path, 5 labels). Prose explains that CCI measures how many "typical price" deviations the current price sits above or below the 20-period SMA; values above +100 or below −100 are historically extreme. Fallback prose when value or zone label is absent.
+
+2. **Trend chart** — `CciTrendChart` fed by `daily.cci_sparkline`. Single raw line (dashed primary colour) with a 9-period SMA signal line. Reference lines at ±100 (dashed `"3 3"`) and ±200 (dashed `"2 4"`) with labels. `ReferenceArea` tinting beyond ±100. Y-domain: `[−maxAbs, +maxAbs]` where `maxAbs = Math.max(200, max|cci|)`. Today marker on last point. 9-SMA computed client-side from filtered (finite) rows. Fallback prose when fewer than 2 data points.
+
+3. **Scoring path** — `PercentileStrip` with `label="CCI"` and `domain={cciDomain}` when a profile is present; prose-only fallback listing the ±100/±200 step-function thresholds from `rules.cci.thresholds`. Same regime sign-flip note as RSI and Stoch %K.
+
+4. **Indicator score** — `snapshot.daily.indicator_scores.cci_20`.
+   - No score → `StepCard unavailable`.
+   - Score present + profile + all five profile percentiles finite → `PercentileMappingChart profile={cciProfile} today={cciValue} score={cciScore} regime={...} label="CCI" domain={cciDomain}`. Same six-zone smooth curve as RSI; `label` drives all user-facing prose inside the chart.
+   - Score present but no profile → fallback prose describing the 5-zone step function.
+
+5. **Magnitude share in momentum** — `CategoryShareBar` over `contributions.items.filter(item => item.category === 'momentum')` with `activeName="cci_20"`. CCI is in the `momentum` category (`INDICATOR_CATEGORY_MAP`).
+
+6. **Category weight × expansion** — `CategoryWeightBar` from `rules.regime_weights[regime]` (CURRENT config) with `expansion={rules.score_expansion_factor}` and `activeName="momentum"`.
+
+7. **Net contribution** — `ContributionMathChain` with `score={cciItem.score}`, `denom` computed inline as `Σ|momentum item scores|`, `regimeWeight={cciItem.category_weight}`, `expansion={contributions.expansion_factor}`, `finalContribution={cciItem.contribution}`, `activeName="cci_20"`. Caveat from `rules.approximation_caveat`.
+
+#### Architectural notes vs. RSI / Stoch %K
+
+- **Shared components extended with `domain` prop** — `PercentileStrip` and `PercentileMappingChart` now accept `domain?: [number, number]` (default `[0, 100]`). RSI and Stoch %K callsites pass no `domain` prop and are unaffected.
+- **`CciTrendChart`** — new component. Uses recharts `LineChart` with dual series (raw + 9-SMA). Unlike `StochTrendChart`, there is no secondary "D" line from the backend; the SMA is computed client-side.
+- **5 fallback zones vs. 4** — CCI's step function has an extra `hyper_oversold`/`hyper_overbought` zone pair at ±200. `zone_label_for_cci` implements the fallback inline.
+- **Frontend tests for `CciPanel` and `CciTrendChart` deferred** — per project policy for pure UI components built under the CLAUDE.md explainer recipe.
+
+### 15.9 Other indicators
+
+All indicators other than `rsi_14`, `macd_line`, `stoch_k`, `adx`, and `cci_20` render a "Detailed explanation coming soon." placeholder. `macd_histogram` is intentionally left in this set — clicking the histogram row shows the placeholder, not the `macd_line` panel.
+
+Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic. For `score_with_percentile`-scored indicators, `PercentileStrip.tsx` and `PercentileMappingChart.tsx` can be reused directly via the `label` and `domain` props. For indicators with a different scoring model (e.g. z-score like MACD), use `Macd*.tsx` as templates for new per-indicator components.
 
 

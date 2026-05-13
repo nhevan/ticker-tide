@@ -1,5 +1,6 @@
 /**
- * PercentileMappingChart — visualises how an indicator value becomes its scored output via score_with_percentile. Used by indicators that have a per-ticker percentile profile (RSI, Stoch %K).
+ * PercentileMappingChart — visualises how an indicator value becomes its scored output via score_with_percentile.
+ * Used by indicators that have a per-ticker percentile profile (RSI, Stoch %K, CCI).
  *
  * Renders the piecewise mapping function defined by `score_with_percentile`
  * in src/scorer/indicator_scorer.py:158-184, using the loaded ticker's
@@ -14,10 +15,11 @@
  * Theme-aware via CSS custom properties. SVG-only, no chart library.
  *
  * @param profile - The ticker's percentile bands from the indicator profile (p5/p20/p50/p80/p95).
- * @param today - The raw indicator reading (e.g. snapshot.daily.indicators.rsi_14 or stoch_k).
+ * @param today - The raw indicator reading (e.g. snapshot.daily.indicators.rsi_14, stoch_k, or cci_20).
  * @param score - The persisted indicator score from snapshot.daily.indicator_scores.
  * @param regime - Market regime from snapshot.daily.regime. Sign flips only in 'trending'.
  * @param label - Human-readable indicator name shown in chart prose (default: 'RSI').
+ * @param domain - [min, max] of the indicator's value range. Defaults to [0, 100]. Pass [-200, 200] for CCI.
  * @returns The chart + math table, or null if any required numeric input is non-finite.
  */
 interface PercentileMappingChartProps {
@@ -26,38 +28,47 @@ interface PercentileMappingChartProps {
   score: number;
   regime: 'trending' | 'ranging' | 'volatile';
   label?: string;
+  domain?: [number, number];
 }
 
 /** Zone names ordered to match the 6 segments of the corner-point curve (applies to any percentile-profile indicator). */
 const ZONE_NAMES = [
-  'extreme_oversold',  // 0 -> p5
+  'extreme_oversold',  // domain[0] -> p5
   'oversold',          // p5 -> p20
   'below_mid',         // p20 -> p50
   'above_mid',         // p50 -> p80
   'overbought',        // p80 -> p95
-  'extreme_overbought',// p95 -> 100
+  'extreme_overbought',// p95 -> domain[1]
 ] as const;
 
-/** Build the 7 corner points of the piecewise indicator→score curve (shared by RSI, Stoch %K, and any other percentile-profile indicator). */
+/** Build the 7 corner points of the piecewise indicator→score curve (shared by RSI, Stoch %K, CCI, and any other percentile-profile indicator). */
 function mappingCornerPoints(
   profile: { p5: number; p20: number; p50: number; p80: number; p95: number },
   trending: boolean,
+  domain: [number, number],
 ): { x: number; y: number }[] {
   // Ranging/volatile (higher_is_bullish=false): high value → bearish (negative scores).
   // Trending (higher_is_bullish=true): high value → bullish (positive scores). Sign flipped.
   const m = trending ? -1 : 1;
   return [
-    { x: 0,           y: 100 * m  },
+    { x: domain[0],   y: 100 * m  },
     { x: profile.p5,  y: 80 * m   },
     { x: profile.p20, y: 40 * m   },
     { x: profile.p50, y: 0        },
     { x: profile.p80, y: -40 * m  },
     { x: profile.p95, y: -80 * m  },
-    { x: 100,         y: -100 * m },
+    { x: domain[1],   y: -100 * m },
   ];
 }
 
-export function PercentileMappingChart({ profile, today, score, regime, label = 'RSI' }: PercentileMappingChartProps) {
+export function PercentileMappingChart({
+  profile,
+  today,
+  score,
+  regime,
+  label = 'RSI',
+  domain = [0, 100],
+}: PercentileMappingChartProps) {
   // REQUIRED guard: Number.isFinite catches both NaN and null/undefined coerced to NaN.
   if (
     !Number.isFinite(today) ||
@@ -78,11 +89,11 @@ export function PercentileMappingChart({ profile, today, score, regime, label = 
   }
 
   const trending = regime === 'trending';
-  const activePts = mappingCornerPoints(profile, trending);
-  const inactivePts = mappingCornerPoints(profile, !trending);
+  const activePts = mappingCornerPoints(profile, trending, domain);
+  const inactivePts = mappingCornerPoints(profile, !trending, domain);
 
-  // Clamp today's X to [0, 100] so a glitched value never escapes the viewBox.
-  const clampedToday = Math.max(0, Math.min(100, today));
+  // Clamp today's X to domain so a glitched value never escapes the viewBox.
+  const clampedToday = Math.max(domain[0], Math.min(domain[1], today));
 
   // REQUIRED: walk the corner-point array to find which zone `today` falls in.
   // Use the bracketing corner points as the zone anchors for the math table.
@@ -105,7 +116,8 @@ export function PercentileMappingChart({ profile, today, score, regime, label = 
   const padY = 14;
   const W = 400;
   const H = 160;
-  const xAt = (x: number) => pad + ((W - 2 * pad) * x) / 100;
+  const domainSpan = domain[1] - domain[0];
+  const xAt = (x: number) => pad + ((W - 2 * pad) * (x - domain[0])) / domainSpan;
   const yAt = (y: number) => padY + ((H - 2 * padY) * (1 - (y + 100) / 200));
   const activeLine = activePts.map((p) => `${xAt(p.x)},${yAt(p.y)}`).join(' ');
   const inactiveLine = inactivePts.map((p) => `${xAt(p.x)},${yAt(p.y)}`).join(' ');
@@ -176,13 +188,13 @@ export function PercentileMappingChart({ profile, today, score, regime, label = 
           </tr>
           {(() => {
             // Symbolic labels for zone endpoints. Bracket 0's lower bound is the
-            // absolute floor (0), and bracket 5's upper bound is the absolute
-            // ceiling (100); the four interior boundaries are named percentiles.
+            // absolute floor (domain[0]), and bracket 5's upper bound is the absolute
+            // ceiling (domain[1]); the four interior boundaries are named percentiles.
             const PERCENTILE_LABELS = [5, 20, 50, 80, 95];
-            const loLabel = bracketIndex === 0 ? '0' : `p${PERCENTILE_LABELS[bracketIndex - 1]}`;
-            const hiLabel = bracketIndex === 5 ? '100' : `p${PERCENTILE_LABELS[bracketIndex]}`;
-            const loDisplay = bracketIndex === 0 ? '0' : `${loLabel} (${zoneLo.x.toFixed(1)})`;
-            const hiDisplay = bracketIndex === 5 ? '100' : `${hiLabel} (${zoneHi.x.toFixed(1)})`;
+            const loLabel = bracketIndex === 0 ? domain[0].toString() : `p${PERCENTILE_LABELS[bracketIndex - 1]}`;
+            const hiLabel = bracketIndex === 5 ? domain[1].toString() : `p${PERCENTILE_LABELS[bracketIndex]}`;
+            const loDisplay = bracketIndex === 0 ? domain[0].toString() : `${loLabel} (${zoneLo.x.toFixed(1)})`;
+            const hiDisplay = bracketIndex === 5 ? domain[1].toString() : `${hiLabel} (${zoneHi.x.toFixed(1)})`;
             return (
               <>
                 <tr>

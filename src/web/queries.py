@@ -19,7 +19,7 @@ from typing import Any, Optional
 # in lockstep with score_candlestick_patterns / score_structural_patterns.
 # Private-prefixed names are accepted here as the canonical source of truth.
 from src.scorer.pattern_scorer import _CANDLESTICK_WINDOW_DAYS, _STRUCTURAL_WINDOW_DAYS
-from src.scorer.zone_labels import zone_label_for_adx, zone_label_for_rsi, zone_label_for_stoch_k
+from src.scorer.zone_labels import zone_label_for_adx, zone_label_for_cci, zone_label_for_rsi, zone_label_for_stoch_k
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,7 @@ def fetch_snapshot(
     macd_sparkline_days = sparkline_cfg.get("macd_sparkline_days", 100)
     stoch_sparkline_days = sparkline_cfg.get("stoch_sparkline_days", 100)
     adx_sparkline_days = sparkline_cfg.get("adx_sparkline_days", 100)
+    cci_sparkline_days = sparkline_cfg.get("cci_sparkline_days", 100)
 
     why_limit = config.get("why_bullets", {}).get("limit", 3)
     signal_flip_lookback = config.get("signal_flip_lookback_days", 14)
@@ -156,6 +157,7 @@ def fetch_snapshot(
             macd_sparkline_days=macd_sparkline_days,
             stoch_sparkline_days=stoch_sparkline_days,
             adx_sparkline_days=adx_sparkline_days,
+            cci_sparkline_days=cci_sparkline_days,
         ),
         "weekly": _build_weekly_section(
             conn, ticker, picked_date, weekly_weeks,
@@ -208,6 +210,7 @@ def _build_daily_section(
     macd_sparkline_days: int = 100,
     stoch_sparkline_days: int = 100,
     adx_sparkline_days: int = 100,
+    cci_sparkline_days: int = 100,
 ) -> dict[str, Any]:
     """
     Build the daily card data for a ticker and exact date.
@@ -262,12 +265,16 @@ def _build_daily_section(
         adx_sparkline_days: Number of trading days to include in the ADX sparkline
                             (bounded by <= picked_date). Rows with adx IS NULL are
                             excluded. Returns [] when no data exists.
+        cci_sparkline_days: Number of trading days to include in the CCI(20) sparkline
+                            (bounded by <= picked_date). Rows with cci_20 IS NULL are
+                            excluded. Returns [] when no data exists.
 
     Returns:
-        Daily section dict. Includes rsi_sparkline, stoch_sparkline, adx_sparkline:
-        list[dict[str, Any]] — always present (may be empty list), never None.
+        Daily section dict. Includes rsi_sparkline, stoch_sparkline, adx_sparkline,
+        cci_sparkline: list[dict[str, Any]] — always present (may be empty list), never None.
         Also includes stoch_k_profile (dict or None), stoch_zone_label (str or None),
-        adx_zone_label (str or None). adx_profile is deliberately absent — see note above.
+        adx_zone_label (str or None), cci_20_profile (dict or None),
+        cci_zone_label (str or None). adx_profile is deliberately absent — see note above.
     """
     resolved_scorer_config = scorer_config if scorer_config is not None else {}
 
@@ -297,6 +304,7 @@ def _build_daily_section(
     macd_sparkline = _fetch_macd_sparkline(conn, ticker, picked_date, macd_sparkline_days)
     stoch_sparkline = _fetch_stoch_sparkline(conn, ticker, picked_date, stoch_sparkline_days)
     adx_sparkline = _fetch_adx_sparkline(conn, ticker, picked_date, adx_sparkline_days)
+    cci_sparkline = _fetch_cci_sparkline(conn, ticker, picked_date, cci_sparkline_days)
     key_signals = _extract_key_signals(score_dict, limit=why_limit)
     earnings = _fetch_earnings(conn, ticker, picked_date)
     signal_flip = _fetch_signal_flip(
@@ -343,6 +351,15 @@ def _build_daily_section(
     else:
         adx_zone_label = None
 
+    # CCI(20) explainer fields.
+    cci_20_profile = _fetch_cci_profile(conn, ticker)
+    cci_value = indicators.get("cci_20") if indicators else None
+    cci_zone_label: Optional[str]
+    if cci_value is not None:
+        cci_zone_label = zone_label_for_cci(float(cci_value), cci_20_profile)
+    else:
+        cci_zone_label = None
+
     # Parse contributions payload; treat NULL as None without raising.
     contributions_payload: Optional[dict] = _parse_contributions_payload(
         score_dict.get("key_signals_data")
@@ -377,6 +394,9 @@ def _build_daily_section(
         "stoch_zone_label": stoch_zone_label,
         "adx_sparkline": adx_sparkline,
         "adx_zone_label": adx_zone_label,
+        "cci_sparkline": cci_sparkline,
+        "cci_20_profile": cci_20_profile,
+        "cci_zone_label": cci_zone_label,
         "contributions_payload": contributions_payload,
     }
 
@@ -1191,6 +1211,77 @@ def _fetch_stoch_k_profile(
         row = conn.execute(
             "SELECT p5, p20, p50, p80, p95, mean, std FROM indicator_profiles "
             "WHERE ticker = ? AND indicator = 'stoch_k'",
+            (ticker,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    return {
+        "p5": row["p5"],
+        "p20": row["p20"],
+        "p50": row["p50"],
+        "p80": row["p80"],
+        "p95": row["p95"],
+        "mean": row["mean"],
+        "std": row["std"],
+    }
+
+
+def _fetch_cci_sparkline(
+    conn: sqlite3.Connection,
+    ticker: str,
+    picked_date: str,
+    num_days: int,
+) -> list[dict[str, Any]]:
+    """
+    Fetch the last num_days cci_20 values from indicators_daily for a ticker up to
+    and including picked_date.
+
+    Applies a strict <= picked_date bound and excludes rows where cci_20 IS NULL.
+    Returns rows in chronological (ascending) order. Returns an empty list when no
+    qualifying rows exist.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        picked_date: Upper-bound date (YYYY-MM-DD). No rows after this date are included.
+        num_days: Maximum number of rows to return.
+
+    Returns:
+        List of dicts with keys: date (str), cci (float). Empty list if no data.
+    """
+    cur = conn.execute(
+        "SELECT date, cci_20 FROM indicators_daily "
+        "WHERE ticker = ? AND date <= ? AND cci_20 IS NOT NULL "
+        "ORDER BY date DESC LIMIT ?",
+        (ticker, picked_date, num_days),
+    )
+    rows = cur.fetchall()
+    return [{"date": r["date"], "cci": float(r["cci_20"])} for r in reversed(rows)]
+
+
+def _fetch_cci_profile(
+    conn: sqlite3.Connection,
+    ticker: str,
+) -> Optional[dict]:
+    """
+    Fetch the cci_20 percentile profile from indicator_profiles for a ticker.
+
+    Looks up by ticker and indicator='cci_20'. Returns a dict with p5, p20,
+    p50, p80, p95, mean, std keys, or None if no profile row exists.
+
+    Parameters:
+        conn:   Open SQLite connection with row_factory=sqlite3.Row.
+        ticker: Ticker symbol.
+
+    Returns:
+        Profile dict or None.
+    """
+    try:
+        row = conn.execute(
+            "SELECT p5, p20, p50, p80, p95, mean, std FROM indicator_profiles "
+            "WHERE ticker = ? AND indicator = 'cci_20'",
             (ticker,),
         ).fetchone()
     except sqlite3.OperationalError:

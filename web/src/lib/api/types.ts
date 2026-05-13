@@ -93,6 +93,17 @@ export interface RsiProfile {
   std: number;
 }
 
+/** CCI(20) percentile profile from indicator_profiles. */
+export interface CciProfile {
+  p5: number;
+  p20: number;
+  p50: number;
+  p80: number;
+  p95: number;
+  mean: number;
+  std: number;
+}
+
 /** Stochastic %K percentile profile from indicator_profiles. */
 export interface StochKProfile {
   p5: number;
@@ -153,6 +164,16 @@ export interface ScoringRules {
     profile_zones: string[];
   };
   adx?: AdxRules;
+  cci?: {
+    thresholds: {
+      hyper_oversold: number;
+      oversold: number;
+      overbought: number;
+      hyper_overbought: number;
+    };
+    fallback_zones: string[];
+    profile_zones: string[];
+  };
   regime_weights: Record<string, Record<string, number>>;
   score_expansion_factor: number;
   /**
@@ -243,6 +264,17 @@ export interface DailySection {
    * or null when the daily ADX value is null.
    */
   adx_zone_label?: string | null;
+  /**
+   * Last N working days of CCI(20) values for this ticker, ordered ascending by date,
+   * bounded by the picked date. Rows with cci_20 IS NULL are excluded server-side.
+   * Always present when data_available is true — empty array when no CCI data exists,
+   * never null, never absent. Configured via web.json sparkline.cci_sparkline_days (default 100).
+   */
+  cci_sparkline?: { date: string; cci: number }[];
+  /** Per-ticker CCI(20) percentile profile, or null if no profile exists. */
+  cci_20_profile?: CciProfile | null;
+  /** Zone label string from zone_label_for_cci(), or null when cci_20 is unavailable for the date. */
+  cci_zone_label?: string | null;
 }
 
 /** Weekly or monthly snapshot card data. */

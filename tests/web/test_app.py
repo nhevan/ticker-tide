@@ -629,3 +629,46 @@ class TestAssetsMount:
         response = client_with_dist.get("/assets/index-abc123.js")
         assert response.status_code == 200
         assert b"console.log" in response.content
+
+
+# ---------------------------------------------------------------------------
+# /api/scoring-rules — CCI block test
+# ---------------------------------------------------------------------------
+
+
+class TestScoringRulesCci:
+    """Tests for the CCI block in GET /api/scoring-rules."""
+
+    def test_scoring_rules_includes_cci_thresholds(
+        self, client: TestClient
+    ) -> None:
+        """GET /api/scoring-rules must include the full cci block with thresholds,
+        fallback_zones, and profile_zones."""
+        _login(client)
+        response = client.get("/api/scoring-rules")
+        assert response.status_code == 200
+        body = response.json()
+
+        assert "cci" in body, "cci block missing from /api/scoring-rules response"
+        cci = body["cci"]
+
+        # Verify thresholds shape and canonical values.
+        assert "thresholds" in cci
+        thresholds = cci["thresholds"]
+        assert thresholds["hyper_oversold"] == -200
+        assert thresholds["oversold"] == -100
+        assert thresholds["overbought"] == 100
+        assert thresholds["hyper_overbought"] == 200
+
+        # Verify fallback_zones list.
+        assert "fallback_zones" in cci
+        assert cci["fallback_zones"] == [
+            "hyper_oversold", "oversold", "neutral", "overbought", "hyper_overbought"
+        ]
+
+        # Verify profile_zones list.
+        assert "profile_zones" in cci
+        assert cci["profile_zones"] == [
+            "extreme_oversold", "oversold", "below_mid",
+            "above_mid", "overbought", "extreme_overbought",
+        ]

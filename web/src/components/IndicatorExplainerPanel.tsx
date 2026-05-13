@@ -20,6 +20,7 @@ import { ContributionMathChain } from '@/components/ContributionMathChain';
 import { StochTrendChart } from '@/components/StochTrendChart';
 import { AdxTrendChart } from '@/components/AdxTrendChart';
 import { AdxMappingChart } from '@/components/AdxMappingChart';
+import { CciTrendChart } from '@/components/CciTrendChart';
 import type { Snapshot, ScoringRules, ContributionItem } from '@/lib/api/types';
 
 /** Human-friendly prose fragments for zone label strings (profile path). */
@@ -71,6 +72,30 @@ const ADX_ZONE_LABEL_DESCRIPTIONS: Record<string, string> = {
   weak_trend_developing: 'ADX from 20 to below 25 — early trend signal.',
   developing_trend: 'ADX from 25 to below 40 — established trend.',
   strong_trend: 'ADX at or above 40 — strong trend in progress.',
+};
+
+/** Human-friendly prose fragments for CCI(20) zone label strings (profile path). */
+const CCI_ZONE_LABEL_DESCRIPTIONS: Record<string, string> = {
+  extreme_oversold: "Below p5 of this ticker's historical CCI",
+  oversold: "Between p5 and p20 of this ticker's historical CCI",
+  below_mid: "Between p20 and p50 of this ticker's historical CCI",
+  above_mid: "Between p50 and p80 of this ticker's historical CCI",
+  overbought: "Between p80 and p95 of this ticker's historical CCI",
+  extreme_overbought: "Above p95 of this ticker's historical CCI",
+};
+
+/** Human-friendly prose fragments for CCI(20) zone label strings (fallback path). */
+const CCI_FALLBACK_ZONE_DESCRIPTIONS: Record<string, string> = {
+  hyper_oversold:
+    'CCI below −200. Hyper-oversold; deeply stretched to the downside, beyond standard oversold extremes.',
+  oversold:
+    'CCI between −200 and −100. Oversold by the canonical CCI rule; downside extension consistent with mean-reversion setups.',
+  neutral:
+    'CCI between −100 and +100. Neutral band; price within typical deviation of its moving average.',
+  overbought:
+    'CCI between +100 and +200. Overbought by the canonical CCI rule; upside extension consistent with mean-reversion setups.',
+  hyper_overbought:
+    'CCI above +200. Hyper-overbought; deeply stretched to the upside, beyond standard overbought extremes.',
 };
 
 interface IndicatorExplainerPanelProps {
@@ -797,6 +822,263 @@ function AdxPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules
 // End AdxPanel block.
 // =====================================================================
 
+// =====================================================================
+// CciPanel — CCI(20) 7-step explainer.
+// All 7 steps wired to real backend data.
+// =====================================================================
+
+/**
+ * CCI(20) panel — 7-step trace mirroring RsiPanel.
+ *
+ * @param snapshot - Full snapshot object from the server.
+ * @param rules - Scoring rules from /api/scoring-rules, or undefined if not yet loaded.
+ *   Used by Step 6 to render CURRENT regime weights + expansion factor.
+ *
+ * All 7 steps use real backend data.
+ */
+function CciPanel({ snapshot, rules }: { snapshot: Snapshot; rules: ScoringRules | undefined }) {
+  const daily = snapshot.daily;
+
+  // Step 1 — Raw value.
+  // Read from indicators.cci_20 (the actual CCI reading), NOT from
+  // contributions_payload items' raw_value (which stores the indicator score).
+  const cciRaw = daily.indicators?.cci_20;
+  const cciValue: number | null =
+    typeof cciRaw === 'number' && Number.isFinite(cciRaw) ? cciRaw : null;
+
+  if (cciValue === null) {
+    return (
+      <div className="border-t border-border/40 bg-card px-4 py-3">
+        <StepCard stepNumber={1} heading="CCI(20) reading">
+          CCI not available for this date.
+        </StepCard>
+      </div>
+    );
+  }
+
+  const cciProfile = daily.cci_20_profile ?? null;
+  const zoneLabel = daily.cci_zone_label ?? null;
+  const cciScore: number | null = (() => {
+    const raw = daily.indicator_scores?.['cci_20'];
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+  })();
+  const regime = daily.regime ?? 'ranging';
+  const contributions = daily.contributions_payload ?? null;
+
+  // Steps 5–7 require the CCI item from the contributions payload.
+  const cciItem: ContributionItem | undefined = contributions?.items.find(
+    (item) => item.name === 'cci_20',
+  );
+
+  // Compute CCI domain for PercentileStrip and PercentileMappingChart.
+  // Expand beyond ±200 if today or profile percentiles exceed that.
+  // Only construct when p5/p95 are finite — downstream guards also check this,
+  // but constructing from non-finite values would silently produce [NaN, NaN].
+  const cciDomain: [number, number] | undefined =
+    cciProfile && Number.isFinite(cciProfile.p5) && Number.isFinite(cciProfile.p95)
+      ? [
+          Math.min(cciProfile.p5, cciValue, -200),
+          Math.max(cciProfile.p95, cciValue, 200),
+        ]
+      : undefined;
+
+  return (
+    <div className="border-t border-border/40 bg-card px-4 py-3 space-y-2">
+      {/* Step 1 — Raw value */}
+      <StepCard stepNumber={1} heading="CCI(20) reading">
+        CCI is {cciValue.toFixed(1)}.
+      </StepCard>
+
+      {/* Step 2 — Zone label with CCI trend chart */}
+      <StepCard stepNumber={2} heading="Zone">
+        {(daily.cci_sparkline ?? []).length > 0 ? (
+          <CciTrendChart data={daily.cci_sparkline ?? []} />
+        ) : (
+          <p className="text-muted-foreground italic">Sparkline unavailable for this date.</p>
+        )}
+        {zoneLabel ? (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-muted text-foreground rounded-sm">
+              {zoneLabel}
+            </span>
+            <span>
+              {cciProfile
+                ? (CCI_ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? zoneLabel)
+                : (CCI_FALLBACK_ZONE_DESCRIPTIONS[zoneLabel] ?? zoneLabel)}
+            </span>
+            {!cciProfile && (
+              <span className="text-muted-foreground italic">
+                (fallback — no per-ticker profile yet)
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="text-muted-foreground italic">Zone label unavailable.</span>
+        )}
+      </StepCard>
+
+      {/* Step 3 — Scoring path */}
+      <StepCard stepNumber={3} heading="Scoring path">
+        {cciProfile &&
+        Number.isFinite(cciProfile.p5) &&
+        Number.isFinite(cciProfile.p20) &&
+        Number.isFinite(cciProfile.p50) &&
+        Number.isFinite(cciProfile.p80) &&
+        Number.isFinite(cciProfile.p95) &&
+        cciDomain ? (
+          <PercentileStrip
+            profile={cciProfile}
+            today={cciValue}
+            zoneLabel={zoneLabel}
+            // Profile-path only: this branch renders solely when cciProfile is present,
+            // so the zone label is one of the 6 profile-path keys (never a fallback key).
+            zoneDescription={zoneLabel ? (CCI_ZONE_LABEL_DESCRIPTIONS[zoneLabel] ?? '') : ''}
+            label="CCI"
+            domain={cciDomain}
+          />
+        ) : !cciProfile ? (
+          <p className="mb-2">
+            <span className="font-medium">Fallback path.</span> No per-ticker CCI profile available.
+            Zone is determined by the canonical ±100/±200 thresholds (five zones).
+          </p>
+        ) : null}
+        <p className={cciProfile ? 'mt-2' : ''}>
+          {cciProfile
+            ? 'This ticker has a persisted percentile profile for CCI(20), so scoring uses the '
+            : 'This ticker has no persisted CCI profile, so scoring falls back to the '}
+          <span className="font-semibold">{cciProfile ? 'profile path' : 'fallback path'}</span>
+          {cciProfile
+            ? ' (six zones around p5/p20/p50/p80/p95).'
+            : ' (fixed ±100/±200 thresholds).'}{' '}
+          {cciProfile
+            ? 'Without a profile, scoring would fall back to fixed ±100/±200 thresholds.'
+            : 'With a profile, scoring would use six zones around p5/p20/p50/p80/p95.'}
+        </p>
+        <p className="mt-1 text-muted-foreground">
+          In a <span className="font-mono">{regime}</span> regime, the oscillator's sign{' '}
+          {regime === 'trending'
+            ? 'flips: in trending regimes, overbought is bullish (momentum continuation).'
+            : 'is treated as mean-reverting (overbought → bearish, oversold → bullish).'}
+        </p>
+      </StepCard>
+
+      {/* Step 4 — CCI score */}
+      {cciScore === null ? (
+        <>
+          <StepCard stepNumber={4} heading="CCI(20) score" unavailable />
+          <StepCard stepNumber={5} heading="Magnitude share in momentum" unavailable />
+          <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+          <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />
+        </>
+      ) : (
+        <>
+          <StepCard stepNumber={4} heading="CCI(20) score">
+            {cciProfile &&
+            cciDomain &&
+            (regime === 'trending' || regime === 'ranging' || regime === 'volatile') &&
+            Number.isFinite(cciProfile.p5) &&
+            Number.isFinite(cciProfile.p20) &&
+            Number.isFinite(cciProfile.p50) &&
+            Number.isFinite(cciProfile.p80) &&
+            Number.isFinite(cciProfile.p95) ? (
+              <PercentileMappingChart
+                profile={cciProfile}
+                today={cciValue}
+                score={cciScore}
+                regime={regime as 'trending' | 'ranging' | 'volatile'}
+                label="CCI"
+                domain={cciDomain}
+              />
+            ) : (
+              <>
+                Score = {cciScore.toFixed(1)} (indicator score range −100 to +100; CCI itself is unbounded).{' '}
+                <span className="text-muted-foreground italic">
+                  (Mapping chart unavailable without per-ticker profile or recognised regime.)
+                </span>
+              </>
+            )}
+          </StepCard>
+
+          {/* Steps 5–7 require contributions payload */}
+          {!contributions ? (
+            <div className="rounded border border-border bg-card p-3 text-xs text-muted-foreground italic">
+              Contribution breakdown not available for this date (legacy data).
+            </div>
+          ) : !cciItem ? (
+            <>
+              <StepCard stepNumber={5} heading="Magnitude share in momentum">
+                CCI not found in contributions payload.
+              </StepCard>
+              <StepCard stepNumber={6} heading="Category weight × expansion" unavailable />
+              <StepCard stepNumber={7} heading="Net contribution to composite" unavailable />
+            </>
+          ) : (
+            <>
+              {/* Step 5 — Magnitude share in momentum */}
+              <StepCard stepNumber={5} heading="Magnitude share in momentum">
+                <CategoryShareBar
+                  items={contributions.items.filter((item) => item.category === 'momentum')}
+                  activeName="cci_20"
+                  category="momentum"
+                />
+              </StepCard>
+
+              {/* Step 6 — Category weight × expansion */}
+              <StepCard stepNumber={6} heading="Category weight × expansion">
+                {rules?.regime_weights && rules.regime_weights[regime] ? (
+                  <CategoryWeightBar
+                    weights={rules.regime_weights[regime]}
+                    regime={regime}
+                    expansion={rules.score_expansion_factor}
+                    activeName="momentum"
+                  />
+                ) : (
+                  <>
+                    Momentum weight in <span className="font-medium">{regime}</span> regime ={' '}
+                    {cciItem.category_weight.toFixed(3)} × expansion{' '}
+                    {contributions.expansion_factor.toFixed(2)}.
+                  </>
+                )}
+              </StepCard>
+
+              {/* Step 7 — Net contribution */}
+              <StepCard stepNumber={7} heading="Net contribution to composite">
+                {(() => {
+                  const momentumItems = contributions.items.filter(
+                    (item) => item.category === 'momentum',
+                  );
+                  const denom = momentumItems.reduce(
+                    (acc, item) => acc + Math.abs(item.score),
+                    0,
+                  );
+                  return (
+                    <ContributionMathChain
+                      score={cciItem.score}
+                      denom={denom}
+                      regimeWeight={cciItem.category_weight}
+                      expansion={contributions.expansion_factor}
+                      finalContribution={cciItem.contribution}
+                      activeName="cci_20"
+                    />
+                  );
+                })()}
+                <p className="mt-2 text-muted-foreground italic text-[10px]">
+                  {rules?.approximation_caveat ??
+                    'Item-level contributions do not sum to the final composite score due to clamping, sector adjustment, and timeframe merging.'}
+                </p>
+              </StepCard>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+// End CciPanel block.
+// =====================================================================
+
 /** Placeholder shown for indicators other than rsi_14 and macd_line. */
 function PlaceholderPanel({ indicator }: { indicator: string }) {
   return (
@@ -1028,6 +1310,9 @@ export function IndicatorExplainerPanel({
   if (indicator === 'adx') {
     return <AdxPanel snapshot={snapshot} rules={rules} />;
   }
+  if (indicator === 'cci_20') {
+    return <CciPanel snapshot={snapshot} rules={rules} />;
+  }
   return <PlaceholderPanel indicator={indicator} />;
 }
 
@@ -1044,4 +1329,5 @@ export const INDICATORS_WITH_EXPLAINER: ReadonlySet<string> = new Set([
   'macd_line',
   'stoch_k',
   'adx', // All 7 steps wired to real backend data.
+  'cci_20', // All 7 steps wired to real backend data.
 ]);

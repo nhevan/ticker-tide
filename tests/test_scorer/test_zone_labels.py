@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.scorer.zone_labels import zone_label_for_adx, zone_label_for_rsi, zone_label_for_stoch_k
+from src.scorer.zone_labels import zone_label_for_adx, zone_label_for_cci, zone_label_for_rsi, zone_label_for_stoch_k
 from src.scorer.indicator_scorer import score_adx, score_with_percentile
 
 # Synthetic profile used for profile-path tests.
@@ -342,3 +342,105 @@ class TestZoneLabelForAdx:
         score_40 = score_adx(40.0)
         assert label_40 == "strong_trend", f"At ADX=40, expected strong_trend, got {label_40!r}"
         assert score_40 == 80.0, f"At ADX=40, expected score 80.0, got {score_40}"
+
+
+# ── CCI(20) zone label tests ──────────────────────────────────────────────────
+
+# Synthetic CCI profile used for profile-path tests.
+_CCI_PROFILE = {
+    "p5": -150.0, "p20": -60.0, "p50": 0.0, "p80": 60.0, "p95": 150.0,
+    "mean": 0.0, "std": 80.0,
+}
+
+
+class TestZoneLabelForCciProfilePath:
+    """Tests for zone_label_for_cci() with a real percentile profile (six zones)."""
+
+    def test_extreme_oversold(self) -> None:
+        """CCI=-200, below p5=-150 → extreme_oversold."""
+        label = zone_label_for_cci(-200.0, _CCI_PROFILE)
+        assert label == "extreme_oversold"
+
+    def test_oversold(self) -> None:
+        """CCI=-100, p5 ≤ -100 < p20=-60 → oversold."""
+        label = zone_label_for_cci(-100.0, _CCI_PROFILE)
+        assert label == "oversold"
+
+    def test_below_mid(self) -> None:
+        """CCI=-30, p20 ≤ -30 < p50=0 → below_mid."""
+        label = zone_label_for_cci(-30.0, _CCI_PROFILE)
+        assert label == "below_mid"
+
+    def test_above_mid_at_p50_boundary(self) -> None:
+        """CCI=0, exactly at p50=0 — [p50, p80) → above_mid."""
+        label = zone_label_for_cci(0.0, _CCI_PROFILE)
+        assert label == "above_mid"
+
+    def test_overbought(self) -> None:
+        """CCI=100, p80 ≤ 100 < p95=150 → overbought."""
+        label = zone_label_for_cci(100.0, _CCI_PROFILE)
+        assert label == "overbought"
+
+    def test_extreme_overbought(self) -> None:
+        """CCI=200, ≥ p95=150 → extreme_overbought."""
+        label = zone_label_for_cci(200.0, _CCI_PROFILE)
+        assert label == "extreme_overbought"
+
+
+class TestZoneLabelForCciFallbackPath:
+    """Tests for zone_label_for_cci() with profile=None (five fallback zones)."""
+
+    def test_hyper_oversold_below_minus_200(self) -> None:
+        """CCI=-201, below -200 → hyper_oversold."""
+        label = zone_label_for_cci(-201.0, None)
+        assert label == "hyper_oversold"
+
+    def test_hyper_oversold_at_minus_200(self) -> None:
+        """CCI=-200, ≤ -200 → hyper_oversold (inclusive boundary)."""
+        label = zone_label_for_cci(-200.0, None)
+        assert label == "hyper_oversold"
+
+    def test_oversold_mid_range(self) -> None:
+        """CCI=-150, -200 < -150 ≤ -100 → oversold."""
+        label = zone_label_for_cci(-150.0, None)
+        assert label == "oversold"
+
+    def test_oversold_at_minus_100(self) -> None:
+        """CCI=-100, exactly -100 (≤ -100 boundary) → oversold."""
+        label = zone_label_for_cci(-100.0, None)
+        assert label == "oversold"
+
+    def test_neutral_just_above_minus_100(self) -> None:
+        """CCI=-99, -100 < -99 < 100 → neutral."""
+        label = zone_label_for_cci(-99.0, None)
+        assert label == "neutral"
+
+    def test_neutral_at_zero(self) -> None:
+        """CCI=0 → neutral."""
+        label = zone_label_for_cci(0.0, None)
+        assert label == "neutral"
+
+    def test_neutral_just_below_100(self) -> None:
+        """CCI=99, still below +100 → neutral."""
+        label = zone_label_for_cci(99.0, None)
+        assert label == "neutral"
+
+    def test_overbought_at_100(self) -> None:
+        """CCI=100, 100 ≤ 100 < 200 → overbought."""
+        label = zone_label_for_cci(100.0, None)
+        assert label == "overbought"
+
+    def test_overbought_mid_range(self) -> None:
+        """CCI=150, 100 ≤ 150 < 200 → overbought."""
+        label = zone_label_for_cci(150.0, None)
+        assert label == "overbought"
+
+    def test_hyper_overbought_at_200(self) -> None:
+        """CCI=200, ≥ 200 → hyper_overbought."""
+        label = zone_label_for_cci(200.0, None)
+        assert label == "hyper_overbought"
+
+    def test_hyper_overbought_above_200(self) -> None:
+        """CCI=201, above 200 → hyper_overbought."""
+        label = zone_label_for_cci(201.0, None)
+        assert label == "hyper_overbought"

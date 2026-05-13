@@ -582,6 +582,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `sparkline.macd_sparkline_days` | int | `100` | Number of trading-day rows to include in the MACD trend chart shown in the MACD line explainer panel (step 2). Rows with `macd_line IS NULL` are excluded; `macd_signal` and `macd_histogram` are independently nullable and surface as `null` within a row. Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
 | `sparkline.stoch_sparkline_days` | int | `100` | Number of trading-day rows to include in the Stochastic %K/%D trend chart shown in the Stoch %K explainer panel (step 2, pending). Rows with `stoch_k IS NULL` are excluded; `stoch_d` is independently nullable (warm-up period) and surfaces as `null` within a row. Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
 | `sparkline.adx_sparkline_days` | int | `100` | Number of trading-day rows to include in the ADX trend chart shown in the ADX explainer panel (step 2, pending). Rows with `adx IS NULL` are excluded. Single-series (no secondary line like Stoch's %D). Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
+| `sparkline.cci_sparkline_days` | int | `100` | Number of trading-day rows to include in the CCI(20) trend chart shown in the CCI explainer panel (step 2). Rows with `cci_20 IS NULL` are excluded. Single raw-value series; a 9-period SMA signal line is computed client-side from the filtered rows. Bounded by `<= picked_date`. Same read-time semantics as `rsi_sparkline_days`. |
 | `ai_reasoner.model` | string | `claude-sonnet-4-20250514` | Anthropic model to use for web LLM analysis |
 | `ai_reasoner.max_tokens` | int | `800` | Maximum tokens in Claude's response |
 | `ai_reasoner.temperature` | float | `0.3` | Sampling temperature for Claude |
@@ -635,7 +636,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `web.json port` | `sudo systemctl restart ticker-tide-web` |
 | `web.json login_rate_limit.*` | None — applies on next login attempt |
 | `web.json llm_rate_limit.*` | None — applies on next LLM request |
-| `web.json sparkline.*` | None — applies on next snapshot load (includes `rsi_sparkline_days`, `macd_sparkline_days`, `stoch_sparkline_days`, `adx_sparkline_days`) |
+| `web.json sparkline.*` | None — applies on next snapshot load (includes `rsi_sparkline_days`, `macd_sparkline_days`, `stoch_sparkline_days`, `adx_sparkline_days`, `cci_sparkline_days`) |
 | `web.json ai_reasoner.*` | None — applies on next LLM request |
 | `web.json why_bullets.*` | None — applies on next snapshot load |
 | `web.json signal_flip_lookback_days` | None — applies on next snapshot load |

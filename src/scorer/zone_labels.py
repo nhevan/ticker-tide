@@ -172,6 +172,74 @@ def zone_label_for_adx(value: float) -> str:
     return "ranging"
 
 
+def zone_label_for_cci(
+    value: float,
+    profile: Optional[dict],
+) -> str:
+    """
+    Return a zone label describing where the CCI(20) value sits.
+
+    Uses the ticker's historical percentile profile when available (six labels),
+    or falls back to fixed CCI canonical thresholds (five labels) otherwise.
+
+    Profile path (six labels, boundary convention [lower, upper)):
+      value < p5            → "extreme_oversold"
+      p5 ≤ value < p20      → "oversold"
+      p20 ≤ value < p50     → "below_mid"
+      p50 ≤ value < p80     → "above_mid"
+      p80 ≤ value < p95     → "overbought"
+      value ≥ p95           → "extreme_overbought"
+
+    Fallback path (five labels, CCI canonical ±100/±200 thresholds):
+      value ≤ -200          → "hyper_oversold"
+      -200 < value ≤ -100   → "oversold"
+      -100 < value < 100    → "neutral"
+      100 ≤ value < 200     → "overbought"
+      value ≥ 200           → "hyper_overbought"
+
+    Boundary determinism: ≤ -200 is hyper_oversold; exactly -100 is oversold;
+    exactly 100 is overbought; exactly 200 is hyper_overbought.
+
+    Parameters:
+        value: Current CCI(20) reading (unbounded; typical range roughly −300 to +300).
+        profile: Dict with keys p5, p20, p50, p80, p95 (and optionally mean, std),
+                 or None when no per-ticker profile exists.
+
+    Returns:
+        Zone label string. One of:
+          Profile path: "extreme_oversold", "oversold", "below_mid",
+                        "above_mid", "overbought", "extreme_overbought"
+          Fallback path: "hyper_oversold", "oversold", "neutral",
+                         "overbought", "hyper_overbought"
+    """
+    if profile is not None and all(
+        k in profile for k in ("p5", "p20", "p50", "p80", "p95")
+    ):
+        label = _zone_label_profile(value, profile)
+        logger.debug(
+            f"zone_label_for_cci: value={value}, path=profile, label={label!r}"
+        )
+        return label
+
+    # Fallback: inline CCI canonical thresholds (not delegated to _zone_label_fallback
+    # because CCI uses five zones with distinct boundary semantics, not four).
+    if value <= -200:
+        label = "hyper_oversold"
+    elif value <= -100:
+        label = "oversold"
+    elif value < 100:
+        label = "neutral"
+    elif value < 200:
+        label = "overbought"
+    else:
+        label = "hyper_overbought"
+
+    logger.debug(
+        f"zone_label_for_cci: value={value}, path=fallback, label={label!r}"
+    )
+    return label
+
+
 def _zone_label_profile(value: float, profile: dict) -> str:
     """
     Return a zone label using the ticker's percentile profile.

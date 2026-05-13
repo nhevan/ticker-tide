@@ -1,7 +1,8 @@
 /**
  * PercentileStrip — visual position of today's indicator value on the
- * per-ticker historical distribution. Generic over any bounded 0–100
- * indicator; the indicator label is parameterised via the `label` prop.
+ * per-ticker historical distribution. Generic over any bounded or unbounded
+ * indicator; the indicator label is parameterised via the `label` prop and
+ * the value range is parameterised via the `domain` prop.
  *
  * Renders a gradient bar (green→muted→red), percentile tick marks
  * (p5/p20/p50/p80/p95), today's value as a primary-color dot with floating
@@ -11,10 +12,11 @@
  * Theme-aware via CSS custom properties. SVG-only — no chart library.
  *
  * @param profile - The ticker's percentile distribution from the snapshot.
- * @param today - Today's raw indicator reading (0–100).
+ * @param today - Today's raw indicator reading. Range determined by the `domain` prop (default [0, 100]).
  * @param zoneLabel - Server-computed zone label (e.g. "above_mid").
  * @param zoneDescription - Human-friendly prose fragment for the zone (passed from caller's ZONE_LABEL_DESCRIPTIONS map).
  * @param label - Display name for the indicator used in the prose caption (defaults to 'RSI').
+ * @param domain - [min, max] of the indicator's value range. Defaults to [0, 100].
  * @returns The rendered strip, or null if any required numeric input is non-finite.
  */
 import { useId } from 'react';
@@ -25,6 +27,7 @@ interface PercentileStripProps {
   zoneLabel: string | null;
   zoneDescription: string;
   label?: string;
+  domain?: [number, number];
 }
 
 export function PercentileStrip({
@@ -33,6 +36,7 @@ export function PercentileStrip({
   zoneLabel,
   zoneDescription,
   label = 'RSI',
+  domain = [0, 100],
 }: PercentileStripProps) {
   // REQUIRED: defensive null/NaN guard. DB columns are nullable; TS type lies.
   // Use Number.isFinite — isNaN(null) returns false in JS and would silently pass.
@@ -47,9 +51,9 @@ export function PercentileStrip({
     return null;
   }
 
-  // Clamp today's value to RSI's mathematical range to avoid clipping the dot
+  // Clamp today's value to the domain range to avoid clipping the dot
   // out of the SVG viewBox if upstream calculations ever glitch.
-  const clampedToday = Math.max(0, Math.min(100, today));
+  const clampedToday = Math.max(domain[0], Math.min(domain[1], today));
 
   // REQUIRED: unique gradient ID per instance so multiple strips on the page
   // do not collide in the global SVG <defs> namespace.
@@ -57,7 +61,12 @@ export function PercentileStrip({
 
   const pad = 8;
   const w = 400 - 2 * pad;
-  const xAt = (v: number) => pad + (w * v) / 100;
+  const domainSpan = domain[1] - domain[0];
+  const xAt = (v: number) => pad + (w * (v - domain[0])) / domainSpan;
+
+  // Normalise a value in [domain[0], domain[1]] to a gradient offset percentage string.
+  const gradOffset = (v: number) =>
+    ((v - domain[0]) / domainSpan * 100).toFixed(1) + '%';
 
   return (
     <div className="w-full">
@@ -65,9 +74,9 @@ export function PercentileStrip({
         <defs>
           <linearGradient id={gradientId} x1="0" x2="1" y1="0" y2="0">
             <stop offset="0%" stopColor="hsl(var(--up))" stopOpacity={0.5} />
-            <stop offset={`${profile.p20}%`} stopColor="hsl(var(--up))" stopOpacity={0.15} />
-            <stop offset={`${profile.p50}%`} stopColor="hsl(var(--muted))" stopOpacity={0.45} />
-            <stop offset={`${profile.p80}%`} stopColor="hsl(var(--down))" stopOpacity={0.15} />
+            <stop offset={gradOffset(profile.p20)} stopColor="hsl(var(--up))" stopOpacity={0.15} />
+            <stop offset={gradOffset(profile.p50)} stopColor="hsl(var(--muted))" stopOpacity={0.45} />
+            <stop offset={gradOffset(profile.p80)} stopColor="hsl(var(--down))" stopOpacity={0.15} />
             <stop offset="100%" stopColor="hsl(var(--down))" stopOpacity={0.5} />
           </linearGradient>
         </defs>

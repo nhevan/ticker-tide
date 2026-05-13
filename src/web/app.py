@@ -566,6 +566,12 @@ def create_app(
         adx_t = resolved_scorer_config.get(
             "indicator_thresholds", {}
         ).get("adx", {"ranging_max": 20.0, "weak_max": 25.0, "developing_max": 40.0})
+        cci_t = resolved_scorer_config.get(
+            "indicator_thresholds", {}
+        ).get(
+            "cci",
+            {"hyper_oversold": -200, "oversold": -100, "overbought": 100, "hyper_overbought": 200},
+        )
         regime_weights = resolved_scorer_config.get("adaptive_weights", {})
         expansion_factor = resolved_scorer_config.get("scoring", {}).get(
             "score_expansion_factor", 1.0
@@ -634,6 +640,25 @@ def create_app(
                 ],
                 "discontinuity_at": adx_t["weak_max"],
                 "score_range": [-20.0, 80.0],
+            },
+            # CCI(20) uses the canonical ±100/±200 thresholds for its fallback zones.
+            # The profile path uses the same six percentile zones as RSI and Stoch %K.
+            # Thresholds are read from config/scorer.json indicator_thresholds.cci (display-only;
+            # zone_label_for_cci hardcodes the same literals — keep manually in sync).
+            "cci": {
+                "thresholds": {
+                    "hyper_oversold": cci_t["hyper_oversold"],
+                    "oversold": cci_t["oversold"],
+                    "overbought": cci_t["overbought"],
+                    "hyper_overbought": cci_t["hyper_overbought"],
+                },
+                "fallback_zones": [
+                    "hyper_oversold", "oversold", "neutral", "overbought", "hyper_overbought",
+                ],
+                "profile_zones": [
+                    "extreme_oversold", "oversold", "below_mid",
+                    "above_mid", "overbought", "extreme_overbought",
+                ],
             },
             "regime_weights": regime_weights,
             "score_expansion_factor": expansion_factor,

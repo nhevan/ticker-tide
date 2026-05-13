@@ -1107,7 +1107,7 @@ describe('MatrixTable', () => {
       expect(screen.getByRole('button', { name: /MACD line/i })).toBeInTheDocument();
     });
 
-    it('non-explainer rows (e.g. cci_20) render no role="button" and no click affordance', () => {
+    it('cci_20 rows render role="button" and click affordance (full explainer panel wired)', () => {
       render(
         <MatrixTable
           title="Daily"
@@ -1116,9 +1116,9 @@ describe('MatrixTable', () => {
           signalDirection={1}
         />,
       );
-      // The CCI 20 label is rendered, but the <td> does NOT become a button.
+      // CCI 20 now has a full 7-step explainer panel and is in INDICATORS_WITH_EXPLAINER.
       expect(screen.getByText('CCI 20')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /CCI 20/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /CCI 20/i })).toBeInTheDocument();
     });
   });
 

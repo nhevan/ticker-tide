@@ -7,6 +7,13 @@
       "weak_max": 25.0,
       "developing_max": 40.0,
       "_comment": "Display-only thresholds read by /api/scoring-rules for the ADX explainer panel. These values are NOT read by the scorer at runtime — score_adx() in indicator_scorer.py hardcodes the same literals. If you change these values you MUST also update the literals at indicator_scorer.py:381-407 manually. Keeping them in sync is a manual discipline."
+    },
+    "cci": {
+      "hyper_oversold": -200,
+      "oversold": -100,
+      "overbought": 100,
+      "hyper_overbought": 200,
+      "_comment": "Display-only thresholds read by /api/scoring-rules for the CCI explainer panel. These are the canonical CCI ±100/±200 thresholds and are also referenced by zone_label_for_cci's fallback path in src/scorer/zone_labels.py (hardcoded there for performance). If you change these you must update the fallback inequalities in zone_label_for_cci."
     }
   },
   "regime_detection": {
