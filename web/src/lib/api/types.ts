@@ -128,6 +128,22 @@ export interface ContributionsPayload {
   items: ContributionItem[];
 }
 
+/** A single ADX scoring band from /api/scoring-rules.adx.bands. */
+export interface AdxBand {
+  name: string;
+  min: number;
+  max: number;
+  score_min: number;
+  score_max: number;
+}
+
+/** ADX scoring rules from /api/scoring-rules.adx. */
+export interface AdxRules {
+  scoring_method: string;
+  bands: AdxBand[];
+  discontinuity_at: number;
+}
+
 /** Response shape for GET /api/scoring-rules. */
 export interface ScoringRules {
   rsi: {
@@ -136,6 +152,7 @@ export interface ScoringRules {
     fallback_zones: string[];
     profile_zones: string[];
   };
+  adx?: AdxRules;
   regime_weights: Record<string, Record<string, number>>;
   score_expansion_factor: number;
   /**
