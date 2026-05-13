@@ -73,7 +73,11 @@ function DriverColumn({ rows, up }: ColumnProps) {
         ) : (
           rows.map((r) => (
             <tr key={r.name} className="border-b border-border/30 last:border-b-0">
-              <td className="py-1 pr-3 font-mono text-[11px] text-foreground/90 truncate">{r.name}</td>
+              <td className="py-1 pr-3 font-mono text-[11px] text-foreground/90" title={r.name}>
+                <span className="block max-w-[10rem] overflow-hidden text-ellipsis whitespace-nowrap">
+                  {r.name}
+                </span>
+              </td>
               <td className="py-1 px-2 text-right text-foreground/70">
                 {Number.isFinite(r.raw) ? fmtRaw(r.raw) : '—'}
               </td>
@@ -154,11 +158,12 @@ export function ModelInputsTable({ payload }: ModelInputsTableProps) {
   const sumPos = positives.reduce((acc, c) => acc + c.contribution, 0);
   const sumNeg = negatives.reduce((acc, c) => acc + c.contribution, 0);
 
-  // intercept and prediction come directly from the payload.
-  const interceptDisplay = Number.isFinite(intercept) ? fmt2(intercept) : '—';
-  const predictionDisplay = Number.isFinite(prediction) ? fmt2(prediction) : '—';
-  const sumPosDisplay = Number.isFinite(sumPos) ? fmt2(sumPos) : '—';
-  const sumNegDisplay = Number.isFinite(sumNeg) ? fmt2(sumNeg) : '—';
+  // intercept and prediction come directly from the payload. fmt2 already
+  // renders non-finite as '—', so no outer guards needed.
+  const interceptDisplay = fmt2(intercept);
+  const predictionDisplay = fmt2(prediction);
+  const sumPosDisplay = fmt2(sumPos);
+  const sumNegDisplay = fmt2(sumNeg);
 
   return (
     <section className="rounded-md border border-border/60 bg-card p-4 mb-4">
@@ -169,9 +174,7 @@ export function ModelInputsTable({ payload }: ModelInputsTableProps) {
         </h3>
         <div className="text-xs text-muted-foreground tabular-nums">
           intercept {interceptDisplay}{' '}
-          +{' '}
           <span className="text-emerald-500">Σ⁺ {sumPosDisplay}</span>{' '}
-          +{' '}
           <span className="text-rose-500">Σ⁻ {sumNegDisplay}</span>{' '}
           = prediction{' '}
           <span className="font-semibold text-foreground">{predictionDisplay}</span>
