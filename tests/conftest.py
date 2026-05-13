@@ -574,6 +574,8 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             data_completeness TEXT,
             key_signals TEXT,
             key_signals_data TEXT,
+            raw_daily_score REAL,
+            sector_etf_score REAL,
             UNIQUE(ticker, date)
         )""",
         """CREATE TABLE IF NOT EXISTS scores_weekly (

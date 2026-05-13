@@ -774,6 +774,8 @@ Enable WAL mode on connection.
 - data_completeness TEXT (JSON)
 - key_signals TEXT (JSON array)
 - key_signals_data TEXT (nullable) — JSON contribution payload used by the `/why` command and the dashboard contribution matrix. See §11.1 below for the schema and approximation notes.
+- raw_daily_score REAL (nullable) — pre-sector-adjustment daily composite score (before `apply_sector_adjustment` is called). NULL on rows written before this column was added (migration-safe). Together with `daily_score`, allows the frontend to reconstruct `sector_adj = daily_score - raw_daily_score` (effective, clamp-aware adjustment).
+- sector_etf_score REAL (nullable) — the sector ETF composite score computed by `compute_sector_etf_score()` at the time of scoring. NULL when no sector ETF is mapped for the ticker, or on legacy rows. Used by the signal-classification tooltip to show the ETF score sub-line.
 - UNIQUE(ticker, date)
 
 **scores_weekly** — denormalized weekly composite snapshot for query/UI consumers (e.g., `/detail` and scatter views). NOT in the scoring critical path: the runtime `merge_timeframes()` still consumes the in-memory composite and writes the final ±100 to `scores_daily.final_score`. This table is a write-through projection so historical queries do not need to recompute weekly aggregates from `indicators_weekly`.
@@ -1611,6 +1613,7 @@ Process-static endpoint. Returns:
 - `regime_weights` — `adaptive_weights` block from `config/scorer.json` (all three regimes × all categories).
 - `score_expansion_factor` — from `config/scorer.json`.
 - `timeframe_weights` — `timeframe_weights` block from `config/scorer.json` (trending/ranging/volatile × daily/weekly/monthly floats). Used by `computeTimeframeHeaderContributions` on the frontend to compute redistributed per-timeframe header weights.
+- `signal_thresholds` — `{bullish, bearish}` from `config/scorer.json signal_thresholds`. Used by `SignalClassificationTooltip` to classify the effective score in Step 3. Defaults to `{bullish: 30, bearish: -30}` if the key is absent from the config.
 - `approximation_caveat` — fixed string explaining the decomposition limitation.
 
 Requires authentication. Served from `create_app()` closure; value is constant for the process lifetime. After editing `config/scorer.json`, restart the web service.
@@ -1631,6 +1634,8 @@ Each of the three `MatrixTable` sections (daily, weekly, monthly) now displays a
 - Monthly: `snapshot.monthly.composite_score` (= `scores_monthly.composite_score`, per-timeframe pre-blend).
 
 `snapshot.daily.daily_score` is surfaced by `_build_daily_section` in `queries.py` as a new field alongside the existing `composite_score`.
+
+`snapshot.daily.raw_daily_score`, `snapshot.daily.sector_etf_score`, and `snapshot.daily.sector_etf` are additionally surfaced by `_build_daily_section`. `raw_daily_score` is `scores_daily.raw_daily_score` (pre-sector-adjustment daily score); `sector_etf_score` is `scores_daily.sector_etf_score`; `sector_etf` is joined from `tickers.sector_etf` via a LEFT JOIN. All three are NULL-safe — NULL on legacy rows or when no sector ETF is mapped. The `SignalClassificationTooltip` uses these three fields to render the Step 1a sector-adjustment math chain.
 
 ### 15.5 MACD line 7-step trace
 

@@ -67,6 +67,7 @@ function makeScoringRules(opts?: {
       ranging: opts?.ranging ?? { daily: 0.60, weekly: 0.30, monthly: 0.10 },
       volatile: opts?.volatile ?? { daily: 0.25, weekly: 0.45, monthly: 0.30 },
     },
+    signal_thresholds: { bullish: 2, bearish: -2 },
   };
 }
 

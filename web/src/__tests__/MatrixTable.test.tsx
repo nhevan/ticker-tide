@@ -1288,6 +1288,7 @@ describe('MatrixTable', () => {
       score_expansion_factor: 1.5,
       approximation_caveat: '',
       timeframe_weights: {},
+      signal_thresholds: { bullish: 2, bearish: -2 },
     };
 
     it('renders equation row when contributions_payload and headerContribution are provided', () => {

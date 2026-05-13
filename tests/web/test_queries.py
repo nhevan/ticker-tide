@@ -1729,3 +1729,144 @@ class TestFetchCciProfile:
         self._insert_cci_profile(conn, "MSFT", "ranging")
         result = _fetch_cci_profile(conn, "AAPL")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# DailySection new fields: raw_daily_score, sector_etf_score, sector_etf
+# ---------------------------------------------------------------------------
+
+def _insert_daily_score_with_etf_columns(
+    conn: sqlite3.Connection,
+    ticker: str,
+    date: str,
+    raw_daily_score: float | None,
+    sector_etf_score: float | None,
+) -> None:
+    """
+    Insert a scores_daily row that includes the two new columns.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        date: Date string (YYYY-MM-DD).
+        raw_daily_score: Pre-sector-adjustment daily score, or None.
+        sector_etf_score: Sector ETF composite score, or None.
+    """
+    conn.execute(
+        """INSERT OR REPLACE INTO scores_daily(
+            ticker, date, signal, confidence, final_score, daily_score, regime,
+            trend_score, momentum_score, volume_score, volatility_score,
+            candlestick_score, structural_score, sentiment_score,
+            fundamental_score, macro_score, calibrated_score,
+            raw_daily_score, sector_etf_score
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            ticker, date, "BULLISH", 72.5, 55.0, 42.0, "trending",
+            40.0, 30.0, 20.0, -10.0, 25.0, 15.0, 5.0, 8.0, -3.0, 1.42,
+            raw_daily_score, sector_etf_score,
+        ),
+    )
+    conn.commit()
+
+
+def _insert_ticker_with_etf(
+    conn: sqlite3.Connection,
+    ticker: str,
+    sector_etf: str | None,
+) -> None:
+    """
+    Insert a tickers row with the given sector_etf.
+
+    Parameters:
+        conn: Open SQLite connection.
+        ticker: Ticker symbol.
+        sector_etf: Sector ETF symbol, or None.
+    """
+    conn.execute(
+        "INSERT OR REPLACE INTO tickers(symbol, name, active, sector_etf) VALUES (?, ?, 1, ?)",
+        (ticker, f"{ticker} Corp", sector_etf),
+    )
+    conn.commit()
+
+
+class TestDailySectionNewEtfFields:
+    """
+    Tests that _build_daily_section surfaces raw_daily_score, sector_etf_score,
+    and sector_etf (joined from tickers) on the daily snapshot dict.
+    """
+
+    def test_raw_daily_score_is_returned(self, conn: sqlite3.Connection) -> None:
+        """
+        raw_daily_score from scores_daily must appear on the daily section dict
+        when the column is populated.
+        """
+        _insert_ticker_with_etf(conn, "AAPL", "XLK")
+        _insert_daily_score_with_etf_columns(conn, "AAPL", "2026-05-01", 39.5, 58.0)
+
+        result = _build_daily_section(conn, "AAPL", "2026-05-01", 15)
+
+        assert result["data_available"] is True
+        assert result.get("raw_daily_score") == 39.5, (
+            f"Expected raw_daily_score=39.5, got {result.get('raw_daily_score')}"
+        )
+
+    def test_sector_etf_score_is_returned(self, conn: sqlite3.Connection) -> None:
+        """
+        sector_etf_score from scores_daily must appear on the daily section dict
+        when the column is populated.
+        """
+        _insert_ticker_with_etf(conn, "AAPL", "XLK")
+        _insert_daily_score_with_etf_columns(conn, "AAPL", "2026-05-01", 39.5, 58.0)
+
+        result = _build_daily_section(conn, "AAPL", "2026-05-01", 15)
+
+        assert result.get("sector_etf_score") == 58.0, (
+            f"Expected sector_etf_score=58.0, got {result.get('sector_etf_score')}"
+        )
+
+    def test_sector_etf_is_joined_from_tickers(self, conn: sqlite3.Connection) -> None:
+        """
+        sector_etf must be joined from the tickers table and returned on the
+        daily section dict.
+        """
+        _insert_ticker_with_etf(conn, "AAPL", "XLK")
+        _insert_daily_score_with_etf_columns(conn, "AAPL", "2026-05-01", 39.5, 58.0)
+
+        result = _build_daily_section(conn, "AAPL", "2026-05-01", 15)
+
+        assert result.get("sector_etf") == "XLK", (
+            f"Expected sector_etf='XLK', got {result.get('sector_etf')}"
+        )
+
+    def test_sector_etf_is_null_when_not_mapped(self, conn: sqlite3.Connection) -> None:
+        """
+        When the ticker row has sector_etf=None, the daily section must return
+        sector_etf=None (not absent, not an error).
+        """
+        _insert_ticker_with_etf(conn, "AAPL", None)
+        _insert_daily_score_with_etf_columns(conn, "AAPL", "2026-05-01", 40.0, None)
+
+        result = _build_daily_section(conn, "AAPL", "2026-05-01", 15)
+
+        assert result.get("sector_etf") is None
+        assert result.get("sector_etf_score") is None
+
+    def test_sector_etf_null_when_no_tickers_row(self, conn: sqlite3.Connection) -> None:
+        """
+        When there is no matching row in the tickers table (LEFT JOIN), sector_etf
+        must be None rather than raising.
+        """
+        # Insert score row without inserting a tickers row.
+        conn.execute(
+            """INSERT OR REPLACE INTO scores_daily(
+                ticker, date, signal, confidence, final_score, daily_score, regime,
+                raw_daily_score, sector_etf_score
+            ) VALUES (?,?,?,?,?,?,?,?,?)""",
+            ("AAPL", "2026-05-01", "NEUTRAL", 50.0, 10.0, 12.0, "ranging", 11.0, None),
+        )
+        conn.commit()
+
+        result = _build_daily_section(conn, "AAPL", "2026-05-01", 15)
+
+        assert result["data_available"] is True
+        assert result.get("sector_etf") is None

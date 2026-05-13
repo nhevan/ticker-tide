@@ -1647,3 +1647,110 @@ class TestScoreTickerPersistsIndicatorScores:
             ("AAPL", "2026-03-01"),
         ).fetchone()
         assert rows["cnt"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# raw_daily_score and sector_etf_score persistence
+# ---------------------------------------------------------------------------
+
+class TestRawDailyAndSectorEtfScorePersistence:
+    """
+    Verify that score_ticker writes raw_daily_score and sector_etf_score to the
+    scores_daily table.
+
+    - Ticker with sector_etf mapped: both columns non-null after scoring.
+    - Ticker without sector_etf: sector_etf_score is NULL; raw_daily_score is non-null.
+    """
+
+    def test_ticker_with_sector_etf_populates_both_columns(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        When the ticker has a sector ETF mapped and SPY data exists for the sector
+        ETF score computation, raw_daily_score and sector_etf_score must both be
+        non-null in the persisted scores_daily row.
+        """
+        from unittest.mock import patch
+        from src.scorer.main import score_ticker
+
+        # Insert indicator and OHLCV data for the ticker.
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        # Patch compute_sector_etf_score to return a known value so the test
+        # is deterministic regardless of whether XLK data is in the DB.
+        sector_etf_score_value = 42.5
+        with patch(
+            "src.scorer.main.compute_sector_etf_score",
+            return_value=sector_etf_score_value,
+        ):
+            result = score_ticker(
+                db_conn=db_connection,
+                ticker="AAPL",
+                ticker_config=SAMPLE_TICKER_CONFIG,  # has sector_etf="XLK"
+                scoring_date=SCORING_DATE,
+                config=SAMPLE_CONFIG,
+            )
+
+        assert result is not None
+        assert result.get("raw_daily_score") is not None, (
+            "raw_daily_score must be populated when sector ETF is mapped"
+        )
+        assert result.get("sector_etf_score") == sector_etf_score_value, (
+            f"sector_etf_score must equal the patched value {sector_etf_score_value}"
+        )
+
+        # Verify the DB row also has the values.
+        row = db_connection.execute(
+            "SELECT raw_daily_score, sector_etf_score FROM scores_daily "
+            "WHERE ticker = ? AND date = ?",
+            ("AAPL", SCORING_DATE),
+        ).fetchone()
+        assert row is not None
+        assert row["raw_daily_score"] is not None
+        assert row["sector_etf_score"] == sector_etf_score_value
+
+    def test_ticker_without_sector_etf_has_null_sector_etf_score(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        When the ticker has no sector ETF mapped, sector_etf_score must be NULL
+        in the persisted row. raw_daily_score must still be non-null.
+        """
+        from src.scorer.main import score_ticker
+
+        no_etf_config = {
+            "symbol": "AAPL",
+            "sector": "Technology",
+            "sector_etf": None,  # no ETF mapped
+            "added": "2026-01-01",
+            "active": 1,
+        }
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+
+        result = score_ticker(
+            db_conn=db_connection,
+            ticker="AAPL",
+            ticker_config=no_etf_config,
+            scoring_date=SCORING_DATE,
+            config=SAMPLE_CONFIG,
+        )
+
+        assert result is not None
+        assert result.get("sector_etf_score") is None, (
+            "sector_etf_score must be None when no sector ETF is mapped"
+        )
+        assert result.get("raw_daily_score") is not None, (
+            "raw_daily_score must be non-null even without a sector ETF"
+        )
+
+        row = db_connection.execute(
+            "SELECT raw_daily_score, sector_etf_score FROM scores_daily "
+            "WHERE ticker = ? AND date = ?",
+            ("AAPL", SCORING_DATE),
+        ).fetchone()
+        assert row is not None
+        assert row["raw_daily_score"] is not None
+        assert row["sector_etf_score"] is None

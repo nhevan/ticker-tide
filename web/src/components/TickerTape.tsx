@@ -8,9 +8,17 @@
  * @param props - TickerTapeProps with ticker, snapshot, isLoading, and error.
  */
 
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import type { Snapshot } from '@/lib/api/types';
+import { SignalClassificationTooltip } from '@/components/SignalClassificationTooltip';
 
 export interface TickerTapeProps {
   /** Currently loaded ticker symbol. Empty string = placeholder mode. */
@@ -101,6 +109,7 @@ function signalPillClass(signal: string | null | undefined): string {
  */
 export function TickerTape({ ticker, snapshot, isLoading, error }: TickerTapeProps) {
   const { price, changePct, asOfDate } = deriveSparklineValues(snapshot);
+  const [pillOpen, setPillOpen] = useState(false);
 
   const signal = snapshot?.daily?.signal ?? null;
   const confidence = snapshot?.daily?.confidence ?? null;
@@ -168,9 +177,36 @@ export function TickerTape({ ticker, snapshot, isLoading, error }: TickerTapePro
             </span>
             <span className="mx-1 text-muted-foreground">·</span>
             {hasData && signal ? (
-              <Badge data-signal={signal} className={signalPillClass(signal)}>
-                {KNOWN_SIGNALS.has(signal.toUpperCase()) ? pillLabel() : signal}
-              </Badge>
+              <TooltipProvider delayDuration={0}>
+                <Tooltip open={pillOpen} onOpenChange={setPillOpen}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setPillOpen((v) => !v)}
+                      className="focus:outline-none focus:ring-2 focus:ring-ring rounded-md"
+                    >
+                      <Badge
+                        data-signal={signal}
+                        className={`${signalPillClass(signal)} cursor-pointer`}
+                      >
+                        {KNOWN_SIGNALS.has(signal.toUpperCase()) ? pillLabel() : signal}
+                      </Badge>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="bottom"
+                    align="start"
+                    className="max-w-none p-0 bg-card text-card-foreground border-border shadow-xl backdrop-blur-none opacity-100"
+                    onPointerDownOutside={() => setPillOpen(false)}
+                  >
+                    <SignalClassificationTooltip
+                      daily={snapshot!.daily}
+                      weekly={snapshot!.weekly?.data_available ? snapshot!.weekly : null}
+                      monthly={snapshot!.monthly?.data_available ? snapshot!.monthly : null}
+                    />
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             ) : (
               <Badge variant="outline">—</Badge>
             )}

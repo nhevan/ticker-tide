@@ -279,7 +279,12 @@ def _build_daily_section(
     resolved_scorer_config = scorer_config if scorer_config is not None else {}
 
     score_row = conn.execute(
-        "SELECT * FROM scores_daily WHERE ticker = ? AND date = ?",
+        """
+        SELECT sd.*, t.sector_etf
+        FROM scores_daily sd
+        LEFT JOIN tickers t ON sd.ticker = t.symbol
+        WHERE sd.ticker = ? AND sd.date = ?
+        """,
         (ticker, picked_date),
     ).fetchone()
 
@@ -398,6 +403,9 @@ def _build_daily_section(
         "cci_20_profile": cci_20_profile,
         "cci_zone_label": cci_zone_label,
         "contributions_payload": contributions_payload,
+        "raw_daily_score": score_dict.get("raw_daily_score"),
+        "sector_etf_score": score_dict.get("sector_etf_score"),
+        "sector_etf": score_dict.get("sector_etf"),
     }
 
 

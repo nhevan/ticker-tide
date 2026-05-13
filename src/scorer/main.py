@@ -438,8 +438,9 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
              volume_score, volatility_score, candlestick_score, structural_score,
              sentiment_score, fundamental_score, macro_score,
              calibrated_score, model_r2,
-             data_completeness, key_signals, key_signals_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             data_completeness, key_signals, key_signals_data,
+             raw_daily_score, sector_etf_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score["ticker"],
@@ -465,6 +466,8 @@ def save_score_to_db(db_conn: sqlite3.Connection, score: dict) -> None:
             data_completeness,
             key_signals,
             key_signals_data,
+            score.get("raw_daily_score"),
+            score.get("sector_etf_score"),
         ),
     )
     db_conn.commit()
@@ -818,6 +821,8 @@ def score_ticker(
         "data_completeness": json.dumps(data_completeness),
         "key_signals": json.dumps(key_signals),
         "key_signals_data": contributions_json,
+        "raw_daily_score": raw_daily,
+        "sector_etf_score": sector_etf_score,
     }
 
     # 20. Save to DB

@@ -64,6 +64,10 @@ _TEST_SCORER_CONFIG = {
     "scoring": {
         "score_expansion_factor": 1.5,
     },
+    "signal_thresholds": {
+        "bullish": 2,
+        "bearish": -2,
+    },
 }
 
 
@@ -353,4 +357,67 @@ class TestScoringRulesAdxBlock:
         assert stoch_k["thresholds"]["oversold"] == 20.0
         assert stoch_k["thresholds"]["overbought"] == 80.0
         assert stoch_k["scoring_method"] == "percentile_profile_with_threshold_fallback"
+
+
+class TestSignalThresholdsBlock:
+    """Tests for the signal_thresholds block in GET /api/scoring-rules."""
+
+    def test_signal_thresholds_key_present(self, client: TestClient) -> None:
+        """Response contains the signal_thresholds key."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert "signal_thresholds" in data
+
+    def test_signal_thresholds_has_bullish_and_bearish(self, client: TestClient) -> None:
+        """signal_thresholds must have bullish and bearish sub-keys."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        thresholds = data["signal_thresholds"]
+        assert "bullish" in thresholds
+        assert "bearish" in thresholds
+
+    def test_signal_thresholds_values_come_from_config(self, client: TestClient) -> None:
+        """signal_thresholds values match the scorer_config (not hardcoded literals)."""
+        _login(client)
+        data = client.get("/api/scoring-rules").json()
+        assert data["signal_thresholds"]["bullish"] == 2
+        assert data["signal_thresholds"]["bearish"] == -2
+
+    def test_signal_thresholds_fallback_when_missing_from_config(
+        self, db_path: str
+    ) -> None:
+        """When signal_thresholds is absent from the scorer config, a sensible fallback
+        is returned (bullish=30, bearish=-30) rather than raising."""
+        config_without_thresholds = {
+            "indicator_thresholds": {
+                "rsi_14": {"oversold": 30.0, "overbought": 70.0},
+                "stoch_k": {"oversold": 20.0, "overbought": 80.0},
+                "adx": {"ranging_max": 20.0, "weak_max": 25.0, "developing_max": 40.0},
+            },
+            "adaptive_weights": {},
+            "timeframe_weights": {},
+            "scoring": {"score_expansion_factor": 1.0},
+            # signal_thresholds intentionally absent
+        }
+        with patch.dict(
+            "os.environ",
+            {
+                "WEB_PASSWORD": "testpass",
+                "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+            },
+        ):
+            from src.web.app import create_app
+
+            app = create_app(
+                db_path=db_path,
+                config=_TEST_WEB_CONFIG,
+                scorer_config=config_without_thresholds,
+            )
+            from fastapi.testclient import TestClient as TC
+            with TC(app, raise_server_exceptions=True) as tc:
+                tc.post("/api/login", json={"password": "testpass"})
+                data = tc.get("/api/scoring-rules").json()
+                thresholds = data["signal_thresholds"]
+                assert "bullish" in thresholds
+                assert "bearish" in thresholds
 

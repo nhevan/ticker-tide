@@ -663,6 +663,9 @@ def create_app(
             "regime_weights": regime_weights,
             "score_expansion_factor": expansion_factor,
             "timeframe_weights": timeframe_weights,
+            "signal_thresholds": resolved_scorer_config.get(
+                "signal_thresholds", {"bullish": 30, "bearish": -30}
+            ),
             "approximation_caveat": (
                 "Item-level contributions do not sum to the final composite score "
                 "due to clamping at ±100, sector adjustment, and timeframe merging."

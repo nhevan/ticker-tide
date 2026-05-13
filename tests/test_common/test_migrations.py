@@ -187,3 +187,80 @@ def test_migration_sidecar_tables_idempotent(tmp_path: Path) -> None:
     assert "indicator_scores_weekly" in tables
     assert "indicator_scores_monthly" in tables
     conn.close()
+
+
+def test_migration_adds_raw_daily_score_and_sector_etf_score_to_old_schema(
+    tmp_path: Path,
+) -> None:
+    """
+    Migration 4: if scores_daily was created without raw_daily_score and
+    sector_etf_score, run_migrations must add both columns.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = sqlite3.connect(db_file)
+
+    # Minimal old-schema scores_daily missing the two new columns.
+    conn.execute(
+        """CREATE TABLE scores_daily (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            signal TEXT,
+            confidence REAL,
+            final_score REAL,
+            key_signals TEXT,
+            key_signals_data TEXT,
+            UNIQUE(ticker, date)
+        )"""
+    )
+    conn.commit()
+
+    columns_before = _get_column_names(conn, "scores_daily")
+    assert "raw_daily_score" not in columns_before
+    assert "sector_etf_score" not in columns_before
+
+    run_migrations(conn)
+
+    columns_after = _get_column_names(conn, "scores_daily")
+    assert "raw_daily_score" in columns_after, (
+        "run_migrations must add raw_daily_score to scores_daily"
+    )
+    assert "sector_etf_score" in columns_after, (
+        "run_migrations must add sector_etf_score to scores_daily"
+    )
+    conn.close()
+
+
+def test_migration_4_is_idempotent(tmp_path: Path) -> None:
+    """
+    Running run_migrations twice on a fresh DB must not raise and the two
+    new columns must appear exactly once each (no duplicate columns).
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = get_connection(db_file)
+    create_all_tables(conn)
+
+    run_migrations(conn)
+    run_migrations(conn)  # must not raise
+
+    columns = _get_column_names(conn, "scores_daily")
+    assert columns.count("raw_daily_score") == 1
+    assert columns.count("sector_etf_score") == 1
+    conn.close()
+
+
+def test_fresh_db_has_raw_daily_score_and_sector_etf_score_after_create(
+    tmp_path: Path,
+) -> None:
+    """
+    A database created via create_all_tables already has the new columns
+    (they are in the CREATE TABLE statement); migration is a no-op for them.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = get_connection(db_file)
+    create_all_tables(conn)
+    run_migrations(conn)
+
+    columns = _get_column_names(conn, "scores_daily")
+    assert "raw_daily_score" in columns
+    assert "sector_etf_score" in columns
+    conn.close()

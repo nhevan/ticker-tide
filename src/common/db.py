@@ -76,6 +76,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         3. Add ``key_signals_data TEXT`` column to ``scores_weekly`` if absent.
            Fresh databases created by ``create_all_tables`` already include this
            column; the migration exists for databases created before it was added.
+        4. Add ``raw_daily_score REAL`` and ``sector_etf_score REAL`` columns to
+           ``scores_daily`` if absent. These expose the pre-sector-adjustment daily
+           score and the sector ETF composite score so the frontend signal-classification
+           tooltip can reconstruct the sector adjustment math chain.
 
     Parameters:
         conn: An open sqlite3.Connection to the target database.
@@ -157,6 +161,27 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             logger.debug(
                 "Migration scores_weekly.key_signals_data already present — nothing to do"
             )
+
+    # Migration 4: scores_daily.raw_daily_score and scores_daily.sector_etf_score columns.
+    # These two columns surface the pre-sector-adjustment daily score and the sector ETF
+    # composite score so the frontend can reconstruct the sector adjustment math chain.
+    # Fresh databases created by create_all_tables already include these columns; the
+    # migration exists for databases created before they were added.
+    if table_exists:
+        existing_cols_m4 = {row[1] for row in conn.execute("PRAGMA table_info(scores_daily)").fetchall()}
+        if "raw_daily_score" not in existing_cols_m4:
+            conn.execute("ALTER TABLE scores_daily ADD COLUMN raw_daily_score REAL;")
+            conn.commit()
+            logger.info("Applied migration: added scores_daily.raw_daily_score")
+        else:
+            logger.debug("Migration scores_daily.raw_daily_score already present — nothing to do")
+
+        if "sector_etf_score" not in existing_cols_m4:
+            conn.execute("ALTER TABLE scores_daily ADD COLUMN sector_etf_score REAL;")
+            conn.commit()
+            logger.info("Applied migration: added scores_daily.sector_etf_score")
+        else:
+            logger.debug("Migration scores_daily.sector_etf_score already present — nothing to do")
 
 
 def _build_schema_statements() -> list[str]:
@@ -688,6 +713,8 @@ def _build_schema_statements() -> list[str]:
             data_completeness TEXT,
             key_signals TEXT,
             key_signals_data TEXT,
+            raw_daily_score REAL,
+            sector_etf_score REAL,
             UNIQUE(ticker, date)
         )""",
 

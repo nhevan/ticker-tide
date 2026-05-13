@@ -182,6 +182,11 @@ export interface ScoringRules {
    * daily/weekly/monthly floats that sum to 1.0 (before redistribution).
    */
   timeframe_weights: Record<string, { daily: number; weekly: number; monthly: number }>;
+  /**
+   * Signal classification thresholds from config/scorer.json signal_thresholds.
+   * effective >= bullish → BULLISH; effective <= bearish → BEARISH; else NEUTRAL.
+   */
+  signal_thresholds: { bullish: number; bearish: number };
   approximation_caveat: string;
 }
 
@@ -275,6 +280,22 @@ export interface DailySection {
   cci_20_profile?: CciProfile | null;
   /** Zone label string from zone_label_for_cci(), or null when cci_20 is unavailable for the date. */
   cci_zone_label?: string | null;
+  /**
+   * Pre-adjustment daily score from scores_daily.raw_daily_score.
+   * Represents the daily composite before sector ETF adjustment is applied.
+   * NULL for rows written before this column was added (migration-safe).
+   */
+  raw_daily_score?: number | null;
+  /**
+   * Sector ETF composite score from scores_daily.sector_etf_score.
+   * NULL when no sector ETF is mapped for the ticker, or on legacy rows.
+   */
+  sector_etf_score?: number | null;
+  /**
+   * Sector ETF symbol joined from the tickers table (e.g. "SMH", "XLK").
+   * NULL when the ticker has no sector_etf mapping.
+   */
+  sector_etf?: string | null;
 }
 
 /** Weekly or monthly snapshot card data. */
