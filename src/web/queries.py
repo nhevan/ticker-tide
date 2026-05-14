@@ -578,6 +578,9 @@ def _build_monthly_section(
     sparkline = _fetch_monthly_sparkline(conn, ticker, picked_date, sparkline_months)
     period_label = _format_monthly_period_label(month_start)
     indicator_scores = _fetch_monthly_indicator_scores(conn, ticker, month_start)
+    contributions_payload: Optional[dict] = _parse_contributions_payload(
+        score_dict.get("key_signals_data")
+    )
 
     return {
         "data_available": True,
@@ -592,6 +595,7 @@ def _build_monthly_section(
         "resolved_period_label": period_label,
         "is_fallback": is_fallback,
         "indicator_scores": indicator_scores,
+        "contributions_payload": contributions_payload,
     }
 
 

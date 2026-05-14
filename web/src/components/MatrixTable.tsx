@@ -467,13 +467,13 @@ export function MatrixTable({
    * Map of name → composite-point contribution, built from the timeframe's
    * contributions_payload.items. Dispatches on timeframe:
    *   'daily'  → snapshot.daily.contributions_payload
-   *   'weekly' → snapshot.weekly.contributions_payload
-   *   else     → empty Map (monthly stays gated — no payload wired yet)
+   *   'weekly'  → snapshot.weekly.contributions_payload
+   *   'monthly' → snapshot.monthly.contributions_payload
    * Accepts items with kind === 'indicator' or kind === 'aggregate'; both land
    * in the same Map keyed by item.name. Aggregate names (sentiment/fundamental/
    * macro) are guaranteed not to collide with indicator names — categoryMap is
    * the source of truth.
-   * Returns an empty Map when the payload is absent or for un-wired timeframes.
+   * Returns an empty Map when the payload is absent (legacy rows, NULL column).
    */
   const contributionsByName = useMemo(() => {
     let items;
@@ -482,7 +482,7 @@ export function MatrixTable({
     } else if (timeframe === 'weekly') {
       items = snapshot?.weekly?.contributions_payload?.items ?? [];
     } else {
-      return new Map<string, number>();
+      items = snapshot?.monthly?.contributions_payload?.items ?? [];
     }
     const map = new Map<string, number>();
     for (const item of items) {
@@ -491,7 +491,7 @@ export function MatrixTable({
       map.set(item.name, item.contribution);
     }
     return map;
-  }, [snapshot?.daily?.contributions_payload, snapshot?.weekly?.contributions_payload, timeframe]);
+  }, [snapshot?.daily?.contributions_payload, snapshot?.weekly?.contributions_payload, snapshot?.monthly?.contributions_payload, timeframe]);
 
   /**
    * Section equation data: all contribution items + total.

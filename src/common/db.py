@@ -262,6 +262,33 @@ def run_migrations(conn: sqlite3.Connection) -> None:
                     "Migration scores_daily.%s already present — nothing to do", col_name
                 )
 
+    # Migration 8: scores_monthly.key_signals_data column.
+    # Stores the per-indicator contribution payload (same shape as scores_weekly.key_signals_data
+    # and scores_daily.key_signals_data) as a JSON TEXT blob. NULL for rows written before this
+    # migration ran. Fresh databases created by create_all_tables already include this column.
+    monthly_table_info_rows = conn.execute("PRAGMA table_info(scores_monthly)").fetchall()
+    monthly_table_exists = len(monthly_table_info_rows) > 0
+
+    if not monthly_table_exists:
+        logger.debug(
+            "Migration scores_monthly.key_signals_data skipped — table does not exist yet"
+        )
+    else:
+        existing_monthly_columns = [row[1] for row in monthly_table_info_rows]
+
+        if "key_signals_data" not in existing_monthly_columns:
+            conn.execute(
+                "ALTER TABLE scores_monthly ADD COLUMN key_signals_data TEXT"
+            )
+            conn.commit()
+            logger.info(
+                "Applied migration: added scores_monthly.key_signals_data"
+            )
+        else:
+            logger.debug(
+                "Migration scores_monthly.key_signals_data already present — nothing to do"
+            )
+
 
 def _build_schema_statements() -> list[str]:
     """
@@ -839,6 +866,7 @@ def _build_schema_statements() -> list[str]:
             macro_score REAL,
             data_completeness TEXT,
             key_signals TEXT,
+            key_signals_data TEXT,
             PRIMARY KEY (ticker, month_start)
         )""",
 

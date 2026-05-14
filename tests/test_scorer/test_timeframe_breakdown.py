@@ -691,3 +691,38 @@ class TestBreakdownIncludesIndicatorScores:
             regime="ranging",
         )
         assert breakdown_scores == expected
+
+
+# ---------------------------------------------------------------------------
+# regime_weights present in monthly breakdown return dict
+# ---------------------------------------------------------------------------
+
+class TestMonthlyBreakdownIncludesRegimeWeights:
+    """Verify that compute_monthly_score_breakdown includes ``regime_weights``
+    in its return value for both v1 and v2 scoring modes."""
+
+    def test_monthly_v1_breakdown_has_regime_weights_key(self, bare_conn) -> None:
+        """compute_monthly_score_breakdown (v1) must include 'regime_weights' dict."""
+        bullish_monthly = {**_BULLISH_INDICATORS, "month_start": "2026-04-01"}
+        _insert_monthly_indicators(bare_conn, "QQQ", bullish_monthly)
+        bare_conn.commit()
+        result = compute_monthly_score_breakdown(
+            bare_conn, "QQQ", _v1_config(), scoring_date="2026-04-02",
+        )
+        assert result is not None
+        assert "regime_weights" in result, "v1 monthly breakdown must include 'regime_weights'"
+        assert isinstance(result["regime_weights"], dict)
+        assert len(result["regime_weights"]) > 0, "regime_weights must not be empty"
+
+    def test_monthly_v2_breakdown_has_regime_weights_key(self, bare_conn) -> None:
+        """compute_monthly_score_breakdown (v2) must include 'regime_weights' dict."""
+        bullish_monthly = {**_BULLISH_INDICATORS, "month_start": "2026-04-01"}
+        _insert_monthly_indicators(bare_conn, "QQQ", bullish_monthly)
+        bare_conn.commit()
+        result = compute_monthly_score_breakdown(
+            bare_conn, "QQQ", _v2_config(), scoring_date="2026-04-02",
+        )
+        assert result is not None
+        assert "regime_weights" in result, "v2 monthly breakdown must include 'regime_weights'"
+        assert isinstance(result["regime_weights"], dict)
+        assert len(result["regime_weights"]) > 0, "regime_weights must not be empty"

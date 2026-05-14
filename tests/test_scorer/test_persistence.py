@@ -1035,3 +1035,108 @@ class TestWeeklyContributionsPayloadPersistence:
         assert len(parsed["items"]) == 1
         assert parsed["items"][0]["name"] == "rsi_14"
         assert parsed["items"][0]["contribution"] == 2.5
+
+
+# ---------------------------------------------------------------------------
+# Monthly key_signals_data persistence
+# ---------------------------------------------------------------------------
+
+class TestMonthlyContributionsPayloadPersistence:
+    """Tests for scores_monthly.key_signals_data written by persist_monthly_score_row."""
+
+    def test_contributions_json_is_persisted_when_provided(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        When contributions_json is provided, persist_monthly_score_row stores it
+        in scores_monthly.key_signals_data verbatim.
+        """
+        import json
+        _insert_indicators_monthly_row(db_connection, "AAPL", "2026-03-01")
+        sample_payload = {"v": 1, "expansion_factor": 1.0, "items": []}
+        contributions_json = json.dumps(sample_payload)
+
+        persist_monthly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=50.0),
+            regime="ranging",
+            data_completeness={},
+            key_signals=[],
+            scoring_date="2026-04-22",
+            contributions_json=contributions_json,
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_monthly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        assert row is not None
+        assert row["key_signals_data"] is not None
+        parsed = json.loads(row["key_signals_data"])
+        assert parsed["v"] == 1
+        assert parsed["expansion_factor"] == 1.0
+
+    def test_contributions_json_is_null_when_not_provided(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        When contributions_json is omitted (default None), key_signals_data is
+        stored as SQL NULL — backward-compatible with legacy rows.
+        """
+        _insert_indicators_monthly_row(db_connection, "AAPL", "2026-03-01")
+
+        persist_monthly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=35.0),
+            regime="ranging",
+            data_completeness={},
+            key_signals=[],
+            scoring_date="2026-04-22",
+            # contributions_json omitted
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_monthly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        assert row is not None
+        assert row["key_signals_data"] is None
+
+    def test_contributions_json_replaced_on_rerun(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        INSERT OR REPLACE semantics: a second call with a different contributions_json
+        overwrites the prior value, not duplicates it.
+        """
+        import json
+        _insert_indicators_monthly_row(db_connection, "AAPL", "2026-03-01")
+        first_payload = json.dumps({"v": 1, "expansion_factor": 1.0, "items": []})
+        second_payload = json.dumps({"v": 1, "expansion_factor": 1.5, "items": []})
+
+        persist_monthly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=40.0),
+            regime="ranging",
+            data_completeness={},
+            key_signals=[],
+            scoring_date="2026-04-22",
+            contributions_json=first_payload,
+        )
+        persist_monthly_score_row(
+            db_connection, "AAPL",
+            breakdown=_make_breakdown(composite=42.0),
+            regime="ranging",
+            data_completeness={},
+            key_signals=[],
+            scoring_date="2026-04-22",
+            contributions_json=second_payload,
+        )
+
+        rows = db_connection.execute(
+            "SELECT key_signals_data FROM scores_monthly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchall()
+        assert len(rows) == 1, "INSERT OR REPLACE must not create duplicate rows"
+        parsed = json.loads(rows[0]["key_signals_data"])
+        assert parsed["expansion_factor"] == 1.5, "Second write must overwrite the first"

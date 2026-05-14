@@ -1907,3 +1907,143 @@ class TestRawDailyAndSectorEtfScorePersistence:
         assert row is not None
         assert row["raw_daily_score"] is not None
         assert row["sector_etf_score"] is None
+
+
+# ---------------------------------------------------------------------------
+# Monthly key_signals_data persistence (integration)
+# ---------------------------------------------------------------------------
+
+class TestScoreTickerPersistsMonthlyKeySignalsData:
+    """
+    Integration: after score_ticker() runs with monthly data available,
+    scores_monthly.key_signals_data must contain the contribution payload.
+    """
+
+    # SCORING_DATE = "2025-01-15"; use a month_start that is closed as of that date.
+    _MONTH_START = "2024-12-01"  # December 2024 is closed by 2025-01-15
+
+    def test_monthly_key_signals_data_is_non_null_json_with_items(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        After score_ticker() with monthly indicator data present, scores_monthly
+        must have key_signals_data as non-NULL JSON with shape
+        {v, expansion_factor, items: [{name, kind, score, ...}, ...]}.
+        No aggregate items expected (aggregate_scores={} for monthly).
+        """
+        from src.scorer.main import score_ticker
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+        _seed_indicators_monthly_for_main(db_connection, "AAPL", self._MONTH_START)
+
+        score_ticker(
+            db_conn=db_connection,
+            ticker="AAPL",
+            ticker_config=SAMPLE_TICKER_CONFIG,
+            scoring_date=SCORING_DATE,
+            config=SAMPLE_CONFIG,
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_monthly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        assert row is not None, "scores_monthly row must exist after score_ticker()"
+
+        raw_json = row["key_signals_data"]
+        assert raw_json is not None, "key_signals_data must not be NULL when monthly data present"
+
+        payload = json.loads(raw_json)
+        assert payload.get("v") == 1, f"Expected v=1, got {payload.get('v')}"
+        assert "items" in payload, "Payload must have an 'items' key"
+
+        items = payload["items"]
+        assert isinstance(items, list), f"items must be a list, got {type(items)}"
+        assert len(items) > 0, "items must be non-empty"
+
+        # Monthly has no aggregate items (aggregate_scores={}) AND no pattern items
+        # (pattern_scores is permanently absent from monthly breakdowns by design).
+        for item in items:
+            assert item["kind"] == "indicator", (
+                f"Monthly payload must only contain indicator items, got kind={item['kind']!r}"
+            )
+
+    def test_monthly_row_not_written_when_no_monthly_data(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        When monthly indicator data is absent, monthly_breakdown is None and
+        scores_monthly is not written at all. This documents the upstream gate
+        that protects the contributions-payload branch from being exercised
+        without inputs.
+        """
+        from src.scorer.main import score_ticker
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+        # No monthly indicators seeded — monthly_breakdown will be None
+
+        score_ticker(
+            db_conn=db_connection,
+            ticker="AAPL",
+            ticker_config=SAMPLE_TICKER_CONFIG,
+            scoring_date=SCORING_DATE,
+            config=SAMPLE_CONFIG,
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_monthly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        # No monthly data → no row written at all
+        assert row is None, (
+            "scores_monthly row must not exist when no monthly indicator data is present"
+        )
+
+    def test_monthly_key_signals_data_is_sql_null_when_payload_is_none(
+        self,
+        db_connection: sqlite3.Connection,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Regression test for the None vs "null" trap at scorer/main.py.
+
+        If build_contributions_payload returns None (e.g., empty breakdown
+        inputs), the in-memory monthly_contributions_json must be Python None,
+        NOT json.dumps(None) which would produce the string "null". The
+        persisted row's key_signals_data column must therefore be SQL NULL.
+        """
+        import src.scorer.main as scorer_main
+        from src.scorer.main import score_ticker
+
+        _insert_indicator_row(db_connection, "AAPL", SCORING_DATE)
+        _insert_ohlcv_row(db_connection, "AAPL", SCORING_DATE)
+        _seed_indicators_monthly_for_main(db_connection, "AAPL", self._MONTH_START)
+
+        # Force the monthly contributions payload to None so the else-branch
+        # at scorer/main.py runs. The variable must end up as Python None,
+        # which the persistence layer writes as SQL NULL.
+        monkeypatch.setattr(
+            scorer_main,
+            "build_contributions_payload",
+            lambda **_kwargs: None,
+        )
+
+        score_ticker(
+            db_conn=db_connection,
+            ticker="AAPL",
+            ticker_config=SAMPLE_TICKER_CONFIG,
+            scoring_date=SCORING_DATE,
+            config=SAMPLE_CONFIG,
+        )
+
+        row = db_connection.execute(
+            "SELECT key_signals_data FROM scores_monthly WHERE ticker = ?",
+            ("AAPL",),
+        ).fetchone()
+        assert row is not None, "scores_monthly row must exist when monthly data present"
+        assert row["key_signals_data"] is None, (
+            f"key_signals_data must be SQL NULL when payload is None; "
+            f"got {row['key_signals_data']!r} (string 'null' would indicate the trap)"
+        )

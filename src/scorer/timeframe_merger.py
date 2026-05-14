@@ -750,10 +750,14 @@ def compute_monthly_score_breakdown(
         regime:       Market regime.
 
     Returns:
-        Dict with the same 8 keys as the weekly breakdown (including
-        ``indicator_scores``).
+        Dict with the same keys as the weekly breakdown, including:
+        ``composite_score``, ``trend_score``, ``momentum_score``,
+        ``volume_score``, ``volatility_score``, ``candlestick_score``,
+        ``structural_score``, ``indicator_scores``, ``regime_weights``.
         ``candlestick_score`` is always None.
         ``indicator_scores`` is the raw per-indicator dict from score_all_indicators.
+        ``regime_weights`` is the per-category weight dict for the resolved regime,
+        needed by ``build_contributions_payload``.
         Returns None when no monthly indicator data is available.
     """
     from src.scorer.indicator_scorer import score_all_indicators
@@ -802,6 +806,12 @@ def compute_monthly_score_breakdown(
 
     composite = _assemble_composite(category_scores, config, regime, "monthly", method)
 
+    # Resolve regime weights for the caller (needed by build_contributions_payload).
+    if method == "v2_8cat":
+        resolved_regime_weights = _resolve_v2_weights(config, regime, "monthly")
+    else:
+        resolved_regime_weights = _resolve_v1_weights(config, regime, "monthly")
+
     if method != "v2_8cat":
         return {
             "composite_score": composite,
@@ -812,6 +822,7 @@ def compute_monthly_score_breakdown(
             "candlestick_score": None,
             "structural_score": None,
             "indicator_scores": indicator_scores,
+            "regime_weights": resolved_regime_weights,
         }
     return {
         "composite_score": composite,
@@ -822,6 +833,7 @@ def compute_monthly_score_breakdown(
         "candlestick_score": None,  # F3: always None on monthly
         "structural_score": category_scores["structural"],
         "indicator_scores": indicator_scores,
+        "regime_weights": resolved_regime_weights,
     }
 
 

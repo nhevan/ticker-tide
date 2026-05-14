@@ -689,7 +689,11 @@ def score_ticker(
             expansion_factor=expansion_factor,
             aggregate_scores={},
         )
-        weekly_contributions_json: Optional[str] = json.dumps(weekly_contributions_payload)
+        weekly_contributions_json: Optional[str] = (
+            json.dumps(weekly_contributions_payload)
+            if weekly_contributions_payload is not None
+            else None
+        )
     else:
         weekly_contributions_json = None
 
@@ -699,6 +703,24 @@ def score_ticker(
     )
     monthly_score = monthly_breakdown["composite_score"] if monthly_breakdown is not None else None
     monthly_available = monthly_score is not None
+
+    # 13c. Build monthly contributions payload (mirrors the weekly 13a block).
+    # pattern_scores is permanently absent from monthly breakdowns by design — {} default is correct.
+    if monthly_breakdown is not None:
+        monthly_contributions_payload = build_contributions_payload(
+            indicator_scores=monthly_breakdown["indicator_scores"],
+            pattern_scores=monthly_breakdown.get("pattern_scores", {}),
+            regime_weights=monthly_breakdown["regime_weights"],
+            expansion_factor=expansion_factor,
+            aggregate_scores={},
+        )
+        monthly_contributions_json: Optional[str] = (
+            json.dumps(monthly_contributions_payload)
+            if monthly_contributions_payload is not None
+            else None
+        )
+    else:
+        monthly_contributions_json = None
 
     # 14. Merge timeframes → final score (regime-adaptive weights)
     final_score = merge_timeframes(daily_score, weekly_score, config, regime=regime, monthly_score=monthly_score)
@@ -886,6 +908,7 @@ def score_ticker(
                 key_signals=key_signals,
                 scoring_date=scoring_date,
                 indicator_scores=monthly_breakdown.get("indicator_scores"),
+                contributions_json=monthly_contributions_json,
             )
         except Exception as exc:
             logger.warning(

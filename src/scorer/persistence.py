@@ -413,6 +413,7 @@ def persist_monthly_score_row(
     key_signals: object,
     scoring_date: str,
     indicator_scores: Optional[dict[str, Optional[float]]] = None,
+    contributions_json: Optional[str] = None,
 ) -> bool:
     """
     Persist a closed-month score snapshot to ``scores_monthly``.
@@ -429,17 +430,22 @@ def persist_monthly_score_row(
     ``persist_indicator_scores_monthly``.
 
     Parameters:
-        db_conn:           Open SQLite connection.
-        ticker:            Ticker symbol.
-        breakdown:         Dict from ``compute_monthly_score_breakdown``.
-        regime:            Market regime.
-        data_completeness: Dict or pre-serialised JSON string.
-        key_signals:       List or pre-serialised JSON string.
-        scoring_date:      Reference date.
-        indicator_scores:  Optional dict mapping indicator name → score
-                           (float or None) from ``score_all_indicators`` for
-                           the monthly timeframe.  When None (default), no
-                           sidecar rows are written.
+        db_conn:            Open SQLite connection.
+        ticker:             Ticker symbol.
+        breakdown:          Dict from ``compute_monthly_score_breakdown``.
+        regime:             Market regime.
+        data_completeness:  Dict or pre-serialised JSON string.
+        key_signals:        List or pre-serialised JSON string.
+        scoring_date:       Reference date.
+        indicator_scores:   Optional dict mapping indicator name → score
+                            (float or None) from ``score_all_indicators`` for
+                            the monthly timeframe.  When None (default), no
+                            sidecar rows are written.
+        contributions_json: Optional pre-serialised JSON string from
+                            ``build_contributions_payload`` for the monthly
+                            timeframe. When None (default), ``key_signals_data``
+                            is stored as SQL NULL — backward-compatible with
+                            legacy rows written before this field was added.
 
     Returns:
         True if a row was written; False when the month is in-progress
@@ -481,8 +487,8 @@ def persist_monthly_score_row(
              trend_score, momentum_score, volume_score, volatility_score,
              candlestick_score, structural_score,
              fundamental_score, macro_score,
-             data_completeness, key_signals)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             data_completeness, key_signals, key_signals_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ticker,
@@ -499,6 +505,7 @@ def persist_monthly_score_row(
             macro_score,
             _serialise_for_storage(data_completeness),
             _serialise_for_storage(key_signals),
+            contributions_json,
         ),
     )
     db_conn.commit()

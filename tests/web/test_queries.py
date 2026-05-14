@@ -413,6 +413,58 @@ class TestFetchSnapshotMonthly:
         assert "signal" not in monthly
         assert "confidence" not in monthly
 
+    def test_monthly_contributions_payload_parsed_when_column_populated(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """
+        When scores_monthly.key_signals_data contains valid JSON, _build_monthly_section
+        must return contributions_payload as a parsed dict (not None, not a raw string).
+        """
+        import json
+        sample_payload = {"v": 1, "expansion_factor": 1.0, "items": [
+            {"name": "rsi_14", "kind": "indicator", "raw_value": 55.0,
+             "score": 55.0, "category": "momentum", "category_weight": 0.25,
+             "contribution": 2.0},
+        ]}
+        conn.execute(
+            """INSERT OR REPLACE INTO scores_monthly(
+                ticker, month_start, composite_score, regime,
+                trend_score, momentum_score, volume_score, volatility_score,
+                candlestick_score, structural_score, key_signals_data
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            ("AAPL", "2026-04-01", 38.0, "ranging",
+             30.0, 15.0, 10.0, -8.0, None, 11.0,
+             json.dumps(sample_payload)),
+        )
+        conn.commit()
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        monthly = snapshot["monthly"]
+        assert monthly["data_available"] is True
+        payload = monthly.get("contributions_payload")
+        assert payload is not None, "contributions_payload must be present and non-None"
+        assert isinstance(payload, dict), "contributions_payload must be a parsed dict"
+        assert payload["v"] == 1
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["name"] == "rsi_14"
+
+    def test_monthly_contributions_payload_is_none_when_column_null(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """
+        When scores_monthly.key_signals_data is NULL (legacy row), contributions_payload
+        must be None in the returned section dict.
+        """
+        # _insert_monthly_score does not set key_signals_data — it stays NULL.
+        _insert_monthly_score(conn, "AAPL", "2026-04-01")
+
+        snapshot = fetch_snapshot(conn, "AAPL", "2026-04-25", config=_default_config())
+        monthly = snapshot["monthly"]
+        assert monthly["data_available"] is True
+        assert monthly.get("contributions_payload") is None, (
+            "contributions_payload must be None for legacy rows with NULL key_signals_data"
+        )
+
 
 # ---------------------------------------------------------------------------
 # fetch_snapshot — sparkline tests

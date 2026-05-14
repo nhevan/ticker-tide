@@ -242,6 +242,7 @@ export function DashboardPage() {
                 timeframe="monthly"
                 recentPatterns={snapshot.monthly.recent_patterns}
                 categoryScores={snapshot.monthly.scores}
+                snapshot={snapshot}
                 headerContribution={headerContributions.monthly}
               />
             </div>

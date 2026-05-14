@@ -97,10 +97,10 @@ def test_migration_adds_column_to_old_schema(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_weekly_has_key_signals_data_monthly_untouched_after_migration(tmp_path: Path) -> None:
+def test_weekly_and_monthly_have_key_signals_data_after_migration(tmp_path: Path) -> None:
     """
-    After migration, scores_weekly must have key_signals_data (added in
-    Migration 3); scores_monthly must NOT — key_signals_data is daily+weekly only.
+    After migration, both scores_weekly (Migration 3) and scores_monthly
+    (Migration 8) must have key_signals_data.
     """
     db_file = str(tmp_path / "signals.db")
     conn = get_connection(db_file)
@@ -111,7 +111,43 @@ def test_weekly_has_key_signals_data_monthly_untouched_after_migration(tmp_path:
     monthly_columns = _get_column_names(conn, "scores_monthly")
 
     assert "key_signals_data" in weekly_columns
-    assert "key_signals_data" not in monthly_columns
+    assert "key_signals_data" in monthly_columns
+    conn.close()
+
+
+def test_migration_8_adds_key_signals_data_to_legacy_monthly_db(tmp_path: Path) -> None:
+    """
+    Migration 8: if scores_monthly was created without key_signals_data (legacy
+    schema), run_migrations must ALTER TABLE to add it. Idempotent on re-run.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = sqlite3.connect(db_file)
+    # Create a minimal legacy scores_monthly without key_signals_data.
+    conn.execute(
+        """CREATE TABLE scores_monthly (
+            ticker TEXT NOT NULL,
+            month_start TEXT NOT NULL,
+            composite_score REAL NOT NULL,
+            regime TEXT,
+            data_completeness TEXT,
+            key_signals TEXT,
+            PRIMARY KEY (ticker, month_start)
+        )"""
+    )
+    conn.commit()
+
+    columns_before = _get_column_names(conn, "scores_monthly")
+    assert "key_signals_data" not in columns_before
+
+    run_migrations(conn)
+
+    columns_after = _get_column_names(conn, "scores_monthly")
+    assert "key_signals_data" in columns_after
+
+    # Idempotent — running a second time must not raise.
+    run_migrations(conn)
+    columns_second = _get_column_names(conn, "scores_monthly")
+    assert columns_second.count("key_signals_data") == 1
     conn.close()
 
 
