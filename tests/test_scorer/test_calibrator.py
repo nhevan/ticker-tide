@@ -17,10 +17,13 @@ import numpy as np
 import pytest
 
 from src.scorer.calibrator import (
+    DEFAULT_SHRINKAGE_LAMBDAS,
+    FEATURE_METADATA,
     FEATURE_NAMES,
     build_calibrator_payload,
     build_feature_vector,
     compute_excess_return,
+    compute_shrinkage_path,
     fetch_training_data,
     train_ridge_and_predict,
     calibrate_score,
@@ -858,3 +861,81 @@ class TestCalibratScoreReturnsPayload:
 
         assert result["calibrated_score"] is None
         assert result.get("calibrator_payload") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for compute_shrinkage_path, DEFAULT_SHRINKAGE_LAMBDAS, FEATURE_METADATA
+# ---------------------------------------------------------------------------
+
+
+class TestShrinkagePath:
+    """Tests for compute_shrinkage_path and related constants."""
+
+    def test_compute_shrinkage_path_shape(self) -> None:
+        """Output shape must be (n_lambdas, 17) for random 50×17 training data."""
+        rng = np.random.default_rng(42)
+        X_train = rng.standard_normal((50, 17))
+        y_train = rng.standard_normal(50)
+        lambdas = np.logspace(-2, 2, 10).tolist()
+
+        path = compute_shrinkage_path(X_train, y_train, lambdas)
+
+        assert path.shape == (10, 17)
+
+    def test_shrinkage_path_zero_limit(self) -> None:
+        """At very large λ all coefficients must be effectively zero (|β| < 1e-3)."""
+        rng = np.random.default_rng(7)
+        X_train = rng.standard_normal((40, 17))
+        y_train = rng.standard_normal(40)
+        large_lambda = 1e8
+
+        path = compute_shrinkage_path(X_train, y_train, [large_lambda])
+
+        assert path.shape == (1, 17)
+        assert np.all(np.abs(path[0, :]) < 1e-3)
+
+    def test_shrinkage_path_matches_train_ridge_at_production_lambda(self) -> None:
+        """Path coefficients at production λ=0.1 must match train_ridge_and_predict within 1e-9."""
+        rng = np.random.default_rng(99)
+        X_train = rng.standard_normal((60, 17))
+        y_train = rng.standard_normal(60)
+        prod_lambda = 0.1
+        assert prod_lambda in DEFAULT_SHRINKAGE_LAMBDAS, (
+            "0.1 must be in DEFAULT_SHRINKAGE_LAMBDAS for this test to be meaningful"
+        )
+
+        path = compute_shrinkage_path(X_train, y_train, DEFAULT_SHRINKAGE_LAMBDAS)
+        prod_idx = DEFAULT_SHRINKAGE_LAMBDAS.index(prod_lambda)
+        path_coefs = path[prod_idx, :]
+
+        x_new = np.zeros(17)
+        result = train_ridge_and_predict(X_train, y_train, x_new, ridge_lambda=prod_lambda)
+        expected_coefs = np.array(result["weights"][:17])
+
+        np.testing.assert_allclose(path_coefs, expected_coefs, atol=1e-9)
+
+    def test_default_shrinkage_lambdas_includes_production_lambda(self) -> None:
+        """DEFAULT_SHRINKAGE_LAMBDAS must include exactly 0.1."""
+        assert 0.1 in DEFAULT_SHRINKAGE_LAMBDAS
+
+    def test_feature_metadata_covers_feature_names(self) -> None:
+        """FEATURE_METADATA must have a key for every entry in FEATURE_NAMES."""
+        assert set(FEATURE_METADATA.keys()) == set(FEATURE_NAMES)
+
+    def test_feature_metadata_categories_match_scorer_map(self) -> None:
+        """
+        For every raw indicator that appears in both FEATURE_METADATA and the
+        scorer's INDICATOR_CATEGORY_MAP, the categories must match. Guards
+        against drift between the chart's coloring and the scorer's rollup
+        category (e.g. macd_histogram → trend, adx → trend).
+        """
+        from src.scorer.category_scorer import INDICATOR_CATEGORY_MAP
+
+        overlapping = set(FEATURE_METADATA.keys()) & set(INDICATOR_CATEGORY_MAP.keys())
+        assert overlapping, "expected at least one shared indicator key"
+        for name in overlapping:
+            assert FEATURE_METADATA[name]["category"] == INDICATOR_CATEGORY_MAP[name], (
+                f"category mismatch for {name!r}: "
+                f"FEATURE_METADATA={FEATURE_METADATA[name]['category']!r}, "
+                f"INDICATOR_CATEGORY_MAP={INDICATOR_CATEGORY_MAP[name]!r}"
+            )

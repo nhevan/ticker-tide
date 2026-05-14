@@ -20,6 +20,7 @@ export function Header() {
   const { pathname } = useLocation();
   const isTickerDetail = pathname === '/';
   const isTickers = pathname === '/tickers';
+  const isModel = pathname === '/model';
   const [isDark, setIsDark] = React.useState(
     () => document.documentElement.classList.contains('dark'),
   );
@@ -64,6 +65,17 @@ export function Header() {
             aria-current={isTickers ? 'page' : undefined}
           >
             Tickers
+          </Link>
+          <Link
+            to="/model"
+            className={
+              isModel
+                ? 'rounded bg-muted px-2 py-1 font-medium'
+                : 'rounded px-2 py-1 text-muted-foreground hover:text-foreground'
+            }
+            aria-current={isModel ? 'page' : undefined}
+          >
+            Model
           </Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">

@@ -46,6 +46,63 @@ FEATURE_NAMES: list[str] = [
     "monthly_score",
 ]
 
+# Defaults applied when the calibration sub-config is missing keys. The
+# production source of truth is config/scorer.json → calibration.
+DEFAULT_RIDGE_LAMBDA: float = 0.1
+DEFAULT_MIN_TRAINING_SAMPLES: int = 30
+
+
+def build_shrinkage_lambdas(production_lambda: float) -> list[float]:
+    """
+    Build the log-spaced λ grid for the ridge shrinkage path.
+
+    Forces `production_lambda` onto the grid as an exact member so the
+    chart's ReferenceLine and the sidebar's `lambdas.indexOf(...)` lookup
+    align with a real data point regardless of which production λ the
+    calibration config specifies.
+
+    Parameters:
+        production_lambda: The production ridge λ from the calibration
+                           sub-config. Must be > 0.
+
+    Returns:
+        Sorted list of 50 unique λ values, log-spaced between 1e-4 and
+        1e+4, with `production_lambda` forced onto the grid.
+    """
+    base = np.logspace(-4, 4, 49).tolist()
+    return sorted(set(base + [float(production_lambda)]))
+
+
+# Grid built with the default production λ. Kept for callers that don't
+# have the calibration config in scope (e.g. tests). Endpoint callers
+# must rebuild with the actual configured ridge_lambda — see
+# fetch_shrinkage_path in src/web/queries.py.
+DEFAULT_SHRINKAGE_LAMBDAS: list[float] = build_shrinkage_lambdas(DEFAULT_RIDGE_LAMBDA)
+
+# Display label and category for each of the 17 features. Categories
+# match `category_scorer._INDICATOR_CATEGORY_MAP` for raw indicators;
+# synthetic features (EMA spreads, weekly/monthly scores) are assigned
+# by analogy and documented here.
+FEATURE_METADATA: dict[str, dict[str, str]] = {
+    "trend_score":        {"label": "Trend score",       "category": "trend"},
+    "momentum_score":     {"label": "Momentum score",    "category": "momentum"},
+    "volume_score":       {"label": "Volume score",      "category": "volume"},
+    "volatility_score":   {"label": "Volatility score",  "category": "volatility"},
+    "fundamental_score":  {"label": "Fundamental score", "category": "fundamental"},
+    "macro_score":        {"label": "Macro score",       "category": "macro"},
+    "rsi_14":             {"label": "RSI 14",            "category": "momentum"},
+    "adx":                {"label": "ADX",               "category": "trend"},   # per _INDICATOR_CATEGORY_MAP
+    "macd_histogram":     {"label": "MACD hist",         "category": "trend"},      # per INDICATOR_CATEGORY_MAP
+    "stoch_k":            {"label": "Stoch %K",          "category": "momentum"},
+    "bb_pctb":            {"label": "BB %B",             "category": "volatility"},
+    "cmf_20":             {"label": "CMF 20",            "category": "volume"},
+    "price_ema9_spread":  {"label": "Px−EMA9 %",   "category": "trend"},   # EMA spreads track trend
+    "ema9_ema21_spread":  {"label": "EMA9−21 %",   "category": "trend"},
+    "ema21_ema50_spread": {"label": "EMA21−50 %",  "category": "trend"},
+    "weekly_score":       {"label": "Weekly score",      "category": "temporal"},  # synthetic temporal feature
+    "monthly_score":      {"label": "Monthly score",     "category": "temporal"},
+}
+
 
 # ---------------------------------------------------------------------------
 # Feature construction
@@ -225,6 +282,55 @@ def _fit_ridge(
         "col_std": col_std.tolist(),
         "x_new_scaled": x_new_scaled.tolist(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Shrinkage path
+# ---------------------------------------------------------------------------
+
+def compute_shrinkage_path(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    lambdas: list[float],
+) -> np.ndarray:
+    """
+    Compute the ridge regression shrinkage path across a grid of λ values.
+
+    For each λ in the grid, fits a ridge regression on (X_train, y_train) and
+    records the standardised-space coefficients for the 17 features (intercept
+    excluded). The result is the (n_lambdas, 17) matrix of coefficients, where
+    larger λ shrinks all coefficients toward zero.
+
+    Uses _fit_ridge internally with x_new=zeros so the prediction step is a
+    no-op — only the weight vector matters here.
+
+    Parameters:
+        X_train: (n_samples, n_features) training feature matrix, where n_features
+                 must equal len(FEATURE_NAMES) == 17.
+        y_train: (n_samples,) target vector of excess returns.
+        lambdas: Ordered list of positive λ values to evaluate. Typical usage
+                 passes DEFAULT_SHRINKAGE_LAMBDAS.
+
+    Returns:
+        (n_lambdas, 17) numpy array of standardised-space feature coefficients.
+        Row i corresponds to lambdas[i]; intercept column is dropped.
+    """
+    n_features = len(FEATURE_NAMES)
+    n_samples = X_train.shape[0]
+    x_new_zeros = np.zeros(n_features)
+    path = np.empty((len(lambdas), n_features))
+
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        for idx, lam in enumerate(lambdas):
+            result = _fit_ridge(X_train, y_train, x_new_zeros, lam, n_samples)
+            weights = result["weights"]
+            assert len(weights) == n_features + 1, (
+                f"compute_shrinkage_path: expected {n_features + 1} weights, "
+                f"got {len(weights)} — FEATURE_NAMES / _fit_ridge drift detected"
+            )
+            path[idx, :] = weights[:n_features]
+
+    return path
 
 
 # ---------------------------------------------------------------------------

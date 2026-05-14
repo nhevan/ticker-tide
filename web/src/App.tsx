@@ -13,6 +13,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from '@/pages/LoginPage';
 import { TickerDetailPage } from '@/pages/TickerDetailPage';
 import { TickersPage } from '@/pages/TickersPage';
+import { ModelPage } from '@/pages/ModelPage';
 import { RequireAuth } from '@/components/RequireAuth';
 
 /**
@@ -35,6 +36,14 @@ export function App() {
         element={
           <RequireAuth>
             <TickersPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/model"
+        element={
+          <RequireAuth>
+            <ModelPage />
           </RequireAuth>
         }
       />

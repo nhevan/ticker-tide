@@ -414,6 +414,26 @@ export interface TickerListApiRow {
   latest_date: string | null;
 }
 
+/** A single feature entry in the shrinkage path response. */
+export interface ShrinkagePathFeature {
+  name: string;
+  label: string;
+  category: string;
+  coefs: number[];
+}
+
+/** Response shape for GET /api/shrinkage-path. */
+export interface ShrinkagePathResponse {
+  cold_start: boolean;
+  scoring_date: string | null;
+  production_lambda: number;
+  training_samples: number;
+  /** Lambda grid values; omitted on cold-start. */
+  lambdas?: number[];
+  /** Per-feature coefficient arrays in FEATURE_NAMES order; omitted on cold-start. */
+  features?: ShrinkagePathFeature[];
+}
+
 /** Frontend-facing camelCase row for the Tickers listing page. */
 export interface TickerRow {
   symbol: string;

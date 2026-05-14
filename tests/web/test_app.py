@@ -697,3 +697,78 @@ class TestScoringRulesCci:
             "extreme_oversold", "oversold", "below_mid",
             "above_mid", "overbought", "extreme_overbought",
         ]
+
+
+# ---------------------------------------------------------------------------
+# /api/shrinkage-path endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestShrinkagePathEndpoint:
+    """Tests for GET /api/shrinkage-path."""
+
+    def test_shrinkage_path_endpoint_requires_auth(
+        self, client: TestClient
+    ) -> None:
+        """Unauthenticated request must return 401."""
+        response = client.get("/api/shrinkage-path")
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+    def test_shrinkage_path_endpoint_invalid_date_format(
+        self, client: TestClient
+    ) -> None:
+        """?date=not-a-date must return 422."""
+        _login(client)
+        response = client.get("/api/shrinkage-path?date=not-a-date")
+        assert response.status_code == 422
+
+    def test_shrinkage_path_endpoint_cold_start_returns_200_with_flag(
+        self, client: TestClient
+    ) -> None:
+        """
+        Cold-start must return 200 with cold_start=True. The client fixture
+        leaves scores_daily empty, so fetch_shrinkage_path exits via the
+        no-scoring-dates branch — no patching needed.
+        """
+        _login(client)
+        response = client.get("/api/shrinkage-path")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["cold_start"] is True
+        assert body["training_samples"] == 0
+
+    def test_shrinkage_path_endpoint_returns_json(
+        self, client: TestClient
+    ) -> None:
+        """Authenticated happy-path request returns 200 JSON with expected keys."""
+        _login(client)
+        from unittest.mock import patch
+        from src.scorer.calibrator import DEFAULT_SHRINKAGE_LAMBDAS, FEATURE_NAMES
+
+        happy_payload = {
+            "cold_start": False,
+            "scoring_date": "2026-04-25",
+            "production_lambda": 0.1,
+            "training_samples": 50,
+            "lambdas": DEFAULT_SHRINKAGE_LAMBDAS,
+            "features": [
+                {
+                    "name": name,
+                    "label": name,
+                    "category": "trend",
+                    "coefs": [0.1] * len(DEFAULT_SHRINKAGE_LAMBDAS),
+                }
+                for name in FEATURE_NAMES
+            ],
+        }
+        with patch("src.web.app.fetch_shrinkage_path", return_value=happy_payload):
+            response = client.get("/api/shrinkage-path")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["cold_start"] is False
+        assert body["production_lambda"] == 0.1
+        assert len(body["features"]) == 17
+        assert len(body["lambdas"]) == len(DEFAULT_SHRINKAGE_LAMBDAS)

@@ -171,6 +171,30 @@ python scripts/run_scorer.py --force
 sudo systemctl restart ticker-tide-web
 ```
 
+### GET /api/shrinkage-path
+
+Returns the ridge regression shrinkage path for the latest (or a specific) scoring date.
+This endpoint is **not** process-static: it re-runs `compute_shrinkage_path` on the live
+training window on every request, opening a fresh DB connection.
+
+**Authentication required** (session cookie). Returns 401 without auth.
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `date` | string (optional) | ISO date YYYY-MM-DD. Defaults to latest `scores_daily` date. Returns 422 for invalid format. |
+
+**Expected response time:** under 500 ms for typical training windows (30–300 rows, 50 lambda values). No SLA yet — contact the developer if queries consistently exceed 2 s.
+
+**Cold-start behaviour:** returns `{"cold_start": true, ...}` (HTTP 200) when training samples are below `min_training_samples` (default 30) or when `scores_daily` is empty. No 5xx is emitted for cold-start.
+
+To check if the endpoint is healthy after a deploy:
+
+```bash
+curl -s -b <session-cookie> https://quant.nhevan.com/api/shrinkage-path | python3 -m json.tool | head -10
+```
+
 ### Caddy reverse proxy
 
 **Live URL:** https://quant.nhevan.com

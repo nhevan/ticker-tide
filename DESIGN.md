@@ -1888,3 +1888,87 @@ All indicators other than `rsi_14`, `macd_line`, `stoch_k`, `adx`, and `cci_20` 
 Future indicator panels can be added by mirroring the §15.2 (RSI) or §15.5 (MACD) traces. Reusable components (`CategoryShareBar`, `CategoryWeightBar`, `ContributionMathChain`) are already generic. For `score_with_percentile`-scored indicators, `PercentileStrip.tsx` and `PercentileMappingChart.tsx` can be reused directly via the `label` and `domain` props. For indicators with a different scoring model (e.g. z-score like MACD), use `Macd*.tsx` as templates for new per-indicator components.
 
 
+---
+
+## §16 — Model page: GET /api/shrinkage-path
+
+### 16.1 Purpose
+
+The Model page (`web/src/pages/ModelPage.tsx`) renders the ridge regression shrinkage path — a chart of how each of the 17 calibration features' coefficients evolve as regularisation strength λ increases from 1e−4 to 1e+4. The vertical reference line marks the production λ (0.1). A sidebar ranks features by |coefficient| at the production λ.
+
+### 16.2 Endpoint contract
+
+**Route:** `GET /api/shrinkage-path`
+
+**Auth:** Required (session cookie). Returns 401 when unauthenticated.
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `date` | `string` (optional) | ISO date (YYYY-MM-DD). Resolved to latest scored date when omitted. Returns 422 for invalid format. |
+
+**Happy-path response (200):**
+
+```json
+{
+  "cold_start": false,
+  "scoring_date": "2026-04-25",
+  "production_lambda": 0.1,
+  "training_samples": 187,
+  "lambdas": [1e-4, ..., 1e4],  // 50 log-spaced values + 0.1 forced in
+  "features": [
+    {
+      "name": "trend_score",
+      "label": "Trend score",
+      "category": "trend",
+      "coefs": [0.312, 0.298, ...]  // one float per lambda, same length as lambdas
+    },
+    ...  // 17 entries total, in FEATURE_NAMES canonical order
+  ]
+}
+```
+
+**Cold-start response (200, when training data is insufficient):**
+
+```json
+{
+  "cold_start": true,
+  "scoring_date": "2026-04-25",   // null when scores_daily is empty
+  "production_lambda": 0.1,
+  "training_samples": 4           // actual row count (< min_training_samples)
+}
+```
+
+`lambdas` and `features` are absent on cold-start.
+
+### 16.3 Computation
+
+1. Resolve `scoring_date`: use the query parameter, or `SELECT MAX(date) FROM scores_daily` when absent.
+2. Cold-start if `scores_daily` is empty (no date resolved).
+3. Call `fetch_training_data(conn, scoring_date, calibration_cfg, excluded_tickers)` — same training window as the live scorer.
+4. Cold-start if `X_train.shape[0] < min_training_samples` (default 30; read from `scorer_config["calibration"]["min_training_samples"]`).
+5. Call `compute_shrinkage_path(X_train, y_train, DEFAULT_SHRINKAGE_LAMBDAS)` — returns `(n_lambdas, 17)` array of standardised-space feature coefficients (intercept dropped).
+6. Build response: for each feature in `FEATURE_NAMES` order, attach its coefficient row as `coefs`.
+
+### 16.4 Lambda grid
+
+`DEFAULT_SHRINKAGE_LAMBDAS` in `src/scorer/calibrator.py`: 49 log-spaced values from 1e−4 to 1e+4 (via `np.logspace(-4, 4, 49)`) plus 0.1 forced in, deduplicated and sorted. Total: 50 values. The forced insertion guarantees the `ReferenceLine` in the chart aligns with a real data point and the sidebar index lookup is exact.
+
+### 16.5 Feature metadata
+
+`FEATURE_METADATA` in `src/scorer/calibrator.py` maps each of the 17 `FEATURE_NAMES` to a `label` (display name) and `category`. Categories follow `category_scorer._INDICATOR_CATEGORY_MAP` for raw indicators: notably `adx → trend` (not volatility). Synthetic features (EMA spreads, weekly/monthly scores) use `trend` and `temporal` by analogy.
+
+### 16.6 No LRU cache
+
+The endpoint opens a fresh DB connection per request. No in-process cache is applied. `shrinkage_path` computation at typical training window sizes (30–300 rows, 50 lambdas) runs in well under 500 ms on the production host. A cache can be added in a follow-up if profiling reveals it to be a bottleneck.
+
+### 16.7 Frontend wiring
+
+- **Types:** `ShrinkagePathFeature`, `ShrinkagePathResponse` in `web/src/lib/api/types.ts`.
+- **API call:** `getShrinkagePath(date?)` in `web/src/lib/api/endpoints.ts`.
+- **Hook:** `useShrinkagePath(date?)` in `web/src/lib/hooks/useShrinkagePath.ts`; `staleTime: 5 * 60 * 1000`.
+- **UI states:** loading → `<Skeleton>` cards; error → `<ErrorBanner>`; cold-start → centred message; happy path → recharts `LineChart` with log X-axis + ranked sidebar.
+- **Frontend tests for ModelPage deferred** — per project policy for pure UI components.
+
+

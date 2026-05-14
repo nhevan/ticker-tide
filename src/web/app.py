@@ -42,6 +42,7 @@ from src.web.llm import call_claude_for_web, generate_dashboard_verdict
 from src.web.queries import (
     fetch_active_tickers,
     fetch_date_range,
+    fetch_shrinkage_path,
     fetch_snapshot,
     fetch_tickers_list,
 )
@@ -703,6 +704,46 @@ def create_app(
                 "due to clamping at ±100, sector adjustment, and timeframe merging."
             ),
         })
+
+    # ── /api/shrinkage-path ───────────────────────────────────────────────────
+
+    @app.get("/api/shrinkage-path")
+    def get_shrinkage_path(request: Request, date: Optional[str] = None) -> JSONResponse:
+        """
+        Return the ridge regression shrinkage path for the given (or latest) scoring date.
+
+        Computes coefficients across the DEFAULT_SHRINKAGE_LAMBDAS grid from the
+        calibration training window and returns them per-feature. Returns a cold-start
+        payload (cold_start=True, no lambdas/features keys) when training data is
+        insufficient.
+
+        Parameters:
+            request: FastAPI request object for session access.
+            date:    Optional ISO date string (YYYY-MM-DD). When omitted, resolves
+                     to the latest scoring date in scores_daily.
+
+        Returns:
+            200 shrinkage-path dict if authenticated.
+            401 {"detail": "Not authenticated."} when not authenticated.
+            422 {"detail": "Invalid date format. Expected YYYY-MM-DD."} when date
+                is provided but not a valid ISO date.
+        """
+        if not _is_authenticated(request):
+            return JSONResponse({"detail": "Not authenticated."}, status_code=401)
+        if date is not None:
+            try:
+                datetime.strptime(date, "%Y-%m-%d")
+            except ValueError:
+                return JSONResponse(
+                    {"detail": "Invalid date format. Expected YYYY-MM-DD."},
+                    status_code=422,
+                )
+        conn = _open_db()
+        try:
+            payload = fetch_shrinkage_path(conn, date, resolved_scorer_config)
+        finally:
+            conn.close()
+        return JSONResponse(payload)
 
     # ── Static file serving ───────────────────────────────────────────────────
     # Route registration order: /assets mount → explicit root assets → catch-all.

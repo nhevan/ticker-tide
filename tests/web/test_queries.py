@@ -17,6 +17,7 @@ from src.common.db import create_all_tables
 from src.web.queries import (
     fetch_active_tickers,
     fetch_date_range,
+    fetch_shrinkage_path,
     fetch_snapshot,
     fetch_tickers_list,
     _extract_key_signals,
@@ -2135,3 +2136,162 @@ class TestFetchTickersList:
         """Empty schema returns an empty list rather than raising."""
         rows = fetch_tickers_list(conn)
         assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Tests for fetch_shrinkage_path
+# ---------------------------------------------------------------------------
+
+
+class TestFetchShrinkagePath:
+    """Tests for fetch_shrinkage_path in src/web/queries.py."""
+
+    _SCORER_CONFIG_WITH_CALIBRATION = {
+        "calibration": {
+            "enabled": True,
+            "ridge_lambda": 0.1,
+            "min_training_samples": 5,
+            "window_size": 90,
+            "forward_days": 10,
+            "benchmark_ticker": "SPY",
+        }
+    }
+
+    def test_fetch_shrinkage_path_no_scoring_dates(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Empty scores_daily table → cold-start payload with training_samples=0."""
+        result = fetch_shrinkage_path(conn, None, self._SCORER_CONFIG_WITH_CALIBRATION)
+
+        assert result["cold_start"] is True
+        assert result["scoring_date"] is None
+        assert result["training_samples"] == 0
+        assert "features" not in result
+        assert "lambdas" not in result
+
+    def test_fetch_shrinkage_path_cold_start_when_too_few_samples(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """When fetch_training_data returns fewer rows than min_training_samples, cold_start=True."""
+        from unittest.mock import patch
+        import numpy as np
+
+        # Insert a scores_daily row so MAX(date) resolves
+        conn.execute(
+            "INSERT OR REPLACE INTO tickers(symbol, name, active) VALUES ('AAPL', 'Apple', 1)"
+        )
+        conn.execute(
+            """INSERT OR REPLACE INTO scores_daily(
+                ticker, date, signal, confidence, final_score, regime,
+                trend_score, momentum_score, volume_score, volatility_score,
+                candlestick_score, structural_score, sentiment_score,
+                fundamental_score, macro_score
+            ) VALUES ('AAPL','2026-01-10','BULLISH',70.0,50.0,'trending',
+                      30.0,20.0,10.0,-5.0,15.0,8.0,3.0,5.0,-2.0)"""
+        )
+        conn.commit()
+
+        scorer_config = {
+            "calibration": {
+                "ridge_lambda": 0.1,
+                "min_training_samples": 30,
+            }
+        }
+
+        # Mock fetch_training_data to return only 2 rows (below min)
+        empty_X = np.zeros((2, 17))
+        empty_y = np.zeros(2)
+        with patch("src.web.queries.fetch_training_data", return_value=(empty_X, empty_y)):
+            result = fetch_shrinkage_path(conn, "2026-01-10", scorer_config)
+
+        assert result["cold_start"] is True
+        assert "features" not in result
+        assert "lambdas" not in result
+        assert result["training_samples"] == 2
+
+    def test_fetch_shrinkage_path_happy_path_shape(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Happy path: returns 17 features, lambdas length matches DEFAULT_SHRINKAGE_LAMBDAS."""
+        from unittest.mock import patch
+        from src.scorer.calibrator import DEFAULT_SHRINKAGE_LAMBDAS
+        import numpy as np
+
+        conn.execute(
+            "INSERT OR REPLACE INTO tickers(symbol, name, active) VALUES ('AAPL', 'Apple', 1)"
+        )
+        conn.execute(
+            """INSERT OR REPLACE INTO scores_daily(
+                ticker, date, signal, confidence, final_score, regime,
+                trend_score, momentum_score, volume_score, volatility_score,
+                candlestick_score, structural_score, sentiment_score,
+                fundamental_score, macro_score
+            ) VALUES ('AAPL','2026-01-10','BULLISH',70.0,50.0,'trending',
+                      30.0,20.0,10.0,-5.0,15.0,8.0,3.0,5.0,-2.0)"""
+        )
+        conn.commit()
+
+        rng = np.random.default_rng(1)
+        mock_X = rng.standard_normal((50, 17))
+        mock_y = rng.standard_normal(50)
+        scorer_config = {
+            "calibration": {
+                "ridge_lambda": 0.1,
+                "min_training_samples": 5,
+            }
+        }
+
+        with patch("src.web.queries.fetch_training_data", return_value=(mock_X, mock_y)):
+            result = fetch_shrinkage_path(conn, "2026-01-10", scorer_config)
+
+        assert result["cold_start"] is False
+        assert result["production_lambda"] == 0.1
+        assert result["training_samples"] == 50
+        assert "features" in result
+        assert "lambdas" in result
+        assert len(result["features"]) == 17
+        assert len(result["lambdas"]) == len(DEFAULT_SHRINKAGE_LAMBDAS)
+        # Every feature must have the right keys and coefs length
+        for feat in result["features"]:
+            assert "name" in feat
+            assert "label" in feat
+            assert "category" in feat
+            assert "coefs" in feat
+            assert len(feat["coefs"]) == len(DEFAULT_SHRINKAGE_LAMBDAS)
+
+    def test_fetch_shrinkage_path_uses_calibration_subconfig(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """fetch_shrinkage_path must read ridge_lambda from scorer_config['calibration'], not top-level."""
+        from unittest.mock import patch
+        import numpy as np
+
+        conn.execute(
+            "INSERT OR REPLACE INTO tickers(symbol, name, active) VALUES ('AAPL', 'Apple', 1)"
+        )
+        conn.execute(
+            """INSERT OR REPLACE INTO scores_daily(
+                ticker, date, signal, confidence, final_score, regime,
+                trend_score, momentum_score, volume_score, volatility_score,
+                candlestick_score, structural_score, sentiment_score,
+                fundamental_score, macro_score
+            ) VALUES ('AAPL','2026-02-01','BULLISH',70.0,50.0,'trending',
+                      30.0,20.0,10.0,-5.0,15.0,8.0,3.0,5.0,-2.0)"""
+        )
+        conn.commit()
+
+        # Top-level has a different ridge_lambda; calibration subconfig has 0.5
+        scorer_config = {
+            "ridge_lambda": 99.0,  # should NOT be read
+            "calibration": {
+                "ridge_lambda": 0.5,
+                "min_training_samples": 5,
+            },
+        }
+        mock_X = np.random.default_rng(2).standard_normal((50, 17))
+        mock_y = np.random.default_rng(2).standard_normal(50)
+
+        with patch("src.web.queries.fetch_training_data", return_value=(mock_X, mock_y)):
+            result = fetch_shrinkage_path(conn, "2026-02-01", scorer_config)
+
+        assert result["production_lambda"] == 0.5

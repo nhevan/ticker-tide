@@ -16,6 +16,7 @@ import type {
   MeResponse,
   Snapshot,
   ScoringRules,
+  ShrinkagePathResponse,
   TickerListApiRow,
   TickerRow,
   VerdictResponse,
@@ -174,4 +175,19 @@ export async function generateVerdict(
  */
 export async function fetchScoringRules(): Promise<ScoringRules> {
   return apiFetch<ScoringRules>('/api/scoring-rules');
+}
+
+/**
+ * Return the ridge regression shrinkage path for the given (or latest) scoring date.
+ *
+ * Returns a cold-start payload (cold_start=true, no lambdas/features) when training
+ * data is insufficient. Passes date as a query param when provided.
+ *
+ * @param date - Optional ISO date string (YYYY-MM-DD). Omit to use the latest date.
+ */
+export async function getShrinkagePath(date?: string): Promise<ShrinkagePathResponse> {
+  const url = date
+    ? `/api/shrinkage-path?date=${encodeURIComponent(date)}`
+    : '/api/shrinkage-path';
+  return apiFetch<ShrinkagePathResponse>(url);
 }

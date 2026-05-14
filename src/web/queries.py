@@ -18,6 +18,16 @@ from typing import Any, Optional
 # Imported directly from the scorer to keep the matrix's recency window
 # in lockstep with score_candlestick_patterns / score_structural_patterns.
 # Private-prefixed names are accepted here as the canonical source of truth.
+from src.scorer.calibrator import (
+    DEFAULT_MIN_TRAINING_SAMPLES,
+    DEFAULT_RIDGE_LAMBDA,
+    FEATURE_METADATA,
+    FEATURE_NAMES,
+    build_shrinkage_lambdas,
+    compute_shrinkage_path,
+    fetch_training_data,
+)
+from src.common.config import get_training_excluded_tickers
 from src.scorer.pattern_scorer import _CANDLESTICK_WINDOW_DAYS, _STRUCTURAL_WINDOW_DAYS
 from src.scorer.zone_labels import zone_label_for_adx, zone_label_for_cci, zone_label_for_rsi, zone_label_for_stoch_k
 
@@ -43,6 +53,92 @@ _WINDOW_BY_CATEGORY: dict[str, int] = {
     "candlestick": _CANDLESTICK_WINDOW_DAYS,
     "structural": _STRUCTURAL_WINDOW_DAYS,
 }
+
+
+def fetch_shrinkage_path(
+    conn: sqlite3.Connection,
+    scoring_date: Optional[str],
+    scorer_config: dict,
+) -> dict:
+    """
+    Build the ridge regression shrinkage path payload for the given scoring date.
+
+    Fetches training data for the date (or the latest scored date when scoring_date
+    is None), computes the shrinkage path across DEFAULT_SHRINKAGE_LAMBDAS, and
+    returns a response dict the frontend can render directly.
+
+    Cold-start conditions (returns cold_start=True, no lambdas/features keys):
+      - scores_daily table is empty (no MAX(date) to resolve).
+      - Training data has fewer rows than min_training_samples from the calibration
+        sub-config.
+
+    Parameters:
+        conn:          Open SQLite connection with row_factory=sqlite3.Row.
+        scoring_date:  ISO date string (YYYY-MM-DD) or None to use latest date.
+        scorer_config: Full scorer config dict. Calibration settings are read
+                       from scorer_config["calibration"].
+
+    Returns:
+        Dict with keys:
+            cold_start (bool)
+            scoring_date (str | None)
+            production_lambda (float)
+            training_samples (int)
+            lambdas (list[float])      — present only when cold_start is False
+            features (list[dict])      — present only when cold_start is False
+                Each feature dict has: name, label, category, coefs (list[float])
+    """
+    calibration_cfg = scorer_config.get("calibration", {})
+    ridge_lambda: float = calibration_cfg.get("ridge_lambda", DEFAULT_RIDGE_LAMBDA)
+    min_training_samples: int = calibration_cfg.get(
+        "min_training_samples", DEFAULT_MIN_TRAINING_SAMPLES
+    )
+    lambdas = build_shrinkage_lambdas(ridge_lambda)
+
+    resolved_date: Optional[str] = scoring_date
+    if resolved_date is None:
+        row = conn.execute("SELECT MAX(date) AS max_date FROM scores_daily").fetchone()
+        resolved_date = row["max_date"] if row else None
+
+    cold_start_base = {
+        "cold_start": True,
+        "scoring_date": resolved_date,
+        "training_samples": 0,
+        "production_lambda": ridge_lambda,
+    }
+
+    if resolved_date is None:
+        return cold_start_base
+
+    excluded_tickers = get_training_excluded_tickers()
+    X_train, y_train = fetch_training_data(
+        conn, resolved_date, calibration_cfg, excluded_tickers=excluded_tickers
+    )
+    n_samples = X_train.shape[0]
+
+    if n_samples < min_training_samples:
+        return {**cold_start_base, "training_samples": n_samples, "scoring_date": resolved_date}
+
+    path = compute_shrinkage_path(X_train, y_train, lambdas)
+
+    features = [
+        {
+            "name": name,
+            "label": FEATURE_METADATA[name]["label"],
+            "category": FEATURE_METADATA[name]["category"],
+            "coefs": path[:, idx].tolist(),
+        }
+        for idx, name in enumerate(FEATURE_NAMES)
+    ]
+
+    return {
+        "cold_start": False,
+        "scoring_date": resolved_date,
+        "production_lambda": ridge_lambda,
+        "training_samples": n_samples,
+        "lambdas": lambdas,
+        "features": features,
+    }
 
 
 def fetch_active_tickers(conn: sqlite3.Connection) -> list[str]:
