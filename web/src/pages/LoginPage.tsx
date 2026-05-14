@@ -1,7 +1,7 @@
 /**
  * Login page — password input that posts to POST /api/login.
  *
- * On success, navigates to / (DashboardPage).
+ * On success, navigates to / (TickerDetailPage).
  * On 401, displays an "Invalid password" error message.
  */
 

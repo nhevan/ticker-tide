@@ -1,5 +1,5 @@
 /**
- * Tests for DashboardPage.tsx
+ * Tests for TickerDetailPage.tsx
  *
  * Mocks useSnapshot to verify loading, error, and success render states.
  */
@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { DashboardPage } from '@/pages/DashboardPage';
+import { TickerDetailPage } from '@/pages/TickerDetailPage';
 import { ApiError } from '@/lib/api/client';
 
 vi.mock('@/lib/hooks/useSnapshot', () => ({
@@ -98,13 +98,13 @@ function renderDashboard() {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <DashboardPage />
+        <TickerDetailPage />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-describe('DashboardPage', () => {
+describe('TickerDetailPage', () => {
   it('renders placeholder text before any load', () => {
     vi.mocked(useSnapshot).mockReturnValue({
       data: undefined,

@@ -3,14 +3,14 @@
  *
  * Routes:
  *   /login  → LoginPage (public)
- *   /       → DashboardPage (protected by RequireAuth)
+ *   /       → TickerDetailPage (protected by RequireAuth)
  *   *       → Navigate to /
  */
 
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from '@/pages/LoginPage';
-import { DashboardPage } from '@/pages/DashboardPage';
+import { TickerDetailPage } from '@/pages/TickerDetailPage';
 import { RequireAuth } from '@/components/RequireAuth';
 
 /**
@@ -24,7 +24,7 @@ export function App() {
         path="/"
         element={
           <RequireAuth>
-            <DashboardPage />
+            <TickerDetailPage />
           </RequireAuth>
         }
       />

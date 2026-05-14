@@ -48,7 +48,7 @@ function scoreToDirection(score: number | null | undefined): 1 | -1 | 0 {
  *
  * The snapshot is fetched only after the user clicks Load.
  */
-export function DashboardPage() {
+export function TickerDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [inputTicker, setInputTicker] = useState(

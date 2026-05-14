@@ -1609,6 +1609,16 @@ Rendered immediately above the "Daily — Indicator Agreement" matrix. Shows the
 
 **Frontend component:** `web/src/components/ModelInputsTable.tsx`. Props: `{ payload: CalibratorPayload | null | undefined }`. Per-cell `Number.isFinite` guards on every numeric field; non-finite values render `—`. This panel is daily-only; no equivalent exists for weekly or monthly timeframes.
 
+### 14.8 Global Header vs Page-Scoped Controls
+
+The application shell is split into two layers, and any new page must respect this split.
+
+**Global `<Header>` (`web/src/components/Header.tsx`)** — sticky, zero-prop. Renders brand, top-level navigation (a `<Link to="/">` to the Ticker Detail page styled active via `useLocation().pathname === '/'`, plus disabled placeholder buttons for future pages), theme toggle, and sign-out. The header owns no page state and never receives page-specific props. Every route mounts this component.
+
+**Page-scoped controls** — anything that varies per page (e.g. the Ticker Detail page's ticker picker + date picker + Load button) is rendered by the page component itself in a sub-bar below the header. The Ticker Detail sub-bar lives inside `DashboardPage.tsx` and is not constrained by `max-w-*` so it aligns edge-to-edge with the rest of the page content. Other pages may render no sub-bar at all.
+
+**Routing.** Only `/` is wired today (Ticker Detail). The "Coming soon" nav item is a `<button disabled>` — no route, no behavior. When a second real page lands, add the route in `App.tsx`, replace the disabled button with a `<Link>`, and the active-state logic in `Header` works without changes.
+
 ---
 
 ## 15. Indicator Explainer
