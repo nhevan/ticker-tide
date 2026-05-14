@@ -434,6 +434,26 @@ export interface ShrinkagePathResponse {
   features?: ShrinkagePathFeature[];
 }
 
+/** Valid price chart range keys. */
+export type PriceRange = "1M" | "3M" | "6M" | "1Y" | "ALL";
+
+/** A single OHLCV bar for the candlestick price chart. */
+export interface PriceBar {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/** Response shape for GET /api/price-chart. */
+export interface PriceChartPayload {
+  ticker: string;
+  range: PriceRange;
+  bars: PriceBar[];
+}
+
 /** Frontend-facing camelCase row for the Tickers listing page. */
 export interface TickerRow {
   symbol: string;

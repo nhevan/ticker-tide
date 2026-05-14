@@ -25,7 +25,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -42,6 +42,7 @@ from src.web.llm import call_claude_for_web, generate_dashboard_verdict
 from src.web.queries import (
     fetch_active_tickers,
     fetch_date_range,
+    fetch_price_chart,
     fetch_shrinkage_path,
     fetch_snapshot,
     fetch_tickers_list,
@@ -741,6 +742,44 @@ def create_app(
         conn = _open_db()
         try:
             payload = fetch_shrinkage_path(conn, date, resolved_scorer_config)
+        finally:
+            conn.close()
+        return JSONResponse(payload)
+
+    @app.get("/api/price-chart")
+    def get_price_chart(
+        request: Request,
+        ticker: str,
+        range_key: str = Query(default="6M", alias="range"),
+    ) -> JSONResponse:
+        """
+        Return OHLCV bars for a candlestick price chart.
+
+        Validates the range parameter before opening the database.
+        Ticker is uppercased before querying.
+
+        Parameters:
+            request:   Incoming FastAPI request (used for auth check).
+            ticker:    Ticker symbol (case-insensitive; uppercased internally).
+            range_key: Bar range; one of 1M, 3M, 6M, 1Y, ALL. Defaults to 3M.
+                       Passed via the query param `range` (alias).
+
+        Returns:
+            200 JSONResponse with {"ticker", "range", "bars"} on success.
+            401 JSONResponse when not authenticated.
+            422 JSONResponse when range is not one of the accepted values.
+        """
+        if not _is_authenticated(request):
+            return JSONResponse({"detail": "Not authenticated."}, status_code=401)
+        _valid_ranges = {"1M", "3M", "6M", "1Y", "ALL"}
+        if range_key not in _valid_ranges:
+            return JSONResponse(
+                {"detail": f"Unknown range: {range_key}"},
+                status_code=422,
+            )
+        conn = _open_db()
+        try:
+            payload = fetch_price_chart(conn, ticker.upper(), range_key, config)
         finally:
             conn.close()
         return JSONResponse(payload)

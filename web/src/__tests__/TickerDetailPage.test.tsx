@@ -12,6 +12,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TickerDetailPage } from '@/pages/TickerDetailPage';
 import { ApiError } from '@/lib/api/client';
 
+// PriceChart renders lightweight-charts, which requires Canvas APIs not
+// available under jsdom. Stub it out — chart rendering is covered by
+// manual verification, not unit tests.
+vi.mock('@/components/PriceChart', () => ({
+  PriceChart: () => null,
+}));
+
 vi.mock('@/lib/hooks/useSnapshot', () => ({
   useSnapshot: vi.fn(),
 }));

@@ -1763,3 +1763,113 @@ def _format_monthly_period_label(month_start: str) -> str:
     except ValueError:
         logger.warning(f"Could not parse month_start date: {month_start!r}")
         return month_start
+
+
+# ── Price chart range defaults ────────────────────────────────────────────────
+_PRICE_CHART_RANGE_DEFAULTS: dict[str, int] = {
+    "1M": 22,
+    "3M": 66,
+    "6M": 132,
+    "1Y": 252,
+    "ALL": 5000,
+}
+
+
+def fetch_price_chart(
+    conn: sqlite3.Connection,
+    ticker: str,
+    range_key: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Fetch OHLCV bars for a candlestick price chart from ohlcv_daily.
+
+    Rows are fetched in descending date order (LIMIT applied) then reversed
+    to ascending for the response. Bars with any null value in open/high/low/close
+    are dropped with a WARNING. Bars with null volume are kept with volume
+    substituted to 0 and a WARNING logged.
+
+    Parameters:
+        conn:      Open SQLite connection with row_factory=sqlite3.Row.
+        ticker:    Ticker symbol (e.g. "AAPL"). Should already be uppercased.
+        range_key: One of "1M", "3M", "6M", "1Y", "ALL". Raises ValueError for
+                   any other value.
+        config:    Web config dict. Reads config["price_chart"]["range_days"][range_key]
+                   for the bar limit; falls back to built-in defaults when the
+                   price_chart block is absent.
+
+    Returns:
+        Dict with keys:
+            ticker (str)
+            range  (str)
+            bars   (list[dict]) — ascending by date; each bar has:
+                       date (str), open (float), high (float), low (float),
+                       close (float), volume (int)
+
+    Raises:
+        ValueError: when range_key is not one of the five recognised values.
+    """
+    if range_key not in _PRICE_CHART_RANGE_DEFAULTS:
+        raise ValueError(f"Unknown range: {range_key}")
+
+    configured = (
+        config
+        .get("price_chart", {})
+        .get("range_days", {})
+        .get(range_key, _PRICE_CHART_RANGE_DEFAULTS[range_key])
+    )
+    try:
+        num_days = int(configured)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid price_chart.range_days[{range_key}] = {configured!r}; "
+            "expected positive integer."
+        ) from exc
+    if num_days <= 0:
+        raise ValueError(
+            f"Invalid price_chart.range_days[{range_key}] = {num_days}; "
+            "expected positive integer."
+        )
+
+    rows = conn.execute(
+        "SELECT date, open, high, low, close, volume "
+        "FROM ohlcv_daily "
+        "WHERE ticker = ? "
+        "ORDER BY date DESC "
+        "LIMIT ?",
+        (ticker, num_days),
+    ).fetchall()
+
+    # Reverse to ascending order
+    rows = list(reversed(rows))
+
+    bars: list[dict[str, Any]] = []
+    for row in rows:
+        row_date = row["date"]
+        null_ohlc_cols = [
+            col for col in ("open", "high", "low", "close") if row[col] is None
+        ]
+        if null_ohlc_cols:
+            logger.warning(
+                f"fetch_price_chart: dropping bar for {ticker} on {row_date} — "
+                f"null OHLC columns: {null_ohlc_cols}"
+            )
+            continue
+
+        volume: int = row["volume"]
+        if volume is None:
+            logger.warning(
+                f"fetch_price_chart: null volume for {ticker} on {row_date} — substituting 0"
+            )
+            volume = 0
+
+        bars.append({
+            "date": row_date,
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+            "volume": int(volume),
+        })
+
+    return {"ticker": ticker, "range": range_key, "bars": bars}

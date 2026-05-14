@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date, timedelta
 from typing import Generator
 
 import pytest
@@ -2295,3 +2296,168 @@ class TestFetchShrinkagePath:
             result = fetch_shrinkage_path(conn, "2026-02-01", scorer_config)
 
         assert result["production_lambda"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# fetch_price_chart tests
+# ---------------------------------------------------------------------------
+
+_PRICE_CHART_CONFIG = {
+    "price_chart": {
+        "range_days": {"1M": 22, "3M": 66, "6M": 132, "1Y": 252, "ALL": 5000}
+    }
+}
+
+
+def _insert_ohlcv_rows(
+    conn: sqlite3.Connection,
+    ticker: str,
+    rows: list[tuple[str, float, float, float, float, int]],
+) -> None:
+    """Insert ohlcv_daily rows — (date, open, high, low, close, volume) tuples."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO ohlcv_daily(ticker, date, open, high, low, close, volume) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(ticker, date, open_, high, low, close, volume) for date, open_, high, low, close, volume in rows],
+    )
+    conn.commit()
+
+
+class TestFetchPriceChart:
+    """Tests for fetch_price_chart()."""
+
+    def test_fetch_price_chart_returns_bars_in_ascending_date_order(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Bars must be returned in ascending date order (oldest first)."""
+        from src.web.queries import fetch_price_chart
+
+        _insert_ohlcv_rows(conn, "AAPL", [
+            ("2026-04-23", 170.0, 172.0, 169.0, 171.0, 1_000_000),
+            ("2026-04-25", 172.0, 174.0, 171.0, 173.0, 1_200_000),
+            ("2026-04-24", 171.0, 173.0, 170.0, 172.0, 1_100_000),
+        ])
+        result = fetch_price_chart(conn, "AAPL", "3M", _PRICE_CHART_CONFIG)
+        dates = [bar["date"] for bar in result["bars"]]
+        assert dates == sorted(dates)
+        assert dates[0] == "2026-04-23"
+        assert dates[-1] == "2026-04-25"
+
+    def test_fetch_price_chart_respects_range_1m_limits_to_22_rows(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Range 1M must return at most 22 rows (the most recent 22)."""
+        from src.web.queries import fetch_price_chart
+
+        # Insert 30 rows
+        rows = [
+            (f"2026-0{month:01d}-{day:02d}", 100.0, 102.0, 99.0, 101.0, 500_000)
+            for month, day in [
+                (1, d) for d in range(1, 31)
+            ]
+        ]
+        _insert_ohlcv_rows(conn, "AAPL", rows)
+        result = fetch_price_chart(conn, "AAPL", "1M", _PRICE_CHART_CONFIG)
+        assert len(result["bars"]) == 22
+
+    def test_fetch_price_chart_respects_range_all_caps_at_range_days_all(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Range ALL must return at most 5000 rows even when more exist."""
+        from src.web.queries import fetch_price_chart
+
+        # Seed 5010 rows with distinct dates
+        base = date(2010, 1, 1)
+        rows = []
+        current = base
+        for _ in range(5010):
+            rows.append((current.isoformat(), 100.0, 102.0, 99.0, 101.0, 500_000))
+            current = current + timedelta(days=1)
+        _insert_ohlcv_rows(conn, "AAPL", rows)
+        result = fetch_price_chart(conn, "AAPL", "ALL", _PRICE_CHART_CONFIG)
+        assert len(result["bars"]) == 5000
+
+    def test_fetch_price_chart_unknown_ticker_returns_empty_bars(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """A ticker with no rows in ohlcv_daily must return an empty bars list."""
+        from src.web.queries import fetch_price_chart
+
+        result = fetch_price_chart(conn, "ZZZZ", "3M", _PRICE_CHART_CONFIG)
+        assert result["ticker"] == "ZZZZ"
+        assert result["range"] == "3M"
+        assert result["bars"] == []
+
+    def test_fetch_price_chart_unknown_range_raises_value_error(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """An unrecognised range_key must raise ValueError with the key in the message."""
+        from src.web.queries import fetch_price_chart
+
+        with pytest.raises(ValueError, match="Unknown range: 7D"):
+            fetch_price_chart(conn, "AAPL", "7D", _PRICE_CHART_CONFIG)
+
+    def test_fetch_price_chart_drops_rows_with_partial_null_ohlc(
+        self, conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A bar where exactly one of open/high/low/close is null must be dropped and warned."""
+        from src.web.queries import fetch_price_chart
+        import logging
+
+        # Insert a good row and a row with null high
+        conn.execute(
+            "INSERT OR REPLACE INTO ohlcv_daily(ticker, date, open, high, low, close, volume) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("AAPL", "2026-04-24", 171.0, None, 170.0, 172.0, 1_000_000),
+        )
+        _insert_ohlcv_rows(conn, "AAPL", [
+            ("2026-04-25", 172.0, 174.0, 171.0, 173.0, 1_200_000),
+        ])
+        conn.commit()
+
+        with caplog.at_level(logging.WARNING, logger="src.web.queries"):
+            result = fetch_price_chart(conn, "AAPL", "3M", _PRICE_CHART_CONFIG)
+
+        dates = [bar["date"] for bar in result["bars"]]
+        assert "2026-04-24" not in dates
+        assert "2026-04-25" in dates
+        assert any("2026-04-24" in msg for msg in caplog.messages)
+
+    def test_fetch_price_chart_substitutes_zero_for_null_volume_and_warns(
+        self, conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A bar with null volume must be kept with volume=0 and a WARNING logged."""
+        from src.web.queries import fetch_price_chart
+        import logging
+
+        conn.execute(
+            "INSERT OR REPLACE INTO ohlcv_daily(ticker, date, open, high, low, close, volume) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("AAPL", "2026-04-25", 172.0, 174.0, 171.0, 173.0, None),
+        )
+        conn.commit()
+
+        with caplog.at_level(logging.WARNING, logger="src.web.queries"):
+            result = fetch_price_chart(conn, "AAPL", "3M", _PRICE_CHART_CONFIG)
+
+        assert len(result["bars"]) == 1
+        assert result["bars"][0]["volume"] == 0
+        assert any("2026-04-25" in msg for msg in caplog.messages)
+
+    def test_fetch_price_chart_uses_config_defaults_when_price_chart_block_missing(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """When config lacks a price_chart key, built-in defaults must be used (3M → 66 rows)."""
+        from src.web.queries import fetch_price_chart
+
+        # Seed 80 rows so 66-row default is exercised
+        base = date(2026, 1, 1)
+        rows = []
+        current = base
+        for _ in range(80):
+            rows.append((current.isoformat(), 100.0, 102.0, 99.0, 101.0, 500_000))
+            current = current + timedelta(days=1)
+        _insert_ohlcv_rows(conn, "AAPL", rows)
+
+        result = fetch_price_chart(conn, "AAPL", "3M", {})  # config has no price_chart
+        assert len(result["bars"]) == 66

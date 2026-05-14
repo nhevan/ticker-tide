@@ -195,6 +195,26 @@ To check if the endpoint is healthy after a deploy:
 curl -s -b <session-cookie> https://quant.nhevan.com/api/shrinkage-path | python3 -m json.tool | head -10
 ```
 
+### GET /api/price-chart
+
+Returns OHLCV bars for the candlestick price chart on the Ticker Detail page.
+This endpoint is **not** process-static: it queries `ohlcv_daily` on every request, opening a fresh DB connection.
+
+**Authentication required** (session cookie). Returns 401 without auth.
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ticker` | string (required) | Ticker symbol. Unknown ticker returns 200 with `bars: []`. |
+| `range` | string (required) | One of `1M`, `3M`, `6M`, `1Y`, `ALL`. Invalid value returns 422. |
+
+**No new pipeline phase.** The endpoint reads `ohlcv_daily` which is populated by the existing daily fetcher. No schedule changes or backfill steps are needed.
+
+**Range days** are controlled by `config/web.json price_chart.range_days`. Changes are picked up on the next request — no web service restart needed.
+
+---
+
 ### Caddy reverse proxy
 
 **Live URL:** https://quant.nhevan.com

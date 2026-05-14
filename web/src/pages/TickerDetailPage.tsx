@@ -17,6 +17,7 @@ import { TickerPicker } from '@/components/TickerPicker';
 import { DatePicker } from '@/components/DatePicker';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { VerdictBlock } from '@/components/VerdictBlock';
+import { PriceChart } from '@/components/PriceChart';
 import { MatrixTable } from '@/components/MatrixTable';
 import { ModelInputsTable } from '@/components/ModelInputsTable';
 import { TickerTape } from '@/components/TickerTape';
@@ -181,6 +182,9 @@ export function TickerDetailPage() {
               date={loadedDate}
               snapshot={snapshot}
             />
+            <div className="mb-4">
+              <PriceChart ticker={loadedTicker} />
+            </div>
             <div className="mb-4">
               <ModelInputsTable
                 payload={snapshot.daily.calibrator_payload}

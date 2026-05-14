@@ -1495,6 +1495,7 @@ Browser ←→ Vite/React SPA (web/dist/ static files)
 - `POST /api/llm { ticker, date, timeframe }` — LLM analysis (429 on debounce, 503 on Claude failure)
 - `GET /api/verdict?ticker=X&date=Y` — cached dashboard verdict (404 if not generated yet)
 - `POST /api/verdict { ticker, date }` — generate (or return cached) verdict (503 on Claude failure)
+- `GET /api/price-chart?ticker=X&range=R` — OHLCV bars for the candlestick price chart on the Ticker Detail page. `ticker` is case-insensitive (uppercased server-side); `range` must be one of `1M|3M|6M|1Y|ALL` (case-sensitive); unknown ticker → 200 with `bars: []`; invalid range → 422. See §17.
 
 **Static-serve (SPA):**
 - `GET /assets/*` — `StaticFiles` mount serving Vite-hashed assets from `web/dist/assets/`
@@ -1971,4 +1972,96 @@ The endpoint opens a fresh DB connection per request. No in-process cache is app
 - **UI states:** loading → `<Skeleton>` cards; error → `<ErrorBanner>`; cold-start → centred message; happy path → recharts `LineChart` with log X-axis + ranked sidebar.
 - **Frontend tests for ModelPage deferred** — per project policy for pure UI components.
 
+
+## §17 — Ticker Detail page: GET /api/price-chart
+
+### 17.1 Purpose
+
+The Ticker Detail page (`web/src/pages/TickerDetailPage.tsx`) renders a TradingView-style candlestick chart powered by `lightweight-charts` v5. The chart sits inside the `showCards` guard between `<VerdictBlock />` and `ModelInputsTable`, and shows OHLCV bars with a volume sub-pane. The `/api/price-chart` endpoint is the dedicated data source; it is intentionally separate from `/api/snapshot` so the two have independent cache keys (snapshot is keyed by `(ticker, date)`; price-chart is keyed by `(ticker, range)`).
+
+### 17.2 Endpoint contract
+
+**Route:** `GET /api/price-chart`
+
+**Auth:** Required (session cookie). Returns 401 when unauthenticated.
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ticker` | `string` (required) | Ticker symbol; case-insensitive (uppercased server-side). Unknown ticker returns 200 with `bars: []`. |
+| `range` | `string` (required) | One of `1M`, `3M`, `6M`, `1Y`, `ALL` (case-sensitive). Invalid value returns 422. |
+
+**Happy-path response (200):**
+
+```json
+{
+  "ticker": "AAPL",
+  "range": "3M",
+  "bars": [
+    { "date": "2026-02-10", "open": 225.10, "high": 228.50, "low": 224.80, "close": 227.30, "volume": 52341000 },
+    ...
+  ]
+}
+```
+
+`bars` is ordered by `date` ascending. Each bar maps to one row from `ohlcv_daily`.
+
+**Empty-ticker response (200):**
+
+```json
+{ "ticker": "UNKN", "range": "3M", "bars": [] }
+```
+
+Unknown tickers return HTTP 200 with an empty array, not 404. This matches the frontend's empty-state rendering path (no chart is drawn).
+
+**Invalid-range response (422):**
+
+```json
+{ "detail": "Unknown range: BADVAL" }
+```
+
+### 17.3 Range resolution
+
+Range labels map to trading-day counts via `config/web.json price_chart.range_days`. The backend queries `ohlcv_daily` for the `N` most-recent rows (`ORDER BY date DESC LIMIT N`), then reverses the result for ascending display. `ALL` uses a large cap (`5000` trading days ≈ 20 years) that exceeds any realistic backfill window, so it effectively returns all rows on file.
+
+### 17.4 Null-value policy
+
+Implemented in `fetch_price_chart` in `src/web/queries.py`:
+
+- **Null OHLC**: any row where `open`, `high`, `low`, or `close` is `NULL` is dropped entirely. A `WARNING` is logged per dropped row (level: `WARNING`, message includes ticker and date).
+- **Null volume**: `NULL` volume is coerced to `0` (not dropped). A `WARNING` is logged per coerced row. This preserves candlestick rendering when volume data is absent.
+
+### 17.5 Doji convention
+
+When `open == close` exactly, `lightweight-charts` renders the candle as green (bullish doji) by default. This project follows that convention without override.
+
+### 17.6 Frontend implementation
+
+- **Library:** `lightweight-charts ^5.0.0` (purpose-built TradingView candlestick; chosen over Recharts custom shapes for native candlestick support and canvas rendering performance).
+- **Component:** `web/src/components/PriceChart.tsx` — mounts a `lightweight-charts` chart instance in a `useEffect`, creates a candlestick series and a histogram volume series (~80/20 pane split), destroys on unmount. TradingView-default green/red coloring. Range pills (`1M`, `3M`, `6M`, `1Y`, `All`) render top-right; default is `6M` (hardcoded as `DEFAULT_RANGE = "6M"` in the component — not read from config, see §17.7).
+- **Hook:** `web/src/lib/hooks/usePriceChart.ts` — wraps `fetchPriceChart` with React Query.
+- **Types:** `PriceRange`, `PriceBar`, `PriceChartPayload` in `web/src/lib/api/types.ts`.
+- **API call:** `fetchPriceChart(ticker, range)` in `web/src/lib/api/endpoints.ts`.
+- **Chart dimensions:** fixed 240px height; volume sub-pane ~80/20 split.
+- **Frontend tests:** deferred per project policy for pure UI components.
+
+### 17.7 DEFAULT_RANGE — hardcoded constant, not a config key
+
+`DEFAULT_RANGE = "6M"` is a hardcoded named constant inside `PriceChart.tsx`. It is **not** read from `config/web.json`. Rationale: the default range is a UI interaction default (which pill is selected on first render), not a threshold or operational parameter. Changing it does not require a web service restart — it requires a frontend build and deploy.
+
+### 17.8 Backend source
+
+`fetch_price_chart(conn, ticker, range_label, web_config)` in `src/web/queries.py`:
+
+1. Looks up `range_days` from `web_config["price_chart"]["range_days"][range_label]`. Raises `ValueError` on an unknown label (caught by the route handler → 422).
+2. Queries `ohlcv_daily` for the N most-recent rows by date (no upper-date filter — `ohlcv_daily` is populated only by the backfiller and never contains future-dated rows).
+3. Applies null-OHLC drop and null-volume coerce (§17.4).
+4. Returns bars in ascending date order.
+
+### 17.9 Tests
+
+- **Backend queries:** 8 tests in `tests/web/test_queries.py` — happy path, unknown ticker (empty bars), each invalid-OHLC field drops the row, null-volume coerce, ordering, range boundary.
+- **Backend route:** 5 tests in `tests/web/test_app.py` — 401 without auth, 422 on bad range, 200 with bars for known ticker, 200 with empty bars for unknown ticker, correct range label forwarded to query layer.
+- **Frontend tests:** deferred per project policy.
 

@@ -14,6 +14,8 @@ import type {
   DateRange,
   LlmResponse,
   MeResponse,
+  PriceChartPayload,
+  PriceRange,
   Snapshot,
   ScoringRules,
   ShrinkagePathResponse,
@@ -190,4 +192,23 @@ export async function getShrinkagePath(date?: string): Promise<ShrinkagePathResp
     ? `/api/shrinkage-path?date=${encodeURIComponent(date)}`
     : '/api/shrinkage-path';
   return apiFetch<ShrinkagePathResponse>(url);
+}
+
+/**
+ * Return OHLCV bars for the candlestick price chart.
+ *
+ * Calls GET /api/price-chart. Bars are returned in ascending date order.
+ * The endpoint raises 422 for unrecognised range values (outside of
+ * PriceRange), which surfaces as an ApiError with status 422.
+ *
+ * @param ticker - Ticker symbol (e.g. "AAPL").
+ * @param range  - One of "1M" | "3M" | "6M" | "1Y" | "ALL".
+ */
+export async function fetchPriceChart(
+  ticker: string,
+  range: PriceRange,
+): Promise<PriceChartPayload> {
+  return apiFetch<PriceChartPayload>(
+    `/api/price-chart?ticker=${encodeURIComponent(ticker)}&range=${encodeURIComponent(range)}`,
+  );
 }

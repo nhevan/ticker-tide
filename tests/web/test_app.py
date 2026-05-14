@@ -40,6 +40,9 @@ _TEST_CONFIG = {
     "why_bullets": {"limit": 3},
     "signal_flip_lookback_days": 14,
     "verdict": {"max_lines": 5},
+    "price_chart": {
+        "range_days": {"1M": 22, "3M": 66, "6M": 132, "1Y": 252, "ALL": 5000}
+    },
 }
 
 
@@ -772,3 +775,122 @@ class TestShrinkagePathEndpoint:
         assert body["production_lambda"] == 0.1
         assert len(body["features"]) == 17
         assert len(body["lambdas"]) == len(DEFAULT_SHRINKAGE_LAMBDAS)
+
+
+# ---------------------------------------------------------------------------
+# /api/price-chart tests
+# ---------------------------------------------------------------------------
+
+
+def _insert_ohlcv_daily(conn: sqlite3.Connection, ticker: str, rows: list) -> None:
+    """Seed ohlcv_daily rows for price-chart tests.
+
+    Parameters:
+        conn:   Open SQLite connection.
+        ticker: Ticker symbol.
+        rows:   List of (date, open, high, low, close, volume) tuples.
+    """
+    conn.executemany(
+        "INSERT OR REPLACE INTO ohlcv_daily(ticker, date, open, high, low, close, volume) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(ticker, date, open_, high, low, close, volume)
+         for date, open_, high, low, close, volume in rows],
+    )
+    conn.commit()
+
+
+class TestPriceChart:
+    """Tests for GET /api/price-chart."""
+
+    def test_price_chart_happy_path_returns_200_with_bars(
+        self, db_path: str, tmp_path: Path
+    ) -> None:
+        """Authenticated request returns 200 with bars list and specific close values."""
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        _insert_ohlcv_daily(conn, "AAPL", [
+            ("2026-04-21", 168.0, 170.0, 167.0, 169.0, 1_000_000),
+            ("2026-04-22", 169.0, 171.0, 168.0, 170.0, 1_100_000),
+            ("2026-04-23", 170.0, 172.0, 169.0, 171.0, 1_200_000),
+            ("2026-04-24", 171.0, 173.0, 170.0, 172.0, 1_300_000),
+            ("2026-04-25", 172.0, 174.0, 171.0, 173.0, 1_400_000),
+        ])
+        conn.close()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "WEB_PASSWORD": "testpass",
+                "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+            },
+        ):
+            from src.web.app import create_app
+
+            app = create_app(db_path=db_path, config=_TEST_CONFIG)
+            with TestClient(app, raise_server_exceptions=True) as tc:
+                tc.post("/api/login", json={"password": "testpass"})
+                response = tc.get("/api/price-chart?ticker=AAPL&range=3M")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["bars"]) == 5
+        most_recent = body["bars"][-1]
+        assert most_recent["date"] == "2026-04-25"
+        assert most_recent["close"] == 173.0
+
+    def test_price_chart_unauthenticated_returns_401(
+        self, client: TestClient
+    ) -> None:
+        """Unauthenticated request must return 401."""
+        response = client.get("/api/price-chart?ticker=AAPL&range=3M")
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+    def test_price_chart_invalid_range_returns_422(
+        self, client: TestClient
+    ) -> None:
+        """Request with an unrecognised range must return 422 with a descriptive detail."""
+        _login(client)
+        response = client.get("/api/price-chart?ticker=AAPL&range=7D")
+        assert response.status_code == 422
+        body = response.json()
+        assert "Unknown range: 7D" in body["detail"]
+
+    def test_price_chart_unknown_ticker_returns_200_empty_bars(
+        self, client: TestClient
+    ) -> None:
+        """Request for a ticker absent from ohlcv_daily must return 200 with empty bars."""
+        _login(client)
+        response = client.get("/api/price-chart?ticker=ZZZZ&range=3M")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["bars"] == []
+
+    def test_price_chart_uppercases_ticker(
+        self, db_path: str
+    ) -> None:
+        """Lowercase ticker in the request must produce the same result as uppercase."""
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        _insert_ohlcv_daily(conn, "AAPL", [
+            ("2026-04-25", 172.0, 174.0, 171.0, 173.0, 1_400_000),
+        ])
+        conn.close()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "WEB_PASSWORD": "testpass",
+                "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+            },
+        ):
+            from src.web.app import create_app
+
+            app = create_app(db_path=db_path, config=_TEST_CONFIG)
+            with TestClient(app, raise_server_exceptions=True) as tc:
+                tc.post("/api/login", json={"password": "testpass"})
+                lower_resp = tc.get("/api/price-chart?ticker=aapl&range=3M")
+                upper_resp = tc.get("/api/price-chart?ticker=AAPL&range=3M")
+
+        assert lower_resp.status_code == 200
+        assert lower_resp.json()["bars"] == upper_resp.json()["bars"]

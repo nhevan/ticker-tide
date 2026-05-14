@@ -202,6 +202,8 @@ web/                           # Vite + React + TypeScript SPA
 
 The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, and indicator profiles at all three timeframes (daily, weekly, monthly). `scores_weekly` and `scores_monthly` carry per-closed-period score breakdowns. Per-indicator signed scores are persisted in `indicator_scores_{daily,weekly,monthly}` and displayed in the dashboard indicator-agreement matrix. See DESIGN.md §12b for the calibrator acceptance gate and OPERATIONS.md "Flipping weekly_score_method" for the v1↔v2 procedure.
 
+The Ticker Detail page includes a TradingView-style candlestick price chart with a volume sub-pane and range presets (1M / 3M / 6M / 1Y / All), backed by the `GET /api/price-chart` endpoint (see DESIGN.md §17).
+
 ## Tech Stack
 
 | Library | Purpose |
@@ -217,6 +219,7 @@ The pipeline now produces patterns, divergences, crossovers, swing_points, S/R, 
 | `anthropic` | Claude API for signal reasoning |
 | `python-telegram-bot` | Telegram message delivery and interactive bot |
 | `mplfinance` | 4-panel technical chart generation for /detail command |
+| `lightweight-charts` | TradingView candlestick chart library for the Ticker Detail price chart |
 | `fastapi` | Web UI HTTP framework |
 | `uvicorn` | ASGI server for the web UI (single worker) |
 | `itsdangerous` / `starlette` SessionMiddleware | Signed cookie sessions for web auth |

@@ -605,11 +605,26 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `pattern_row_limit` | int | `5` | Maximum number of pattern rows returned per category in the `recent_patterns` field of each snapshot section. Controls how many candlestick and structural pattern rows appear in the dashboard indicator-agreement matrix below the indicator rows. |
 | `verdict.max_lines` | int | `5` | Hard cap on the number of lines returned for the dashboard verdict block. Enforced both in the Claude prompt and as a post-processing trim in `_enforce_verdict_line_cap()`. |
 
+**Price chart ranges (`price_chart.range_days`):**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `price_chart.range_days.1M` | int | `22` | Trading-day count returned for the `1M` range pill |
+| `price_chart.range_days.3M` | int | `66` | Trading-day count returned for the `3M` range pill |
+| `price_chart.range_days.6M` | int | `132` | Trading-day count returned for the `6M` range pill |
+| `price_chart.range_days.1Y` | int | `252` | Trading-day count returned for the `1Y` range pill |
+| `price_chart.range_days.ALL` | int | `5000` | Cap for the `ALL` range pill (exceeds any realistic backfill window — effectively returns all rows on file) |
+
+**Runtime read — no pipeline phase re-run required after a change to `price_chart.range_days`.** The values are read on every `/api/price-chart` request.
+
+**DEFAULT_RANGE is NOT a config key.** The frontend default range (`"6M"`) is a hardcoded named constant (`DEFAULT_RANGE = "6M"`) inside `web/src/components/PriceChart.tsx`. It is a UI interaction default, not an operational threshold. Changing it requires a frontend build and deploy, not a config edit.
+
 **`dist_dir` is intentionally NOT a config key.** The frontend build output path is a structural convention hardcoded to `web/dist` relative to the repo root. Override is available only via the `dist_dir` parameter to `create_app` for tests. Do not add this to `config/web.json`.
 
 **Re-run required after change:**
 - `login_rate_limit.*`, `llm_rate_limit.*`, `sparkline.*`, `ai_reasoner.*` — None; applies on next web UI request.
 - `why_bullets.*`, `signal_flip_lookback_days`, `pattern_row_limit`, `verdict.*` — None; web-only read layer, applies on next snapshot load. No pipeline phase re-run needed. (Changing `verdict.max_lines` does not invalidate already-cached `dashboard_verdicts` rows — old rows render at their stored line count until regenerated.)
+- `price_chart.range_days.*` — None; runtime read, applies on next `/api/price-chart` request.
 - `port` — `sudo systemctl restart ticker-tide-web`
 
 ---
@@ -655,3 +670,4 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `web.json signal_flip_lookback_days` | None — applies on next snapshot load |
 | `web.json pattern_row_limit` | None — applies on next snapshot load |
 | `web.json verdict.max_lines` | None — applies on next verdict generation (does not retroactively re-trim cached rows) |
+| `web.json price_chart.range_days.*` | None — runtime read, applies on next `/api/price-chart` request |

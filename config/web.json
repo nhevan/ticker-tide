@@ -8,5 +8,8 @@
   "why_bullets": {"limit": 3},
   "signal_flip_lookback_days": 14,
   "pattern_row_limit": 5,
-  "verdict": {"max_lines": 5}
+  "verdict": {"max_lines": 5},
+  "price_chart": {
+    "range_days": {"1M": 22, "3M": 66, "6M": 132, "1Y": 252, "ALL": 5000}
+  }
 }
