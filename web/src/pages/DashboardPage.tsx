@@ -1,5 +1,8 @@
 /**
- * Dashboard page — ticker/date selector and three timeframe cards.
+ * Ticker Detail page — page-scoped ticker/date controls row and three
+ * timeframe cards. The global Header (brand, nav, theme, sign-out) is
+ * rendered above; ticker/date pickers live in a page-local sub-bar
+ * because future pages will not need them.
  *
  * State is driven by URL search params (ticker, date) so the page is
  * bookmarkable. Loads /api/snapshot when the user clicks Load.
@@ -9,6 +12,9 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Header } from '@/components/Header';
+import { Button } from '@/components/ui/button';
+import { TickerPicker } from '@/components/TickerPicker';
+import { DatePicker } from '@/components/DatePicker';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { VerdictBlock } from '@/components/VerdictBlock';
 import { MatrixTable } from '@/components/MatrixTable';
@@ -118,17 +124,29 @@ export function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header
-        ticker={inputTicker}
-        onTickerChange={setInputTicker}
-        date={inputDate}
-        onDateChange={setInputDate}
-        onLoad={handleLoad}
-        isLoading={snapshotLoading}
-        tickers={tickers}
-        minDate={dateRange?.min}
-        maxDate={dateRange?.max}
-      />
+      <Header />
+      <div className="border-b bg-background px-4 py-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <TickerPicker
+            value={inputTicker}
+            onChange={setInputTicker}
+            tickers={tickers}
+          />
+          <DatePicker
+            value={inputDate}
+            onChange={setInputDate}
+            min={dateRange?.min}
+            max={dateRange?.max}
+          />
+          <Button
+            onClick={handleLoad}
+            disabled={snapshotLoading || !inputTicker || !inputDate}
+            size="sm"
+          >
+            {snapshotLoading ? 'Loading…' : 'Load'}
+          </Button>
+        </div>
+      </div>
       <TickerTape
         ticker={loadedTicker}
         snapshot={snapshot}

@@ -1,53 +1,24 @@
 /**
- * Application header with ticker/date pickers, Load button, and Sign out.
+ * Global application header with brand, primary navigation, and account controls.
+ *
+ * Page-specific controls (e.g. ticker / date pickers on the Ticker Detail page)
+ * live inside the page itself, not here.
  */
 
 import React from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { TickerPicker } from '@/components/TickerPicker';
-import { DatePicker } from '@/components/DatePicker';
 import { logout } from '@/lib/api/endpoints';
 import { useQueryClient } from '@tanstack/react-query';
 import { ME_QUERY_KEY } from '@/lib/hooks/useMe';
 
-interface HeaderProps {
-  /** Current ticker value. */
-  ticker: string;
-  /** Called when ticker changes. */
-  onTickerChange: (ticker: string) => void;
-  /** Current date value. */
-  date: string;
-  /** Called when date changes. */
-  onDateChange: (date: string) => void;
-  /** Called when Load button is clicked. */
-  onLoad: () => void;
-  /** Whether the load is in progress. */
-  isLoading: boolean;
-  /** Available tickers for autocomplete. */
-  tickers: string[];
-  /** Optional minimum date constraint. */
-  minDate?: string | null;
-  /** Optional maximum date constraint. */
-  maxDate?: string | null;
-}
-
 /**
- * Render the sticky app header with controls and sign-out button.
- *
- * @param props - Header control props.
+ * Render the sticky global header: brand, nav tabs, theme toggle, sign-out.
  */
-export function Header({
-  ticker,
-  onTickerChange,
-  date,
-  onDateChange,
-  onLoad,
-  isLoading,
-  tickers,
-  minDate,
-  maxDate,
-}: HeaderProps) {
+export function Header() {
   const queryClient = useQueryClient();
+  const { pathname } = useLocation();
+  const isTickerDetail = pathname === '/';
   const [isDark, setIsDark] = React.useState(
     () => document.documentElement.classList.contains('dark'),
   );
@@ -66,19 +37,38 @@ export function Header({
 
   return (
     <header className="sticky top-0 z-10 border-b bg-background px-4 py-3">
-      <div className="flex flex-wrap items-end gap-3">
-        <span className="font-display text-xs tracking-widest text-muted-foreground">TICKER·TIDE</span>
-        <TickerPicker value={ticker} onChange={onTickerChange} tickers={tickers} />
-        <DatePicker value={date} onChange={onDateChange} min={minDate} max={maxDate} />
-        <Button
-          onClick={onLoad}
-          disabled={isLoading || !ticker || !date}
-          size="sm"
-        >
-          {isLoading ? 'Loading…' : 'Load'}
-        </Button>
+      <div className="flex flex-wrap items-center gap-4">
+        <span className="font-display text-xs tracking-widest text-muted-foreground">
+          TICKER·TIDE
+        </span>
+        <nav className="flex items-center gap-1 text-sm">
+          <Link
+            to="/"
+            className={
+              isTickerDetail
+                ? 'rounded bg-muted px-2 py-1 font-medium'
+                : 'rounded px-2 py-1 text-muted-foreground hover:text-foreground'
+            }
+            aria-current={isTickerDetail ? 'page' : undefined}
+          >
+            Ticker Detail
+          </Link>
+          <button
+            type="button"
+            disabled
+            className="rounded px-2 py-1 text-muted-foreground/60 cursor-not-allowed"
+            title="Coming soon"
+          >
+            Coming soon
+          </button>
+        </nav>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={toggleTheme} title="Toggle theme">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleTheme}
+            title="Toggle theme"
+          >
             {isDark ? 'Light' : 'Dark'}
           </Button>
           <Button variant="ghost" size="sm" onClick={handleSignOut}>
