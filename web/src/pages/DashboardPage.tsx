@@ -9,7 +9,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Header } from '@/components/Header';
-import { TimeframeCard } from '@/components/TimeframeCard';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { VerdictBlock } from '@/components/VerdictBlock';
 import { MatrixTable } from '@/components/MatrixTable';
@@ -244,32 +243,6 @@ export function DashboardPage() {
                 recentPatterns={snapshot.monthly.recent_patterns}
                 categoryScores={snapshot.monthly.scores}
                 headerContribution={headerContributions.monthly}
-              />
-            </div>
-            <div className="grid gap-4 md:grid-cols-3">
-                <TimeframeCard
-                title="Daily"
-                timeframe="daily"
-                section={snapshot.daily}
-                ticker={loadedTicker}
-                date={loadedDate}
-                isLoading={false}
-              />
-              <TimeframeCard
-                title="Weekly"
-                timeframe="weekly"
-                section={snapshot.weekly}
-                ticker={loadedTicker}
-                date={loadedDate}
-                isLoading={false}
-              />
-              <TimeframeCard
-                title="Monthly"
-                timeframe="monthly"
-                section={snapshot.monthly}
-                ticker={loadedTicker}
-                date={loadedDate}
-                isLoading={false}
               />
             </div>
           </>
