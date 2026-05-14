@@ -411,6 +411,7 @@ export interface TickerListApiRow {
   weekly_score: number | null;
   monthly_score: number | null;
   pe_ratio: number | null;
+  latest_date: string | null;
 }
 
 /** Frontend-facing camelCase row for the Tickers listing page. */
@@ -428,4 +429,5 @@ export interface TickerRow {
   weeklyScore: number | null;
   monthlyScore: number | null;
   peRatio: number | null;
+  latestDate: string | null;
 }

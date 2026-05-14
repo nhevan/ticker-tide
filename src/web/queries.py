@@ -114,7 +114,10 @@ def fetch_tickers_list(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             symbol, name, sector, market_cap, price,
             signal, confidence, final_score, regime,
             daily_score, weekly_score, monthly_score,
-            pe_ratio.
+            pe_ratio, latest_date.
+        `latest_date` is the YYYY-MM-DD of the latest scores_daily row used
+        for the snapshot — surfaced so the listing page can deep-link to the
+        Ticker Detail page at the correct date.
         Nullable fields may be None when source data is missing.
     """
     query = """
@@ -153,7 +156,8 @@ def fetch_tickers_list(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             ls.daily_score     AS daily_score,
             ls.weekly_score    AS weekly_score,
             ls.monthly_score   AS monthly_score,
-            lf.pe_ratio        AS pe_ratio
+            lf.pe_ratio        AS pe_ratio,
+            ls.date            AS latest_date
         FROM tickers t
         INNER JOIN latest_scores ls
             ON ls.ticker = t.symbol AND ls.rn = 1

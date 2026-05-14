@@ -39,6 +39,7 @@ function toTickerRow(row: TickerListApiRow): TickerRow {
     weeklyScore: row.weekly_score,
     monthlyScore: row.monthly_score,
     peRatio: row.pe_ratio,
+    latestDate: row.latest_date,
   };
 }
 

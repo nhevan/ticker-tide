@@ -2053,6 +2053,7 @@ class TestFetchTickersList:
         assert len(rows) == 1
         assert rows[0]["signal"] == "BULLISH"
         assert rows[0]["final_score"] == 55.0
+        assert rows[0]["latest_date"] == "2026-05-01"
 
     def test_picks_latest_close_per_ticker(self, conn: sqlite3.Connection) -> None:
         """The latest ohlcv_daily.close is joined as price."""
@@ -2115,7 +2116,7 @@ class TestFetchTickersList:
             "symbol", "name", "sector", "market_cap", "price",
             "signal", "confidence", "final_score", "regime",
             "daily_score", "weekly_score", "monthly_score",
-            "pe_ratio",
+            "pe_ratio", "latest_date",
         }
         assert set(rows[0].keys()) == expected_keys
 

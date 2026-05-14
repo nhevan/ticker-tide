@@ -15,6 +15,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { Signal, TickerRow } from '@/lib/api/types';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100, 200, 300, 500, 800, 1000] as const;
@@ -230,7 +231,19 @@ export function TickersTable({ rows }: { rows: TickerRow[] }): JSX.Element {
         <tbody>
           {visibleRows.map((row) => (
             <tr key={row.symbol} className="border-t hover:bg-muted/30">
-              <td className="px-3 py-2 font-mono font-semibold">{row.symbol}</td>
+              <td className="px-3 py-2 font-mono font-semibold">
+                {row.latestDate ? (
+                  <Link
+                    to={`/?ticker=${encodeURIComponent(row.symbol)}&date=${encodeURIComponent(row.latestDate)}`}
+                    className="text-foreground hover:underline"
+                    title={`Open ${row.symbol} detail for ${row.latestDate}`}
+                  >
+                    {row.symbol}
+                  </Link>
+                ) : (
+                  row.symbol
+                )}
+              </td>
               <td className="px-3 py-2 text-muted-foreground">{row.name ?? '—'}</td>
               <td className="px-3 py-2 text-muted-foreground">{row.sector ?? '—'}</td>
               <td className="px-3 py-2 text-right font-mono">
