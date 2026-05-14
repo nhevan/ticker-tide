@@ -1488,7 +1488,8 @@ Browser ←→ Vite/React SPA (web/dist/ static files)
 - `GET /api/me` → `200 { authenticated: true }`, or `401 { detail }`
 
 **API routes (auth-gated, return 401 when not logged in):**
-- `GET /api/tickers` — alphabetized list of active tickers
+- `GET /api/tickers` — alphabetized list of active tickers (string array; consumed by the Ticker Detail picker)
+- `GET /api/tickers-list` — one summary row per active ticker for the Tickers listing page. Each row carries the latest `scores_daily` snapshot (signal, confidence, final_score, regime, daily_score, weekly_score, monthly_score), latest `ohlcv_daily.close` as `price`, latest `fundamentals.pe_ratio`, and `tickers.{name, sector, market_cap}`. Rows are snake_case; the frontend maps to camelCase in `endpoints.ts:toTickerRow()`. Tickers with no `scores_daily` row are excluded by the INNER JOIN (a ticker with no signal data is not useful in a signal listing). The latest-row-per-ticker join uses `ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC)` window functions (SQLite ≥ 3.25). `fundamentals` is keyed by `(report_date DESC, fetched_at DESC, period DESC)` so the row choice is deterministic when multiple quarterly reports share a `report_date`.
 - `GET /api/dates?ticker=X` — `{min, max}` from `scores_daily`
 - `GET /api/snapshot?ticker=X&date=Y` — three-card snapshot dict (404 if no data)
 - `POST /api/llm { ticker, date, timeframe }` — LLM analysis (429 on debounce, 503 on Claude failure)

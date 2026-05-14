@@ -87,6 +87,87 @@ def fetch_date_range(conn: sqlite3.Connection, ticker: str) -> dict[str, Optiona
     return {"min": row["min_date"], "max": row["max_date"]}
 
 
+def fetch_tickers_list(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """
+    Return one row per active ticker with the latest snapshot fields needed
+    by the Tickers listing page.
+
+    Joins:
+        - tickers (active = 1) — symbol, name, sector, market_cap source.
+        - Latest scores_daily row per ticker via ROW_NUMBER() window.
+        - Latest ohlcv_daily row per ticker for the close price.
+        - Latest fundamentals row per ticker for pe_ratio. The fundamentals
+          table stores quarterly rows (period in {'Q1','Q2','Q3','Q4'});
+          we pick the most recent (report_date DESC, fetched_at DESC,
+          period DESC) tuple per ticker to make the choice deterministic
+          when multiple rows share a report_date.
+
+    Tickers with no scores_daily row are excluded by the INNER JOIN — a
+    ticker with no signal data is not useful in a signal listing.
+
+    Parameters:
+        conn: Open SQLite connection with row_factory=sqlite3.Row.
+
+    Returns:
+        List of dicts (snake_case keys), one per active scored ticker, sorted
+        by symbol ascending. Each dict has these keys:
+            symbol, name, sector, market_cap, price,
+            signal, confidence, final_score, regime,
+            daily_score, weekly_score, monthly_score,
+            pe_ratio.
+        Nullable fields may be None when source data is missing.
+    """
+    query = """
+        WITH latest_scores AS (
+            SELECT
+                ticker, date, signal, confidence, final_score, regime,
+                daily_score, weekly_score, monthly_score,
+                ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
+            FROM scores_daily
+        ),
+        latest_close AS (
+            SELECT
+                ticker, close,
+                ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
+            FROM ohlcv_daily
+        ),
+        latest_fundamentals AS (
+            SELECT
+                ticker, pe_ratio,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ticker
+                    ORDER BY report_date DESC, fetched_at DESC, period DESC
+                ) AS rn
+            FROM fundamentals
+        )
+        SELECT
+            t.symbol           AS symbol,
+            t.name             AS name,
+            t.sector           AS sector,
+            t.market_cap       AS market_cap,
+            lc.close           AS price,
+            ls.signal          AS signal,
+            ls.confidence      AS confidence,
+            ls.final_score     AS final_score,
+            ls.regime          AS regime,
+            ls.daily_score     AS daily_score,
+            ls.weekly_score    AS weekly_score,
+            ls.monthly_score   AS monthly_score,
+            lf.pe_ratio        AS pe_ratio
+        FROM tickers t
+        INNER JOIN latest_scores ls
+            ON ls.ticker = t.symbol AND ls.rn = 1
+        LEFT JOIN latest_close lc
+            ON lc.ticker = t.symbol AND lc.rn = 1
+        LEFT JOIN latest_fundamentals lf
+            ON lf.ticker = t.symbol AND lf.rn = 1
+        WHERE t.active = 1
+        ORDER BY t.symbol ASC
+    """
+    rows = conn.execute(query).fetchall()
+    return [dict(row) for row in rows]
+
+
 def fetch_snapshot(
     conn: sqlite3.Connection,
     ticker: str,

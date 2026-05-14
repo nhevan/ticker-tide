@@ -39,7 +39,12 @@ from src.web.auth import (
     record_login_attempt,
 )
 from src.web.llm import call_claude_for_web, generate_dashboard_verdict
-from src.web.queries import fetch_active_tickers, fetch_date_range, fetch_snapshot
+from src.web.queries import (
+    fetch_active_tickers,
+    fetch_date_range,
+    fetch_snapshot,
+    fetch_tickers_list,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +297,33 @@ def create_app(
         try:
             tickers = fetch_active_tickers(conn)
             return JSONResponse(tickers)
+        finally:
+            conn.close()
+
+    # ── /api/tickers-list ─────────────────────────────────────────────────────
+
+    @app.get("/api/tickers-list")
+    async def api_tickers_list(request: Request) -> Response:
+        """
+        Return one summary row per active ticker for the Tickers listing page.
+
+        Each row carries the latest scores_daily snapshot, latest close, and
+        latest fundamentals P/E. See queries.fetch_tickers_list for the full
+        field contract.
+
+        Parameters:
+            request: FastAPI request object for session access.
+
+        Returns:
+            200 list[dict] if authenticated.
+            401 {"detail": "Not authenticated."} otherwise.
+        """
+        if not _is_authenticated(request):
+            return JSONResponse({"detail": "Not authenticated."}, status_code=401)
+        conn = _open_db()
+        try:
+            rows = fetch_tickers_list(conn)
+            return JSONResponse(rows)
         finally:
             conn.close()
 

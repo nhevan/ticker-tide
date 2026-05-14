@@ -2,15 +2,17 @@
  * Root application component with client-side routing.
  *
  * Routes:
- *   /login  → LoginPage (public)
- *   /       → TickerDetailPage (protected by RequireAuth)
- *   *       → Navigate to /
+ *   /login    → LoginPage (public)
+ *   /         → TickerDetailPage (protected by RequireAuth)
+ *   /tickers  → TickersPage (protected by RequireAuth)
+ *   *         → Navigate to /
  */
 
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from '@/pages/LoginPage';
 import { TickerDetailPage } from '@/pages/TickerDetailPage';
+import { TickersPage } from '@/pages/TickersPage';
 import { RequireAuth } from '@/components/RequireAuth';
 
 /**
@@ -25,6 +27,14 @@ export function App() {
         element={
           <RequireAuth>
             <TickerDetailPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/tickers"
+        element={
+          <RequireAuth>
+            <TickersPage />
           </RequireAuth>
         }
       />

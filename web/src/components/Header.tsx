@@ -19,6 +19,7 @@ export function Header() {
   const queryClient = useQueryClient();
   const { pathname } = useLocation();
   const isTickerDetail = pathname === '/';
+  const isTickers = pathname === '/tickers';
   const [isDark, setIsDark] = React.useState(
     () => document.documentElement.classList.contains('dark'),
   );
@@ -53,14 +54,17 @@ export function Header() {
           >
             Ticker Detail
           </Link>
-          <button
-            type="button"
-            disabled
-            className="rounded px-2 py-1 text-muted-foreground/60 cursor-not-allowed"
-            title="Coming soon"
+          <Link
+            to="/tickers"
+            className={
+              isTickers
+                ? 'rounded bg-muted px-2 py-1 font-medium'
+                : 'rounded px-2 py-1 text-muted-foreground hover:text-foreground'
+            }
+            aria-current={isTickers ? 'page' : undefined}
           >
-            Coming soon
-          </button>
+            Tickers
+          </Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <Button

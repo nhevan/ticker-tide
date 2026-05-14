@@ -16,8 +16,31 @@ import type {
   MeResponse,
   Snapshot,
   ScoringRules,
+  TickerListApiRow,
+  TickerRow,
   VerdictResponse,
 } from './types';
+
+/**
+ * Map a snake_case API row to the camelCase shape consumed by the UI.
+ */
+function toTickerRow(row: TickerListApiRow): TickerRow {
+  return {
+    symbol: row.symbol,
+    name: row.name,
+    sector: row.sector,
+    marketCap: row.market_cap,
+    price: row.price,
+    signal: row.signal,
+    confidence: row.confidence,
+    finalScore: row.final_score,
+    regime: row.regime,
+    dailyScore: row.daily_score,
+    weeklyScore: row.weekly_score,
+    monthlyScore: row.monthly_score,
+    peRatio: row.pe_ratio,
+  };
+}
 
 /** Log in with a password. Sets the session cookie on success. */
 export async function login(password: string): Promise<void> {
@@ -52,6 +75,17 @@ export async function getSnapshot(ticker: string, date: string): Promise<Snapsho
 /** Return the list of active ticker symbols. */
 export async function getTickers(): Promise<string[]> {
   return apiFetch<string[]>('/api/tickers');
+}
+
+/**
+ * Return one summary row per active ticker for the Tickers listing page.
+ *
+ * Calls GET /api/tickers-list. The endpoint returns snake_case rows;
+ * this function maps them to the camelCase {@link TickerRow} shape.
+ */
+export async function getTickersList(): Promise<TickerRow[]> {
+  const rows = await apiFetch<TickerListApiRow[]>('/api/tickers-list');
+  return rows.map(toTickerRow);
 }
 
 /**

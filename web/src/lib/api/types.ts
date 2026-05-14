@@ -389,3 +389,43 @@ export interface DateRange {
   min: string | null;
   max: string | null;
 }
+
+/** Signal classifications returned by the scorer. */
+export type Signal = 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+
+/**
+ * Raw row shape returned by GET /api/tickers-list, mirroring the snake_case
+ * dict produced by queries.fetch_tickers_list.
+ */
+export interface TickerListApiRow {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  market_cap: number | null;
+  price: number | null;
+  signal: Signal | null;
+  confidence: number | null;
+  final_score: number | null;
+  regime: string | null;
+  daily_score: number | null;
+  weekly_score: number | null;
+  monthly_score: number | null;
+  pe_ratio: number | null;
+}
+
+/** Frontend-facing camelCase row for the Tickers listing page. */
+export interface TickerRow {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  marketCap: number | null;
+  price: number | null;
+  signal: Signal | null;
+  confidence: number | null;
+  finalScore: number | null;
+  regime: string | null;
+  dailyScore: number | null;
+  weeklyScore: number | null;
+  monthlyScore: number | null;
+  peRatio: number | null;
+}

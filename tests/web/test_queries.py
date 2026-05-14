@@ -18,6 +18,7 @@ from src.web.queries import (
     fetch_active_tickers,
     fetch_date_range,
     fetch_snapshot,
+    fetch_tickers_list,
     _extract_key_signals,
     _fetch_earnings,
     _fetch_signal_flip,
@@ -1922,3 +1923,214 @@ class TestDailySectionNewEtfFields:
 
         assert result["data_available"] is True
         assert result.get("sector_etf") is None
+
+
+# ---------------------------------------------------------------------------
+# fetch_tickers_list
+# ---------------------------------------------------------------------------
+
+
+class TestFetchTickersList:
+    """Tests for fetch_tickers_list — the Tickers listing page query."""
+
+    def _insert_ticker_with_meta(
+        self,
+        conn: sqlite3.Connection,
+        symbol: str,
+        name: str,
+        sector: Optional[str],
+        market_cap: Optional[float],
+        active: bool,
+    ) -> None:
+        """Insert a tickers row with sector + market_cap metadata."""
+        conn.execute(
+            "INSERT OR REPLACE INTO tickers(symbol, name, sector, market_cap, active) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (symbol, name, sector, market_cap, active),
+        )
+        conn.commit()
+
+    def _insert_score(
+        self,
+        conn: sqlite3.Connection,
+        ticker: str,
+        date: str,
+        signal: str,
+        final_score: float,
+    ) -> None:
+        """Insert a scores_daily row with the fields fetch_tickers_list reads."""
+        conn.execute(
+            """INSERT OR REPLACE INTO scores_daily(
+                ticker, date, signal, confidence, final_score, regime,
+                daily_score, weekly_score, monthly_score
+            ) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (ticker, date, signal, 50.0, final_score, "trending",
+             40.0, 30.0, 20.0),
+        )
+        conn.commit()
+
+    def _insert_close(
+        self, conn: sqlite3.Connection, ticker: str, date: str, close: float
+    ) -> None:
+        """Insert a single ohlcv_daily row used as the latest close source."""
+        conn.execute(
+            "INSERT OR REPLACE INTO ohlcv_daily(ticker, date, open, high, low, close, volume) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (ticker, date, close, close, close, close, 1_000_000),
+        )
+        conn.commit()
+
+    def _insert_fundamental(
+        self,
+        conn: sqlite3.Connection,
+        ticker: str,
+        report_date: str,
+        period: str,
+        pe_ratio: Optional[float],
+        fetched_at: Optional[str] = None,
+    ) -> None:
+        """Insert a fundamentals row with the fields fetch_tickers_list reads."""
+        conn.execute(
+            "INSERT OR REPLACE INTO fundamentals(ticker, report_date, period, pe_ratio, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (ticker, report_date, period, pe_ratio, fetched_at),
+        )
+        conn.commit()
+
+    def test_returns_one_row_per_active_scored_ticker(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Two active tickers with one score row each return two rows."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple Inc", "Tech", 3e12, True)
+        self._insert_ticker_with_meta(conn, "MSFT", "Microsoft", "Tech", 2e12, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+        self._insert_score(conn, "MSFT", "2026-05-01", "NEUTRAL", 10.0)
+
+        rows = fetch_tickers_list(conn)
+
+        assert len(rows) == 2
+        symbols = [row["symbol"] for row in rows]
+        assert symbols == ["AAPL", "MSFT"]
+        aapl = rows[0]
+        assert aapl["name"] == "Apple Inc"
+        assert aapl["sector"] == "Tech"
+        assert aapl["market_cap"] == 3e12
+        assert aapl["signal"] == "BULLISH"
+        assert aapl["final_score"] == 55.0
+
+    def test_skips_inactive_tickers(self, conn: sqlite3.Connection) -> None:
+        """active = 0 tickers must not appear even if they have score rows."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_ticker_with_meta(conn, "DEAD", "Dead Corp", "Tech", 1e9, False)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+        self._insert_score(conn, "DEAD", "2026-05-01", "BEARISH", -55.0)
+
+        rows = fetch_tickers_list(conn)
+
+        assert [row["symbol"] for row in rows] == ["AAPL"]
+
+    def test_skips_tickers_with_no_scores(self, conn: sqlite3.Connection) -> None:
+        """Active tickers with no scores_daily row are excluded by the INNER JOIN."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_ticker_with_meta(conn, "NEW", "Fresh Corp", "Tech", 1e9, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+        # NEW has no scores_daily row.
+
+        rows = fetch_tickers_list(conn)
+
+        assert [row["symbol"] for row in rows] == ["AAPL"]
+
+    def test_picks_latest_score_row_per_ticker(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """When multiple scores_daily rows exist, the latest by date wins."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_score(conn, "AAPL", "2026-04-01", "BEARISH", -30.0)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+
+        rows = fetch_tickers_list(conn)
+
+        assert len(rows) == 1
+        assert rows[0]["signal"] == "BULLISH"
+        assert rows[0]["final_score"] == 55.0
+
+    def test_picks_latest_close_per_ticker(self, conn: sqlite3.Connection) -> None:
+        """The latest ohlcv_daily.close is joined as price."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+        self._insert_close(conn, "AAPL", "2026-04-30", 200.0)
+        self._insert_close(conn, "AAPL", "2026-05-01", 248.61)
+
+        rows = fetch_tickers_list(conn)
+
+        assert rows[0]["price"] == 248.61
+
+    def test_handles_missing_close(self, conn: sqlite3.Connection) -> None:
+        """price is None when no ohlcv_daily row exists."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+
+        rows = fetch_tickers_list(conn)
+
+        assert rows[0]["price"] is None
+
+    def test_handles_missing_fundamentals(self, conn: sqlite3.Connection) -> None:
+        """pe_ratio is None when no fundamentals row exists for the ticker."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+
+        rows = fetch_tickers_list(conn)
+
+        assert rows[0]["pe_ratio"] is None
+
+    def test_picks_deterministic_fundamentals_row(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """When multiple fundamentals rows share a report_date with different
+        periods, the choice is deterministic (latest report_date → latest
+        fetched_at → latest period). Q4 sorts after Q1 lexicographically,
+        so Q4's pe_ratio wins when report_date and fetched_at tie."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+        self._insert_fundamental(conn, "AAPL", "2026-03-31", "Q1", 10.0,
+                                 "2026-04-01T00:00:00Z")
+        self._insert_fundamental(conn, "AAPL", "2026-03-31", "Q4", 20.0,
+                                 "2026-04-01T00:00:00Z")
+        # Latest report_date — should beat both above regardless of period.
+        self._insert_fundamental(conn, "AAPL", "2026-06-30", "Q2", 30.0,
+                                 "2026-07-01T00:00:00Z")
+
+        rows = fetch_tickers_list(conn)
+
+        assert rows[0]["pe_ratio"] == 30.0
+
+    def test_includes_all_expected_keys(self, conn: sqlite3.Connection) -> None:
+        """Each returned dict must carry the documented snake_case key set."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", 3e12, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+
+        rows = fetch_tickers_list(conn)
+
+        expected_keys = {
+            "symbol", "name", "sector", "market_cap", "price",
+            "signal", "confidence", "final_score", "regime",
+            "daily_score", "weekly_score", "monthly_score",
+            "pe_ratio",
+        }
+        assert set(rows[0].keys()) == expected_keys
+
+    def test_handles_null_market_cap(self, conn: sqlite3.Connection) -> None:
+        """tickers.market_cap may be NULL — surfaces as None, no errors."""
+        self._insert_ticker_with_meta(conn, "AAPL", "Apple", "Tech", None, True)
+        self._insert_score(conn, "AAPL", "2026-05-01", "BULLISH", 55.0)
+
+        rows = fetch_tickers_list(conn)
+
+        assert rows[0]["market_cap"] is None
+
+    def test_returns_empty_list_when_no_active_tickers(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Empty schema returns an empty list rather than raising."""
+        rows = fetch_tickers_list(conn)
+        assert rows == []

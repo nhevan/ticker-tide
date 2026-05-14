@@ -468,6 +468,31 @@ class TestTickersAuth:
         assert isinstance(response.json(), list)
 
 
+class TestTickersListAuth:
+    """Auth guard and basic response shape for GET /api/tickers-list."""
+
+    def test_tickers_list_returns_401_when_not_authenticated(
+        self, client: TestClient
+    ) -> None:
+        """GET /api/tickers-list must return 401 when not logged in."""
+        response = client.get("/api/tickers-list")
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+    def test_tickers_list_returns_json_list_when_authenticated(
+        self, client: TestClient
+    ) -> None:
+        """GET /api/tickers-list must return a JSON list when logged in."""
+        _login(client)
+        response = client.get("/api/tickers-list")
+        assert response.status_code == 200
+        body = response.json()
+        assert isinstance(body, list)
+        # Each row (if any) must carry symbol at minimum.
+        for row in body:
+            assert "symbol" in row
+
+
 class TestDatesAuth:
     """Auth guard for GET /api/dates."""
 
