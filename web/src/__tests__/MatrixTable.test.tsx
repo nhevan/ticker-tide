@@ -232,11 +232,8 @@ describe('MatrixTable', () => {
           recentPatterns={[]}
         />,
       );
-      // Placeholder candlestick row's candlestick cell should be off-timeframe.
-      const cell = screen.getByTestId('pattern-placeholder-cell-candlestick-candlestick');
-      expect(cell).toHaveTextContent('—');
-      expect(cell.getAttribute('title')).toBe('Daily and weekly only');
-      expect(cell.getAttribute('data-tone')).toBe('grey');
+      // Candlestick category is off-timeframe on monthly → placeholder row is suppressed entirely.
+      expect(screen.queryByTestId('pattern-placeholder-cell-candlestick-candlestick')).toBeNull();
     });
 
     it('placeholder_pattern_rows_render_when_no_patterns_provided', () => {
@@ -308,7 +305,7 @@ describe('MatrixTable', () => {
       expect(macroCell.getAttribute('data-tone')).toBe('grey');
     });
 
-    it('aggregate_row_off_timeframe_shows_em_dash_with_daily_only_tooltip', () => {
+    it('aggregate_row_off_timeframe_is_suppressed_entirely', () => {
       render(
         <MatrixTable
           title="Weekly"
@@ -320,9 +317,9 @@ describe('MatrixTable', () => {
           categoryScores={{}}
         />,
       );
-      const cell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
-      expect(cell).toHaveTextContent('—');
-      expect(cell.getAttribute('title')).toBe('Daily only');
+      expect(screen.queryByTestId('aggregate-cell-sentiment-sentiment')).toBeNull();
+      expect(screen.queryByTestId('aggregate-cell-fundamental-fundamental')).toBeNull();
+      expect(screen.queryByTestId('aggregate-cell-macro-macro')).toBeNull();
     });
 
     it('aggregate_row_null_score_shows_em_dash_with_score_not_available_tooltip', () => {
@@ -825,7 +822,7 @@ describe('MatrixTable', () => {
       expect(sentimentCell.textContent).not.toContain('▼');
     });
 
-    it('weekly timeframe aggregate row does NOT render contribution even if payload contains aggregate items', () => {
+    it('weekly timeframe aggregate row is suppressed even if payload contains aggregate items', () => {
       const snapshot = makeSnapshotWithContributions([
         { name: 'sentiment', category: 'sentiment', kind: 'aggregate', score: 50, raw_value: null, category_weight: 0.0, contribution: 3.4 },
       ]);
@@ -841,10 +838,7 @@ describe('MatrixTable', () => {
           snapshot={snapshot}
         />,
       );
-      // On weekly timeframe the sentiment column is off-timeframe, so the cell shows '—'
-      const sentimentCell = screen.getByTestId('aggregate-cell-sentiment-sentiment');
-      expect(sentimentCell.textContent).not.toContain('▲');
-      expect(sentimentCell.textContent).not.toContain('▼');
+      expect(screen.queryByTestId('aggregate-cell-sentiment-sentiment')).toBeNull();
     });
 
     it('aggregate row zero contribution renders muted 0.0', () => {

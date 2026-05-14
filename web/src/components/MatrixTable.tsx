@@ -664,6 +664,7 @@ export function MatrixTable({
               })}
 
               {PATTERN_CATEGORIES.flatMap((patternCat) => {
+                if (!scored.has(patternCat)) return [];
                 const reals = recentPatterns
                   .map((pattern, index) => ({ pattern, index }))
                   .filter(({ pattern }) => pattern.pattern_category === patternCat);
@@ -705,7 +706,7 @@ export function MatrixTable({
                 ];
               })}
 
-              {AGGREGATE_CATEGORIES.map((aggCat) => {
+              {AGGREGATE_CATEGORIES.filter((aggCat) => scored.has(aggCat)).map((aggCat) => {
                 const score = categoryScores?.[aggCat] ?? null;
                 const valueText =
                   score === null || score === undefined ? '—' : score.toFixed(2);
