@@ -90,6 +90,13 @@ def run_migrations(conn: sqlite3.Connection) -> None:
            missing_data). ``confidence_base`` is the calibrated-score-derived base
            passed into ``compute_full_confidence`` (not ``abs(final_score)``).
            Both are NULL for rows written before this migration ran.
+        7. Add five realized-return columns to ``scores_daily`` if absent:
+           ``realized_trading_days INTEGER``, ``realized_ticker_return REAL``,
+           ``benchmark_return REAL``, ``realized_excess REAL``,
+           ``realized_computed_at TEXT``. These are populated by
+           ``src/scorer/realized_returns.py`` after scoring and are NULL until
+           the forward window closes. Fresh databases created by
+           ``create_all_tables`` already include all five columns.
 
     Parameters:
         conn: An open sqlite3.Connection to the target database.
@@ -230,6 +237,30 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             logger.info("Applied migration: added scores_daily.confidence_base")
         else:
             logger.debug("Migration scores_daily.confidence_base already present — nothing to do")
+
+    # Migration 7: five realized-return columns on scores_daily.
+    # These are populated by src/scorer/realized_returns.py after each scoring run
+    # once the forward window has closed. All five are NULL on rows written before
+    # this migration ran (or before the backfill script is executed).
+    # Fresh databases created by create_all_tables already include all five columns.
+    if table_exists:
+        existing_cols_m7 = {row[1] for row in conn.execute("PRAGMA table_info(scores_daily)").fetchall()}
+        _m7_columns: list[tuple[str, str]] = [
+            ("realized_trading_days", "INTEGER"),
+            ("realized_ticker_return", "REAL"),
+            ("benchmark_return", "REAL"),
+            ("realized_excess", "REAL"),
+            ("realized_computed_at", "TEXT"),
+        ]
+        for col_name, col_type in _m7_columns:
+            if col_name not in existing_cols_m7:
+                conn.execute(f"ALTER TABLE scores_daily ADD COLUMN {col_name} {col_type};")
+                conn.commit()
+                logger.info("Applied migration: added scores_daily.%s", col_name)
+            else:
+                logger.debug(
+                    "Migration scores_daily.%s already present — nothing to do", col_name
+                )
 
 
 def _build_schema_statements() -> list[str]:
@@ -766,6 +797,11 @@ def _build_schema_statements() -> list[str]:
             calibrator_payload TEXT,
             confidence_modifiers TEXT,
             confidence_base REAL,
+            realized_trading_days INTEGER,
+            realized_ticker_return REAL,
+            benchmark_return REAL,
+            realized_excess REAL,
+            realized_computed_at TEXT,
             UNIQUE(ticker, date)
         )""",
 

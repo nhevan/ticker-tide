@@ -333,3 +333,89 @@ def test_fresh_db_has_calibrator_payload_after_create(tmp_path: Path) -> None:
     columns = _get_column_names(conn, "scores_daily")
     assert "calibrator_payload" in columns
     conn.close()
+
+
+def test_migration_7_adds_realized_columns_idempotently(tmp_path: Path) -> None:
+    """
+    Migration 7: if scores_daily was created without the 5 realized-return
+    columns, run_migrations must add all five. Calling run_migrations twice
+    must not raise (idempotent — column already present guard fires on second call).
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = sqlite3.connect(db_file)
+
+    # Minimal old-schema scores_daily without any realized columns.
+    conn.execute(
+        """CREATE TABLE scores_daily (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            signal TEXT,
+            confidence REAL,
+            final_score REAL,
+            key_signals TEXT,
+            key_signals_data TEXT,
+            raw_daily_score REAL,
+            sector_etf_score REAL,
+            calibrator_payload TEXT,
+            confidence_modifiers TEXT,
+            confidence_base REAL,
+            UNIQUE(ticker, date)
+        )"""
+    )
+    conn.commit()
+
+    columns_before = _get_column_names(conn, "scores_daily")
+    assert "realized_trading_days" not in columns_before
+    assert "realized_ticker_return" not in columns_before
+    assert "benchmark_return" not in columns_before
+    assert "realized_excess" not in columns_before
+    assert "realized_computed_at" not in columns_before
+
+    run_migrations(conn)
+
+    columns_after = _get_column_names(conn, "scores_daily")
+    for col in (
+        "realized_trading_days",
+        "realized_ticker_return",
+        "benchmark_return",
+        "realized_excess",
+        "realized_computed_at",
+    ):
+        assert col in columns_after, f"run_migrations must add {col} to scores_daily"
+
+    # Idempotency: second call must not raise
+    run_migrations(conn)
+
+    columns_final = _get_column_names(conn, "scores_daily")
+    for col in (
+        "realized_trading_days",
+        "realized_ticker_return",
+        "benchmark_return",
+        "realized_excess",
+        "realized_computed_at",
+    ):
+        assert columns_final.count(col) == 1, f"Column {col} appears more than once"
+
+    conn.close()
+
+
+def test_fresh_db_has_realized_columns_after_create(tmp_path: Path) -> None:
+    """
+    A database created via create_all_tables already has all 5 realized columns
+    (they are in the CREATE TABLE statement); run_migrations is a no-op for them.
+    """
+    db_file = str(tmp_path / "signals.db")
+    conn = get_connection(db_file)
+    create_all_tables(conn)
+    run_migrations(conn)
+
+    columns = _get_column_names(conn, "scores_daily")
+    for col in (
+        "realized_trading_days",
+        "realized_ticker_return",
+        "benchmark_return",
+        "realized_excess",
+        "realized_computed_at",
+    ):
+        assert col in columns, f"scores_daily should have {col} after create_all_tables"
+    conn.close()

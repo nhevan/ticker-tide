@@ -30,10 +30,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 
 # Ensure project root is on sys.path regardless of invocation directory
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -55,6 +58,7 @@ from src.notifier.telegram import (  # noqa: E402
     send_pipeline_error_alert,
 )
 from src.scorer.main import run_scorer  # noqa: E402
+from src.scorer.realized_returns import populate_realized_returns  # noqa: E402
 
 
 def run_daily_pipeline(
@@ -100,6 +104,8 @@ def run_daily_pipeline(
         "fetcher_duration": None,
         "calculator_duration": None,
         "scorer_duration": None,
+        "realized_returns_duration": None,
+        "realized_returns_rows_updated": 0,
         "notifier_duration": None,
         "tickers_processed": 0,
         "tickers_total": 0,
@@ -184,6 +190,29 @@ def run_daily_pipeline(
             exit_code = 1
             pipeline_stats["error"] = str(exc)
             send_pipeline_error_alert("scorer", str(exc), bot_token, admin_chat_id, notifier_config)
+
+        # Step 3b: Realized-returns populator (non-fatal sub-step of scorer phase).
+        # Populates 5 realized-return columns on scores_daily rows whose forward
+        # window has closed. Failures do NOT set exit_code=1; an admin alert is
+        # sent instead so the issue is visible without blocking the notifier.
+        rr_phase_start = time.monotonic()
+        try:
+            rr_conn = get_connection(resolved_db_path)
+            try:
+                rr_result = populate_realized_returns(rr_conn, scoring_date=target_date.isoformat(), force=False)
+            finally:
+                rr_conn.close()
+            pipeline_stats["realized_returns_duration"] = time.monotonic() - rr_phase_start
+            pipeline_stats["realized_returns_rows_updated"] = rr_result.get("rows_updated", 0)
+        except Exception as exc:
+            pipeline_stats["realized_returns_duration"] = time.monotonic() - rr_phase_start
+            logger.error(
+                "phase=realized_returns error=%s — populator failed (non-fatal)", exc
+            )
+            send_pipeline_error_alert(
+                "realized_returns", str(exc), bot_token, admin_chat_id, notifier_config
+            )
+            # Intentionally NOT setting exit_code = 1 — this sub-step is non-fatal.
 
         # Step 4: Notifier (runs even if scorer failed)
         phase_start = time.monotonic()

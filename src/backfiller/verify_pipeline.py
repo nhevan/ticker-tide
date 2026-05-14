@@ -3128,6 +3128,61 @@ def check_no_open_period_persisted(
 
 
 # ---------------------------------------------------------------------------
+# Realized-return coverage check
+# ---------------------------------------------------------------------------
+
+def check_realized_returns_coverage(
+    db_conn: sqlite3.Connection,
+) -> CheckResult:
+    """
+    Warn when scores_daily rows old enough for their forward window to have closed
+    still have realized_computed_at IS NULL.
+
+    Threshold: rows whose date is older than (analytics.forward_days + 2) trading
+    days ago. Uses a simple calendar-day approximation (forward_days + 4 calendar
+    days) to avoid needing a full trading-calendar lookup. Warns when count > 50.
+
+    The check reads analytics.forward_days from scorer.json (default 10).
+
+    Args:
+        db_conn: Open SQLite connection.
+
+    Returns:
+        CheckResult with "warn" if more than 50 qualifying rows are unpopulated.
+    """
+    try:
+        scorer_cfg = load_config("scorer")
+    except FileNotFoundError:
+        scorer_cfg = {}
+
+    forward_days: int = int(scorer_cfg.get("analytics", {}).get("forward_days", 10))
+    # Add 7 calendar days to approximate forward_days + 2 trading days (+ holiday buffer)
+    cutoff = (date.today() - timedelta(days=forward_days + 7)).isoformat()
+
+    row = db_conn.execute(
+        "SELECT COUNT(*) AS cnt FROM scores_daily "
+        "WHERE date < ? AND realized_computed_at IS NULL",
+        (cutoff,),
+    ).fetchone()
+    count = row["cnt"] if row else 0
+
+    if count > 50:
+        return CheckResult(
+            name="realized_returns_coverage",
+            status="warn",
+            message=(
+                f"{count} scores_daily row(s) older than {forward_days + 2} trading days "
+                f"have realized_computed_at IS NULL — run scripts/backfill_realized_returns.py"
+            ),
+        )
+    return CheckResult(
+        name="realized_returns_coverage",
+        status="pass",
+        message=f"Realized-return coverage OK (≤50 unpopulated rows older than {forward_days + 2} trading days)",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -3240,6 +3295,9 @@ def run_full_pipeline_verification(
 
         # ── Signal flip checks ────────────────────────────────────────────
         all_checks.append(check_signal_flip_validity(db_conn))
+
+        # ── Realized-return coverage check ────────────────────────────────
+        all_checks.append(check_realized_returns_coverage(db_conn))
 
     finally:
         db_conn.close()

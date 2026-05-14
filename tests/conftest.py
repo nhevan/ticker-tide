@@ -579,6 +579,11 @@ def db_connection(tmp_path) -> Generator[sqlite3.Connection, None, None]:
             calibrator_payload TEXT,
             confidence_modifiers TEXT,
             confidence_base REAL,
+            realized_trading_days INTEGER,
+            realized_ticker_return REAL,
+            benchmark_return REAL,
+            realized_excess REAL,
+            realized_computed_at TEXT,
             UNIQUE(ticker, date)
         )""",
         """CREATE TABLE IF NOT EXISTS scores_weekly (

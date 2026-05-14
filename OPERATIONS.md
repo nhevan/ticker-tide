@@ -18,8 +18,18 @@
 | 2a — Fetcher | `run_daily_fetch()` | 3–8 min (API latency per ~65 symbols) |
 | 2b — Calculator | `run_calculator(mode='incremental')` | 2–4 min (per ticker the calculator now also runs the weekly + monthly per-timeframe sub-pipelines: swing_points → S/R → patterns → divergences → crossovers → profiles, against `*_weekly` and `*_monthly` mirror tables; ETFs/benchmarks skip the sub-pipeline) |
 | 3 — Scorer | `run_scorer()` | 1–3 min |
+| 3b — Realized returns | `populate_realized_returns()` (called inline from `run_daily.py`) | <5s incremental path (only rows with NULL `realized_computed_at` and closed forward window); non-fatal — failure sends admin alert but does not block Phase 4 |
 | 4 — Notifier | `run_notifier()` | 2–5 min (Claude API per qualifying ticker) |
 | **Total** | | **~10–20 min** |
+
+### One-time backfill after Migration 7
+
+```bash
+python scripts/backfill_realized_returns.py
+# Expected duration: 30–90s for a full historical backfill (~100k rows)
+# Add --force to recompute already-populated rows
+# Add --dry-run to validate without writing
+```
 
 If the market is closed, `run_daily.py` sends a "market closed" Telegram message and exits 0 without running any phase.
 

@@ -425,7 +425,20 @@ composite as the primary signal classification input.
 | `calibration.ridge_lambda` | float | `0.1` | L2 regularisation strength (higher = more conservative) |
 | `calibration.min_training_samples` | int | `30` | Minimum samples required; fewer triggers cold-start fallback to static composite |
 | `calibration.benchmark_ticker` | string | `"SPY"` | Ticker whose return is subtracted from each signal's return to compute excess return |
-| `calibration.forward_days` | int | `10` | Trading-day horizon for measuring forward returns in training data |
+| `calibration.forward_days` | int | `10` | Trading-day horizon for measuring forward returns **in training data** (used by `fetch_training_data` in `calibrator.py`). Changing this changes the model's target horizon and requires re-running `python scripts/run_scorer.py --force`. |
+
+### Analytics
+
+Controls the realized-return persistence layer (`src/scorer/realized_returns.py`).
+These keys are deliberately decoupled from `calibration.*` so the accuracy-tracking
+horizon can be changed independently of the model's training horizon. If
+`analytics.forward_days` and `calibration.forward_days` ever diverge, a WARNING is
+logged on every `populate_realized_returns` invocation and the stored `realized_excess`
+values will reflect the analytics horizon (not the calibration horizon).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `analytics.forward_days` | int | `10` | Trading-day horizon used by `populate_realized_returns` when computing `realized_excess`. Default matches `calibration.forward_days`. Changing this: run `python scripts/backfill_realized_returns.py --force` to recompute historical rows; existing rows written under the old horizon are overwritten only with `--force`. |
 
 ### Calibrator acceptance gate
 

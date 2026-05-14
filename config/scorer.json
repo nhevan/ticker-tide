@@ -59,6 +59,9 @@
     "benchmark_ticker": "SPY",
     "forward_days": 10
   },
+  "analytics": {
+    "forward_days": 10
+  },
   "signal_thresholds": {
     "bullish": 2,
     "bearish": -2

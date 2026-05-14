@@ -316,6 +316,9 @@ Final confidence is clamped to [0, 100].
 7. Logs `pipeline_runs` entry.
 8. Sends Telegram summary with signal distribution and flip count.
 
+**Step 3b — Realized-returns sub-step** (orchestrated by `scripts/run_daily.py`, NOT inside `run_scorer`):
+After `run_scorer()` completes, `run_daily_pipeline()` calls `populate_realized_returns(conn, force=False)` to backfill the 5 realized-return columns on `scores_daily` rows whose forward window has now closed. This is a non-fatal sub-step: if it raises, the error is logged and an admin Telegram alert is sent, but `exit_code` is not set to 1 and the notifier phase still runs. Expected duration: <5s on the incremental path (only rows with `realized_computed_at IS NULL` and sufficient forward OHLCV are updated); ~30–90s for a full one-time backfill via `scripts/backfill_realized_returns.py`.
+
 **`run_historical_scoring(mode="both")`** — Option E historical backfill:
 - `mode="daily"`: scores last 12 months of trading days from `ohlcv_daily` dates.
 - `mode="weekly"`: scores months 13-60 using week_start dates from `weekly_candles`.
@@ -785,7 +788,16 @@ Enable WAL mode on connection.
 - calibrator_payload TEXT (nullable) — JSON blob containing the per-feature ridge regression decomposition: `{intercept, prediction, training_samples, in_sample_r2, feature_count, contributions: [{name, raw, mean, std, z, weight, contribution}]}`. NULL on rows written before Migration 5, or when calibration is disabled / cold-start. Used by the signal-classification tooltip Step 2b to render the math chain explaining how the calibrated score was computed.
 - confidence_modifiers TEXT (nullable) — JSON dict of the 7 per-rule modifier values produced by `compute_confidence_modifiers()`: `{timeframe_agreement, volume_confirmation, indicator_consensus, earnings_proximity, vix_extreme, atr_expanding, missing_data}`. Each value is a float (positive = bonus, negative = penalty). NULL for rows written before Migration 6. Used by the dashboard `ConfidenceBreakdown` chip row.
 - confidence_base REAL (nullable) — calibrated-score-derived base value passed into `compute_full_confidence()`: `min(abs(calibrated_score), 8.0) * 10.0` when warm, or `abs(final_score) * 0.3` during cold start. Distinct from `abs(final_score)` — this is the actual base used in confidence computation. NULL for rows written before Migration 6. Used by the dashboard `ConfidenceBreakdown` chip row.
+- realized_trading_days INTEGER (nullable) — number of forward trading days found when the realized-return window was populated. May be less than `analytics.forward_days` for delisted tickers. NULL until `populate_realized_returns` runs after the window closes (Migration 7).
+- realized_ticker_return REAL (nullable) — `(close_forward - close_signal) / close_signal × 100`. Forward close is the last available OHLCV close within the window. NULL until populated.
+- benchmark_return REAL (nullable) — same formula for the benchmark (SPY) over the same realized_trading_days window. NULL when SPY data was absent at populate time, or until populated.
+- realized_excess REAL (nullable) — `realized_ticker_return - benchmark_return`. Falls back to `realized_ticker_return` (raw) when `benchmark_return` is NULL, mirroring `compute_excess_return()` in `calibrator.py`. This is intentional: labels stored here are computed the same way as the calibrator's training labels so accuracy queries are apples-to-apples. NULL until populated.
+- realized_computed_at TEXT (nullable) — UTC ISO-8601 timestamp of when `populate_realized_returns` last wrote these 5 columns. NULL until populated. Used as the "already populated" guard on subsequent runs.
 - UNIQUE(ticker, date)
+
+**Design note — columns vs sidecar table:** Realized-return data lives directly on `scores_daily` rather than in a sidecar table. This keeps accuracy queries as simple one-table SELECTs and avoids an extra JOIN for the most common access pattern. **Trade-off:** if a second return horizon is ever required (e.g., 20-day or 60-day returns), migrate to a sidecar table keyed by `(ticker, date, horizon_days)` at that time rather than adding another 5 columns per horizon.
+
+**Design note — `fetch_training_data` deliberately recomputes rather than reading stored columns:** `src/scorer/calibrator.py`'s `fetch_training_data()` function recomputes forward returns from raw OHLCV on every call rather than reading `realized_excess` from `scores_daily`. This is intentional: the calibrator must remain self-contained so that re-scoring any historical date always produces identical results regardless of whether the backfill has run. Reading stored columns would introduce a dependency on backfill completeness and make historical re-scoring non-deterministic.
 
 **scores_weekly** — denormalized weekly composite snapshot for query/UI consumers (e.g., `/detail` and scatter views). NOT in the scoring critical path: the runtime `merge_timeframes()` still consumes the in-memory composite and writes the final ±100 to `scores_daily.final_score`. This table is a write-through projection so historical queries do not need to recompute weekly aggregates from `indicators_weekly`.
 - ticker TEXT NOT NULL, week_start TEXT NOT NULL

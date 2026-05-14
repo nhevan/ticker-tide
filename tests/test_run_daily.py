@@ -406,3 +406,78 @@ class TestDateOverride:
         assert actual_date_arg == "2026-01-01", (
             f"Expected notification date '2026-01-01', got '{actual_date_arg}'."
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: realized-returns populator integration
+# ---------------------------------------------------------------------------
+
+class TestRealizedReturnsIntegration:
+    """
+    The daily pipeline must call populate_realized_returns after the scorer
+    phase completes. Failures in the populator must not propagate to the
+    notifier (non-fatal sub-step).
+    """
+
+    def test_run_daily_pipeline_invokes_realized_returns_populator(self) -> None:
+        """
+        After a successful scorer phase, run_daily_pipeline must call
+        populate_realized_returns exactly once.
+        """
+        tuesday_midnight_utc = datetime(2026, 3, 24, 0, 0, 0, tzinfo=timezone.utc)
+
+        with patch("scripts.run_daily.datetime") as mock_dt, \
+             patch("scripts.run_daily.is_market_open_today", return_value=True), \
+             patch("scripts.run_daily.run_daily_fetch", return_value={"skipped": False}), \
+             patch("scripts.run_daily.run_calculator"), \
+             patch("scripts.run_daily.run_scorer", return_value={"skipped": False, "scoring_date": "2026-03-23"}), \
+             patch("scripts.run_daily.run_notifier", return_value={"skipped": False}), \
+             patch("scripts.run_daily.populate_realized_returns", return_value={"rows_updated": 5, "rows_scanned": 10}) as mock_populate, \
+             patch("scripts.run_daily.get_connection") as mock_get_conn, \
+             patch("scripts.run_daily.run_migrations"), \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            mock_dt.now.return_value = tuesday_midnight_utc
+            mock_get_conn.return_value.__enter__ = lambda s: s
+            mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+
+            run_daily_pipeline()
+
+        mock_populate.assert_called_once()
+
+    def test_run_daily_pipeline_continues_when_populator_raises(self) -> None:
+        """
+        When populate_realized_returns raises an exception, run_daily_pipeline
+        must NOT set exit_code=1 and must still call run_notifier (non-fatal).
+        """
+        tuesday_midnight_utc = datetime(2026, 3, 24, 0, 0, 0, tzinfo=timezone.utc)
+
+        with patch("scripts.run_daily.datetime") as mock_dt, \
+             patch("scripts.run_daily.is_market_open_today", return_value=True), \
+             patch("scripts.run_daily.run_daily_fetch", return_value={"skipped": False}), \
+             patch("scripts.run_daily.run_calculator"), \
+             patch("scripts.run_daily.run_scorer", return_value={"skipped": False, "scoring_date": "2026-03-23"}), \
+             patch("scripts.run_daily.run_notifier", return_value={"skipped": False}) as mock_notifier, \
+             patch("scripts.run_daily.populate_realized_returns", side_effect=RuntimeError("DB locked")), \
+             patch("scripts.run_daily.get_connection") as mock_get_conn, \
+             patch("scripts.run_daily.run_migrations"), \
+             patch("scripts.run_daily.send_pipeline_error_alert") as mock_alert, \
+             patch("scripts.run_daily.load_config", return_value=_make_notifier_config()), \
+             patch("scripts.run_daily.load_env"), \
+             patch("scripts.run_daily.get_telegram_config", return_value=_make_tg_config()):
+
+            mock_dt.now.return_value = tuesday_midnight_utc
+            mock_get_conn.return_value.__enter__ = lambda s: s
+            mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+
+            result = run_daily_pipeline()
+
+        # Notifier must still run
+        mock_notifier.assert_called_once()
+        # exit_code must NOT be 1 due to populator failure alone
+        assert result == 0, (
+            f"Expected exit_code=0 when only populator fails, got {result}. "
+            "Realized-returns populator failure must be non-fatal."
+        )
