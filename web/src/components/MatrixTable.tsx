@@ -529,11 +529,15 @@ export function MatrixTable({
 
   return (
     <TooltipProvider delayDuration={150}>
-    <div className="rounded-lg border p-4">
-      <h3 className="mb-3 text-sm font-semibold text-foreground">
-        {title}
-        {renderHeaderContribution(headerContribution)}
-      </h3>
+    <details className="group rounded-lg border">
+      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
+        <h3 className="flex-1 text-sm font-semibold text-foreground m-0">
+          {title}
+          {renderHeaderContribution(headerContribution)}
+        </h3>
+        <span className="text-muted-foreground transition-transform group-open:rotate-90">›</span>
+      </summary>
+      <div className="border-t p-4">
       {sectionEquationData && (
         <div className="mb-3 text-[11px] text-muted-foreground leading-relaxed tabular-nums">
           {sectionEquationData.items.map((item, idx) => {
@@ -728,7 +732,8 @@ export function MatrixTable({
           </table>
         </div>
       )}
-    </div>
+      </div>
+    </details>
     </TooltipProvider>
   );
 }
