@@ -1,13 +1,14 @@
 /**
  * Indicator agreement matrix table.
  *
- * Always renders all 9 category columns regardless of timeframe so daily,
- * weekly, and monthly matrices stay structurally consistent. Cells that
- * aren't applicable show a generic `—` label with a hover tooltip explaining
- * why (off-timeframe category, missing score, or no patterns in window).
+ * Renders only the category columns scored at the current timeframe.
+ * Cells without a value show `—` with a hover tooltip explaining why
+ * (missing score or no patterns in window).
  *
- * The `categories` prop now means "categories actually scored at this
- * timeframe" — it drives the off-timeframe tooltip path, not the column set.
+ * The `categories` prop means "categories actually scored at this
+ * timeframe" — it now drives both the visible column set and the
+ * suppression of aggregate / pattern-placeholder rows that belong to
+ * off-timeframe categories.
  *
  * Below the indicator rows, pattern rows render for each item in
  * recentPatterns. Two placeholder rows (Candlestick, Structural) appear when
@@ -524,8 +525,11 @@ export function MatrixTable({
     setExpandedIndicator((prev) => (prev === indicatorKey ? null : indicatorKey));
   }
 
-  /** Total column count (label + value + 9 category columns). */
-  const totalColSpan = 2 + ALL_CATEGORIES.length;
+  /** Categories actually rendered as columns — filtered to the timeframe's scored set. */
+  const visibleCategories = ALL_CATEGORIES.filter((cat) => scored.has(cat));
+
+  /** Total column count (label + value + visible category columns). */
+  const totalColSpan = 2 + visibleCategories.length;
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -584,7 +588,7 @@ export function MatrixTable({
               <tr className="text-muted-foreground">
                 <th className="py-1 pr-3 text-left font-normal">Indicator</th>
                 <th className="py-1 pr-3 text-right font-normal">Value</th>
-                {ALL_CATEGORIES.map((cat) => (
+                {visibleCategories.map((cat) => (
                   <th key={cat} className="py-1 px-1 text-center font-normal">
                     {CATEGORY_HEADERS[cat]}
                   </th>
@@ -639,7 +643,7 @@ export function MatrixTable({
                       <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
                         {formatValue(rawValue)}
                       </td>
-                      {ALL_CATEGORIES.map((cat) => (
+                      {visibleCategories.map((cat) => (
                         <CellView
                           key={cat}
                           testid={`cell-${indicatorKey}-${cat}`}
@@ -678,7 +682,7 @@ export function MatrixTable({
                       <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
                         {pattern.strength.toFixed(2)}
                       </td>
-                      {ALL_CATEGORIES.map((cat) => (
+                      {visibleCategories.map((cat) => (
                         <CellView
                           key={cat}
                           testid={`pattern-cell-${pattern.pattern_name}-${index}-${cat}`}
@@ -695,7 +699,7 @@ export function MatrixTable({
                       {CATEGORY_HEADERS[patternCat]}
                     </td>
                     <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">—</td>
-                    {ALL_CATEGORIES.map((cat) => (
+                    {visibleCategories.map((cat) => (
                       <CellView
                         key={cat}
                         testid={`pattern-placeholder-cell-${patternCat}-${cat}`}
@@ -718,7 +722,7 @@ export function MatrixTable({
                     <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
                       {valueText}
                     </td>
-                    {ALL_CATEGORIES.map((cat) => (
+                    {visibleCategories.map((cat) => (
                       <CellView
                         key={cat}
                         testid={`aggregate-cell-${aggCat}-${cat}`}

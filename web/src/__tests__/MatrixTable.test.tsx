@@ -193,8 +193,8 @@ describe('MatrixTable', () => {
     expect(dashes.length).toBeGreaterThan(0);
   });
 
-  describe('column headers are always all 9 categories', () => {
-    it('monthly_still_renders_all_nine_category_columns', () => {
+  describe('column headers filtered to scored categories', () => {
+    it('monthly_renders_only_scored_category_columns', () => {
       render(
         <MatrixTable
           title="Monthly — Indicator Agreement"
@@ -206,13 +206,13 @@ describe('MatrixTable', () => {
         />,
       );
       const headers = screen.getAllByRole('columnheader');
-      // Indicator + Value + 9 categories = 11
-      expect(headers).toHaveLength(11);
+      // Indicator + Value + 5 scored categories = 7
+      expect(headers).toHaveLength(7);
       const headerTexts = headers.map((h) => h.textContent);
-      expect(headerTexts).toContain('Candlestick');
-      expect(headerTexts).toContain('Sentiment');
-      expect(headerTexts).toContain('Fundamental');
-      expect(headerTexts).toContain('Macro');
+      expect(headerTexts).not.toContain('Candlestick');
+      expect(headerTexts).not.toContain('Sentiment');
+      expect(headerTexts).not.toContain('Fundamental');
+      expect(headerTexts).not.toContain('Macro');
     });
 
     it('monthly_off_timeframe_own_category_cell_shows_em_dash_with_tooltip', () => {
@@ -628,9 +628,8 @@ describe('MatrixTable', () => {
           timeframe="weekly"
         />,
       );
-      const cell = screen.getByTestId('cell-rsi_14-momentum');
-      expect(cell).toHaveTextContent('—');
-      expect(cell.getAttribute('title')).toBe('Not scored at this timeframe');
+      // Off-timeframe categories are now hidden entirely (no column rendered).
+      expect(screen.queryByTestId('cell-rsi_14-momentum')).toBeNull();
     });
   });
 
