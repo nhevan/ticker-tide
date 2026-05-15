@@ -12,6 +12,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Header } from '@/components/Header';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { TickerPicker } from '@/components/TickerPicker';
 import { DatePicker } from '@/components/DatePicker';
@@ -198,6 +199,13 @@ export function TickerDetailPage() {
                     <h3 className="flex-1 text-sm font-semibold text-foreground m-0">
                       Raw Data Input and Decision
                     </h3>
+                    <RawSignalPill
+                      compositeScore={snapshot.daily.composite_score ?? null}
+                      regime={snapshot.daily.regime ?? null}
+                      rawThresholds={scoringRules?.signal_thresholds_raw}
+                      confidenceModifiers={snapshot.daily.confidence_modifiers ?? null}
+                      coldStartMultiplier={scoringRules?.cold_start_base_multiplier}
+                    />
                     <span className="text-muted-foreground transition-transform group-open:rotate-90">›</span>
                   </summary>
                   <div className="border-t p-4 text-[11px] text-muted-foreground tabular-nums">
@@ -312,6 +320,48 @@ const MODIFIER_LABELS: Record<string, string> = {
   missing_data: 'Missing data',
 };
 
+/**
+ * Pill rendered in the "Raw Data Input and Decision" summary header. Shows
+ * the raw-data signal classification and confidence so the user can see
+ * what the raw composite would decide without expanding the section. The
+ * "RAW ·" prefix distinguishes this from the model verdict pill in the
+ * ticker tape — the two values may differ when the calibrator is active.
+ */
+function RawSignalPill(props: {
+  compositeScore: number | null;
+  regime: string | null | undefined;
+  rawThresholds: Record<string, { bullish: number; bearish: number; n: number }> | undefined;
+  confidenceModifiers: Record<string, number> | null;
+  coldStartMultiplier: number | undefined;
+}) {
+  const { compositeScore, regime, rawThresholds, confidenceModifiers, coldStartMultiplier } = props;
+
+  if (!Number.isFinite(compositeScore) || compositeScore === null) {
+    return null;
+  }
+
+  const resolved = resolveRawThresholds(regime, rawThresholds);
+  if (resolved === null) return null;
+
+  const rawSignal = classifyRawSignal(compositeScore, resolved.bullish, resolved.bearish);
+  const { clamped } = computeRawConfidence(compositeScore, confidenceModifiers, coldStartMultiplier);
+  const rawConfidence = Math.round(clamped);
+
+  const pillClass =
+    rawSignal === 'BULLISH'
+      ? 'border-transparent bg-[hsl(var(--up)/0.18)] text-[hsl(var(--up))]'
+      : rawSignal === 'BEARISH'
+        ? 'border-transparent bg-[hsl(var(--down)/0.18)] text-[hsl(var(--down))]'
+        : 'border-transparent bg-muted text-muted-foreground';
+
+  return (
+    <Badge className={pillClass} onClick={(e) => e.stopPropagation()}>
+      <span className="opacity-70 mr-1">RAW ·</span>
+      {rawSignal} {rawConfidence}%
+    </Badge>
+  );
+}
+
 function formatSigned(value: number, digits = 1): string {
   const sign = value < 0 ? '−' : '+';
   return `${sign}${Math.abs(value).toFixed(digits)}`;
@@ -321,6 +371,69 @@ function toneFor(value: number): string {
   if (value > 0) return 'text-[hsl(var(--up))]';
   if (value < 0) return 'text-[hsl(var(--down))]';
   return 'text-muted-foreground';
+}
+
+/** Default cold-start multiplier used when the API has not yet served one. */
+const DEFAULT_COLD_START_MULTIPLIER = 0.3;
+
+/**
+ * Resolve the regime-keyed IQR threshold entry for the raw-data section.
+ * Priority: regime-keyed entry → "all" cross-regime fallback → null.
+ * Shared by RawSignalPill, DirectionBreakdown, and any future raw-data view.
+ */
+function resolveRawThresholds(
+  regime: string | null | undefined,
+  rawThresholds: Record<string, { bullish: number; bearish: number; n: number }> | undefined,
+): { bullish: number; bearish: number; n: number; resolvedKey: string } | null {
+  if (regime != null && rawThresholds?.[regime] != null) {
+    return { ...rawThresholds[regime], resolvedKey: regime };
+  }
+  if (rawThresholds?.["all"] != null) {
+    return { ...rawThresholds["all"], resolvedKey: "all" };
+  }
+  return null;
+}
+
+/** Classify a composite score as BULLISH / BEARISH / NEUTRAL given thresholds. */
+function classifyRawSignal(
+  compositeScore: number,
+  bullish: number,
+  bearish: number,
+): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
+  if (compositeScore >= bullish) return 'BULLISH';
+  if (compositeScore <= bearish) return 'BEARISH';
+  return 'NEUTRAL';
+}
+
+/**
+ * Compute the cold-start confidence breakdown for a row:
+ *   base = |compositeScore| × multiplier
+ *   total = clamp(base + Σ modifiers, 0, 100)
+ *
+ * Modifier entries are returned as a stable list (filtered to non-zero finite
+ * deltas) so consumers can render them directly. The clamped final value is
+ * the same number the Confidence pill and the verdict block would display.
+ */
+function computeRawConfidence(
+  compositeScore: number,
+  confidenceModifiers: Record<string, number> | null,
+  coldStartMultiplier: number | undefined,
+): {
+  base: number;
+  modifiers: [string, number][];
+  modifierSum: number;
+  preClamp: number;
+  clamped: number;
+} {
+  const multiplier = coldStartMultiplier ?? DEFAULT_COLD_START_MULTIPLIER;
+  const base = Math.abs(compositeScore) * multiplier;
+  const modifiers = Object.entries(confidenceModifiers ?? {}).filter(
+    ([, value]) => Number.isFinite(value) && value !== 0,
+  );
+  const modifierSum = modifiers.reduce((acc, [, value]) => acc + value, 0);
+  const preClamp = base + modifierSum;
+  const clamped = Math.max(0, Math.min(100, preClamp));
+  return { base, modifiers, modifierSum, preClamp, clamped };
 }
 
 // exported for tests
@@ -335,26 +448,12 @@ export function DirectionBreakdown(props: {
     return null;
   }
 
-  // Priority chain:
-  // 1. regime-keyed entry when regime is known and the key exists
-  // 2. "all" cross-regime fallback
-  // 3. no display (return null)
-  let resolvedEntry: { bullish: number; bearish: number; n: number } | null = null;
-  let resolvedKey: string | null = null;
-
-  if (regime != null && rawThresholds?.[regime] != null) {
-    resolvedEntry = rawThresholds[regime];
-    resolvedKey = regime;
-  } else if (rawThresholds?.["all"] != null) {
-    resolvedEntry = rawThresholds["all"];
-    resolvedKey = "all";
-  }
-
-  if (resolvedEntry === null || resolvedKey === null) {
+  const resolved = resolveRawThresholds(regime, rawThresholds);
+  if (resolved === null) {
     return null;
   }
 
-  const { bullish: bullishThreshold, bearish: bearishThreshold, n: sampleSize } = resolvedEntry;
+  const { bullish: bullishThreshold, bearish: bearishThreshold, n: sampleSize, resolvedKey } = resolved;
 
   const caption =
     resolvedKey === "all"
@@ -362,12 +461,7 @@ export function DirectionBreakdown(props: {
       : `Regime IQR thresholds — approx. p25/p75 of final_score (${resolvedKey}, n=${sampleSize.toLocaleString()})`;
 
   const tone = toneFor(compositeScore);
-  const rawSignal =
-    compositeScore >= bullishThreshold
-      ? 'BULLISH'
-      : compositeScore <= bearishThreshold
-        ? 'BEARISH'
-        : 'NEUTRAL';
+  const rawSignal = classifyRawSignal(compositeScore, bullishThreshold, bearishThreshold);
   const comparator =
     compositeScore >= bullishThreshold ? '≥' : compositeScore <= bearishThreshold ? '≤' : 'in';
   const threshold =
@@ -473,14 +567,9 @@ export function ConfidenceBreakdown(props: {
     return null;
   }
 
-  const multiplier = coldStartMultiplier ?? 0.3;
-  const base = Math.abs(compositeScore) * multiplier;
-  const modifierEntries = Object.entries(confidenceModifiers ?? {}).filter(
-    ([, value]) => Number.isFinite(value) && value !== 0,
-  );
-  const modifierSum = modifierEntries.reduce((acc, [, value]) => acc + value, 0);
-  const preClamp = base + modifierSum;
-  const rawConfidence = Math.max(0, Math.min(100, preClamp));
+  const multiplier = coldStartMultiplier ?? DEFAULT_COLD_START_MULTIPLIER;
+  const { base, modifiers: modifierEntries, modifierSum, preClamp, clamped: rawConfidence } =
+    computeRawConfidence(compositeScore, confidenceModifiers, coldStartMultiplier);
 
   return (
     <div className="mt-4 pt-3 border-t border-border/60">
