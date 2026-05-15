@@ -311,6 +311,20 @@ Each entry carries the per-regime row count `n` it was calibrated from. The dash
 
 Current values (calibrated from n=30,974 rows): `all: {39, −11, 30974}`, `ranging: {23, −4, 9326}`, `trending: {59, −20, 18964}`, `volatile: {27, −1, 2684}`.
 
+### Confidence (cold-start base multiplier)
+
+Controls how the confidence base is derived when the calibrator has not yet warmed up
+(i.e. `calibrated_score` is NULL). See also the `confidence_modifiers` block below for
+the modifiers applied on top of this base.
+
+| Key | Type | Default | Current | Description |
+|---|---|---|---|---|
+| `confidence.cold_start_base_multiplier` | float | `0.3` | `0.65` | Multiplier applied to `abs(final_score)` to derive the cold-start confidence base. The multiplier is intentionally < 1 so confidence does not max out from a strong raw composite alone — modifiers must also align. Raises the theoretical cold-start ceiling to `round(multiplier × 100 + 25) = 90%`. |
+
+> **Modifying this key requires:**
+> 1. `python scripts/run_scorer.py --historical --force` — rewrites `confidence_base` in `scores_daily` for all historical rows so the dashboard math matches what the live scorer will produce.
+> 2. Restart the web service (`sudo systemctl restart ticker-tide-web`) for `/api/scoring-rules` to refresh the `cold_start_base_multiplier` and `cold_start_max` fields.
+
 ### Confidence modifiers
 
 Applied to the base confidence value (`|final_score|`). Final confidence is clamped to [0, 100].
@@ -666,6 +680,7 @@ Configuration for the read-only web UI (`scripts/run_web.py` + `src/web/`).
 | `adaptive_weights.*` | `python scripts/run_scorer.py --historical` |
 | `signal_thresholds.*` | `python scripts/run_scorer.py --historical` |
 | `regime_detection.*` | `python scripts/run_scorer.py --historical` |
+| `confidence.cold_start_base_multiplier` | `python scripts/run_scorer.py --historical --force` AND restart web service |
 | `confidence_modifiers.*` | `python scripts/run_scorer.py --historical` |
 | `scoring.score_expansion_factor` | `python scripts/run_scorer.py --historical` |
 | `ohlcv.lookback_years` | `python scripts/run_backfill.py --phase ohlcv --force` |

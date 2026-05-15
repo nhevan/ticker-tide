@@ -72,6 +72,9 @@
     "trending": { "bullish": 59, "bearish": -20, "n": 18964 },
     "volatile": { "bullish": 27, "bearish": -1,  "n": 2684 }
   },
+  "confidence": {
+    "cold_start_base_multiplier": 0.65
+  },
   "confidence_modifiers": {
     "timeframe_agree": 10,
     "timeframe_disagree": -15,

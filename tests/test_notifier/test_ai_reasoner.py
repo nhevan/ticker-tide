@@ -48,6 +48,7 @@ def _make_score_dict(
     confidence: float = 15.0,
     final_score: float = 1.7,
     regime: str = "ranging",
+    calibrated_score: float = 1.42,
 ) -> dict:
     """Create a complete score dict matching scores_daily schema."""
     return {
@@ -57,6 +58,7 @@ def _make_score_dict(
         "confidence": confidence,
         "final_score": final_score,
         "regime": regime,
+        "calibrated_score": calibrated_score,
         "daily_score": 2.0,
         "weekly_score": 1.2,
         "trend_score": -10.0,
@@ -88,14 +90,16 @@ def _insert_score(conn: sqlite3.Connection, score: dict) -> None:
     """Insert a score dict into scores_daily."""
     conn.execute(
         """INSERT OR REPLACE INTO scores_daily
-           (ticker, date, signal, confidence, final_score, regime, daily_score, weekly_score,
+           (ticker, date, signal, confidence, final_score, regime, calibrated_score,
+            daily_score, weekly_score,
             trend_score, momentum_score, volume_score, volatility_score, candlestick_score,
             structural_score, sentiment_score, fundamental_score, macro_score,
             data_completeness, key_signals)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             score["ticker"], score["date"], score["signal"], score["confidence"],
-            score["final_score"], score["regime"], score["daily_score"], score["weekly_score"],
+            score["final_score"], score["regime"], score.get("calibrated_score", 1.42),
+            score["daily_score"], score["weekly_score"],
             score["trend_score"], score["momentum_score"], score["volume_score"],
             score["volatility_score"], score["candlestick_score"], score["structural_score"],
             score["sentiment_score"], score["fundamental_score"], score["macro_score"],
@@ -775,3 +779,134 @@ class TestReasonAllQualifyingTickers:
         assert results["daily_summary"] == ""
         assert results["market_context_summary"] == "Market context: stable."
         assert mock_call_claude.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# TestColdStartAlertFilter
+# ---------------------------------------------------------------------------
+
+class TestColdStartAlertFilter:
+    """
+    Cold-start tickers (calibrated_score IS NULL) must be excluded from Telegram
+    alert candidates regardless of their confidence value.
+    """
+
+    def _insert_score_with_calibrated(
+        self,
+        conn: sqlite3.Connection,
+        ticker: str,
+        signal: str,
+        confidence: float,
+        calibrated_score: float | None,
+    ) -> None:
+        """Insert a scores_daily row with an explicit calibrated_score (may be None)."""
+        conn.execute(
+            """INSERT OR REPLACE INTO scores_daily
+               (ticker, date, signal, confidence, final_score, calibrated_score)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (ticker, SCORING_DATE, signal, confidence, 45.0, calibrated_score),
+        )
+        conn.commit()
+
+    def test_cold_start_ticker_excluded_from_bullish_candidates(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        A BULLISH ticker with confidence >= threshold but calibrated_score IS NULL
+        must NOT appear in the alert candidate list.
+        """
+        # Cold-start ticker: high confidence but no calibrated score
+        self._insert_score_with_calibrated(
+            db_connection, "COLD", "BULLISH", 80.0, calibrated_score=None
+        )
+
+        from src.notifier.ai_reasoner import get_qualifying_tickers
+        result = get_qualifying_tickers(db_connection, SCORING_DATE, SAMPLE_CONFIG)
+
+        tickers = [row["ticker"] for row in result["bullish"]]
+        assert "COLD" not in tickers, (
+            "Cold-start ticker COLD should be excluded from alert candidates"
+        )
+
+    def test_calibrated_ticker_still_appears_in_bullish_candidates(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        A BULLISH ticker with confidence >= threshold and a non-null calibrated_score
+        must still appear in the alert candidate list.
+        """
+        # Calibrated ticker: has both confidence and a calibrated_score
+        self._insert_score_with_calibrated(
+            db_connection, "WARM", "BULLISH", 80.0, calibrated_score=1.42
+        )
+
+        from src.notifier.ai_reasoner import get_qualifying_tickers
+        result = get_qualifying_tickers(db_connection, SCORING_DATE, SAMPLE_CONFIG)
+
+        tickers = [row["ticker"] for row in result["bullish"]]
+        assert "WARM" in tickers, (
+            "Calibrated ticker WARM should appear in alert candidates"
+        )
+
+    def test_cold_start_ticker_excluded_from_bearish_candidates(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        A BEARISH ticker with confidence >= threshold but calibrated_score IS NULL
+        must NOT appear in the alert candidate list.
+        """
+        self._insert_score_with_calibrated(
+            db_connection, "COLDBEAR", "BEARISH", 80.0, calibrated_score=None
+        )
+
+        from src.notifier.ai_reasoner import get_qualifying_tickers
+        result = get_qualifying_tickers(db_connection, SCORING_DATE, SAMPLE_CONFIG)
+
+        tickers = [row["ticker"] for row in result["bearish"]]
+        assert "COLDBEAR" not in tickers, (
+            "Cold-start BEARISH ticker should be excluded from alert candidates"
+        )
+
+    def test_cold_start_ticker_excluded_from_flips(
+        self, db_connection: sqlite3.Connection
+    ) -> None:
+        """
+        A ticker that flipped on the scoring date but whose scores_daily row has
+        calibrated_score IS NULL must NOT appear in the alert flip list.
+        """
+        # Insert one cold-start ticker and one warm-start ticker, both with flips.
+        self._insert_score_with_calibrated(
+            db_connection, "COLDFLIP", "BULLISH", 80.0, calibrated_score=None
+        )
+        self._insert_score_with_calibrated(
+            db_connection, "WARMFLIP", "BULLISH", 80.0, calibrated_score=2.5
+        )
+        db_connection.execute(
+            "INSERT INTO signal_flips "
+            "(ticker, date, previous_signal, new_signal, previous_confidence, new_confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("COLDFLIP", SCORING_DATE, "NEUTRAL", "BULLISH", 50.0, 80.0),
+        )
+        db_connection.execute(
+            "INSERT INTO signal_flips "
+            "(ticker, date, previous_signal, new_signal, previous_confidence, new_confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("WARMFLIP", SCORING_DATE, "NEUTRAL", "BULLISH", 50.0, 80.0),
+        )
+        db_connection.commit()
+
+        from src.notifier.ai_reasoner import get_qualifying_tickers
+        result = get_qualifying_tickers(db_connection, SCORING_DATE, SAMPLE_CONFIG)
+
+        flip_tickers = [row["ticker"] for row in result["flips"]]
+        assert "COLDFLIP" not in flip_tickers, (
+            "Cold-start flip should be excluded from the signal-changes block"
+        )
+        assert "WARMFLIP" in flip_tickers, (
+            "Warm-start flip should still appear in the signal-changes block"
+        )
+        # And the leaked column should NOT appear in the dict.
+        for row in result["flips"]:
+            assert "calibrated_score" not in row, (
+                "calibrated_score column should be stripped from flip rows"
+            )

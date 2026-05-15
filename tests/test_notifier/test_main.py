@@ -309,17 +309,19 @@ def test_run_notifier_skips_ai_reasoner_when_flag_false(db_connection, tmp_path,
     _insert_indicators(db_connection)
 
     # Inline-seed scores_daily — three rows: WMT@BULLISH 75, AMZN@BULLISH 80, PYPL@BEARISH 71
+    # calibrated_score is set to a non-NULL value so these are treated as warm-start tickers
+    # and pass the cold-start filter in get_qualifying_tickers.
     score_rows = [
-        ("WMT", SCORING_DATE, "BULLISH", 75.0, 41.8),
-        ("AMZN", SCORING_DATE, "BULLISH", 80.0, 45.0),
-        ("PYPL", SCORING_DATE, "BEARISH", 71.0, -36.1),
+        ("WMT", SCORING_DATE, "BULLISH", 75.0, 41.8, 1.42),
+        ("AMZN", SCORING_DATE, "BULLISH", 80.0, 45.0, 1.42),
+        ("PYPL", SCORING_DATE, "BEARISH", 71.0, -36.1, -1.20),
     ]
-    for ticker, dt, signal, conf, final_score in score_rows:
+    for ticker, dt, signal, conf, final_score, calibrated_score in score_rows:
         db_connection.execute(
             """INSERT OR REPLACE INTO scores_daily
-               (ticker, date, signal, confidence, final_score)
-               VALUES (?, ?, ?, ?, ?)""",
-            (ticker, dt, signal, conf, final_score),
+               (ticker, date, signal, confidence, final_score, calibrated_score)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (ticker, dt, signal, conf, final_score, calibrated_score),
         )
     # Inline-seed tickers rows
     for ticker in ("WMT", "AMZN", "PYPL"):
@@ -381,15 +383,16 @@ def test_run_notifier_claude_fallback_propagates(db_connection, tmp_path, mocker
     _insert_scorer_done(db_connection)
     _insert_indicators(db_connection)
 
+    # calibrated_score is non-NULL so WMT passes the cold-start alert filter.
     db_connection.execute(
         """INSERT OR REPLACE INTO scores_daily
            (ticker, date, signal, confidence, final_score, regime,
-            daily_score, weekly_score, trend_score, momentum_score, volume_score,
+            calibrated_score, daily_score, weekly_score, trend_score, momentum_score, volume_score,
             volatility_score, candlestick_score, structural_score,
             sentiment_score, fundamental_score, macro_score)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         ("WMT", SCORING_DATE, "BULLISH", 85.0, 50.0, "trending",
-         5.0, 3.0, 10.0, 8.0, 4.0, -2.0, 6.0, 3.0, 5.0, 4.0, 2.0),
+         1.42, 5.0, 3.0, 10.0, 8.0, 4.0, -2.0, 6.0, 3.0, 5.0, 4.0, 2.0),
     )
     db_connection.execute(
         "INSERT OR IGNORE INTO tickers (symbol, sector, sector_etf, active) VALUES (?, ?, ?, ?)",

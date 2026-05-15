@@ -245,6 +245,8 @@ export function TickerDetailPage() {
                   <ConfidenceBreakdown
                     compositeScore={snapshot.daily.composite_score ?? null}
                     confidenceModifiers={snapshot.daily.confidence_modifiers ?? null}
+                    coldStartMultiplier={scoringRules?.cold_start_base_multiplier}
+                    coldStartMax={scoringRules?.cold_start_max}
                   />
                   </div>
                 </details>
@@ -411,11 +413,14 @@ export function DirectionBreakdown(props: {
   );
 }
 
-function ConfidenceBreakdown(props: {
+// exported for tests
+export function ConfidenceBreakdown(props: {
   compositeScore: number | null;
   confidenceModifiers: Record<string, number> | null;
+  coldStartMultiplier?: number;
+  coldStartMax?: number;
 }) {
-  const { compositeScore, confidenceModifiers } = props;
+  const { compositeScore, confidenceModifiers, coldStartMultiplier, coldStartMax } = props;
 
   if (
     compositeScore === null ||
@@ -425,7 +430,8 @@ function ConfidenceBreakdown(props: {
     return null;
   }
 
-  const base = Math.abs(compositeScore) * 0.3;
+  const multiplier = coldStartMultiplier ?? 0.3;
+  const base = Math.abs(compositeScore) * multiplier;
   const modifierEntries = Object.entries(confidenceModifiers ?? {}).filter(
     ([, value]) => Number.isFinite(value) && value !== 0,
   );
@@ -440,10 +446,10 @@ function ConfidenceBreakdown(props: {
       </div>
       <div className="text-[11px] leading-relaxed">
         <div>
-          <span className="text-muted-foreground">Cold-start base</span>
+          <span className="text-muted-foreground">Raw-data base</span>
           <span className="mx-1.5">=</span>
           <span className="text-muted-foreground">
-            |{formatSigned(compositeScore)}| × 0.3
+            |{formatSigned(compositeScore)}| × {multiplier}
           </span>
           <span className="mx-1.5">=</span>
           <span className="font-semibold">{base.toFixed(1)}</span>
@@ -483,6 +489,12 @@ function ConfidenceBreakdown(props: {
           <span className="text-muted-foreground">Raw-data confidence:</span>
           <span className="ml-1 font-semibold">{Math.round(rawConfidence)}%</span>
         </div>
+
+        {Number.isFinite(coldStartMax) && coldStartMax !== undefined && (
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            Theoretical maximum ≈ {coldStartMax}%
+          </div>
+        )}
 
         <div className="mt-2 text-[10px] text-muted-foreground italic">
           What raw data alone would decide. The live verdict may differ when

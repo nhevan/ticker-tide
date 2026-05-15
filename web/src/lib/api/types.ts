@@ -216,6 +216,19 @@ export interface ScoringRules {
    * not define the key. Live scorer continues to use signal_thresholds (±2).
    */
   signal_thresholds_raw?: Record<string, { bullish: number; bearish: number; n: number }>;
+  /**
+   * Cold-start base multiplier from config["confidence"]["cold_start_base_multiplier"].
+   * Used by the Raw Data Input and Decision section of the dashboard to recompute
+   * the cold-start confidence base (abs(final_score) * multiplier). Falls back to
+   * 0.3 in the frontend when this field is undefined.
+   */
+  cold_start_base_multiplier?: number;
+  /**
+   * Computed theoretical maximum cold-start confidence as a percentage, derived
+   * server-side as round(cold_start_base_multiplier * 100 + sum_positive_modifier_deltas).
+   * Displayed in the dashboard under the Total line.
+   */
+  cold_start_max?: number;
   approximation_caveat: string;
 }
 

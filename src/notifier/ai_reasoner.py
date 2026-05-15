@@ -1210,27 +1210,63 @@ def get_qualifying_tickers(
     threshold: float = telegram_cfg.get("confidence_threshold", 70)
     max_per_section: int = telegram_cfg.get("max_tickers_per_section", 10)
 
-    bullish_rows = db_conn.execute(
+    bullish_rows_raw = db_conn.execute(
         "SELECT * FROM scores_daily WHERE date = ? AND signal = 'BULLISH' AND confidence >= ? "
         "ORDER BY confidence DESC",
         (scoring_date, threshold),
     ).fetchall()
 
-    bearish_rows = db_conn.execute(
+    bearish_rows_raw = db_conn.execute(
         "SELECT * FROM scores_daily WHERE date = ? AND signal = 'BEARISH' AND confidence >= ? "
         "ORDER BY confidence DESC",
         (scoring_date, threshold),
     ).fetchall()
 
-    flip_rows = db_conn.execute(
-        "SELECT * FROM signal_flips WHERE date = ? ORDER BY id ASC",
+    # Flips JOIN scores_daily so we can filter cold-start tickers using the
+    # same rule as the bullish/bearish lists. Without the JOIN, signal_flips
+    # has no calibrated_score column and cold-start flips would bypass the
+    # filter and appear in the daily summary "SIGNAL CHANGES" block.
+    flip_rows_raw = db_conn.execute(
+        "SELECT sf.*, sd.calibrated_score "
+        "FROM signal_flips sf "
+        "LEFT JOIN scores_daily sd ON sf.ticker = sd.ticker AND sf.date = sd.date "
+        "WHERE sf.date = ? "
+        "ORDER BY sf.id ASC",
         (scoring_date,),
     ).fetchall()
+
+    def _exclude_cold_start(rows: list) -> list:
+        """Return only rows where calibrated_score is not None (warm-start only)."""
+        filtered = []
+        for row in rows:
+            row_dict = dict(row)
+            if row_dict.get("calibrated_score") is None:
+                logger.info(
+                    f"notifier: cold-start ticker skipped from alerts "
+                    f"ticker={row_dict.get('ticker')} "
+                    f"date={scoring_date} "
+                    f"confidence={row_dict.get('confidence')}"
+                )
+            else:
+                filtered.append(row)
+        return filtered
+
+    bullish_rows = _exclude_cold_start(bullish_rows_raw)
+    bearish_rows = _exclude_cold_start(bearish_rows_raw)
+    flip_rows = _exclude_cold_start(flip_rows_raw)
+
+    # Strip the calibrated_score column we added to flip rows for filtering —
+    # downstream consumers expect the legacy signal_flips shape.
+    flip_rows_clean = []
+    for row in flip_rows:
+        row_dict = dict(row)
+        row_dict.pop("calibrated_score", None)
+        flip_rows_clean.append(row_dict)
 
     return {
         "bullish": [dict(r) for r in bullish_rows[:max_per_section]],
         "bearish": [dict(r) for r in bearish_rows[:max_per_section]],
-        "flips": [dict(r) for r in flip_rows],
+        "flips": flip_rows_clean,
     }
 
 

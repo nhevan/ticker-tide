@@ -82,6 +82,33 @@ _PHASE = "scorer"
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+_DEFAULT_COLD_START_MULTIPLIER: float = 0.3
+
+
+def resolve_cold_start_multiplier(config: dict) -> float:
+    """
+    Resolve the cold-start confidence base multiplier from scorer config.
+
+    Reads ``config["confidence"]["cold_start_base_multiplier"]``. Falls back
+    to ``0.3`` (the legacy hardcoded value) when either the ``confidence``
+    block or the key inside it is missing. This keeps behaviour stable for
+    older config files and for tests that build minimal config dicts.
+
+    Parameters:
+        config: Scorer config dict (typically loaded from config/scorer.json).
+
+    Returns:
+        Float multiplier applied to abs(final_score) when calibrated_score
+        is None. Used inside score_ticker via:
+        ``confidence_base_score = abs(final_score) * resolve_cold_start_multiplier(config)``.
+    """
+    return float(
+        config.get("confidence", {}).get(
+            "cold_start_base_multiplier", _DEFAULT_COLD_START_MULTIPLIER
+        )
+    )
+
+
 def _utc_now_iso() -> str:
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(tz=timezone.utc).isoformat()
@@ -781,12 +808,15 @@ def score_ticker(
     # Scale: abs(cal) of 2 → base 20, abs(cal) of 5 → base 50, abs(cal) of 8+→ base 80.
     #
     # Cold start (calibrated_score is None): final_score has near-zero correlation
-    # with returns (R ≈ -0.006).  Discount by 0.3 so confidence derives mainly
-    # from the quality modifiers (data completeness, VIX, volatility, etc.).
+    # with returns (R ≈ -0.006).  Base is abs(final_score) * cold_start_base_multiplier
+    # (configured in confidence.cold_start_base_multiplier, default 0.3 — see
+    # config/scorer.json for the current value). The multiplier is intentionally
+    # < 1 so confidence does not max out from a strong raw composite alone —
+    # modifiers must also align.
     if calibrated_score is not None:
         confidence_base_score = min(abs(calibrated_score), 8.0) * 10.0
     else:
-        confidence_base_score = abs(final_score) * 0.3
+        confidence_base_score = abs(final_score) * resolve_cold_start_multiplier(config)
 
     confidence_result = compute_full_confidence(
         final_score=confidence_base_score,

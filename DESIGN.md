@@ -283,9 +283,15 @@ discounted `final_score` during cold start.
   at `|cal| ≈ 6–8` (63%) and *drops* for `|cal| > 8` (57.6%) and `|cal| > 12` (47.7%)
   due to calibrator overfitting. So `|cal| = 5 → base 50`, `|cal| = 8+ → base 80`.
 
-- **Cold start** (`calibrated_score` is None): `abs(final_score) * 0.3`  
+- **Cold start** (`calibrated_score` is None): `abs(final_score) * cold_start_base_multiplier`  
   The raw composite has near-zero return correlation (R ≈ −0.006), so it is discounted
   heavily. Confidence in this state is driven primarily by the quality modifiers below.
+  The multiplier is config-driven (`confidence.cold_start_base_multiplier` in `scorer.json`,
+  default 0.3), raising the theoretical ceiling to ≈ 90% when all positive
+  modifiers fire. Cold-start tickers are **excluded from Telegram alerts** regardless of
+  confidence — the notifier's `get_qualifying_tickers()` filters them out of the BULLISH,
+  BEARISH, AND signal-changes blocks (the latter via a JOIN with `scores_daily` since
+  `signal_flips` itself has no `calibrated_score` column).
 
 **Modifiers** (applied to base):
 | Modifier | Condition | Value |
@@ -357,7 +363,8 @@ After `run_scorer()` completes, `run_daily_pipeline()` calls `populate_realized_
 11. Classify signal using `calibrated_score` if available, otherwise `final_score`. `effective_score`
     is a local variable only — it is never persisted.
 12. Compute confidence: base = `min(abs(calibrated_score), 8.0) * 10.0` when warm
-    (range 0–80), or `abs(final_score) * 0.3` during cold start; then add modifiers.
+    (range 0–80), or `abs(final_score) * cold_start_base_multiplier` during cold start
+    (config-driven, default 0.3, currently 0.65); then add modifiers.
     Build data_completeness and key_signals.
 13. Save to `scores_daily` (INSERT OR REPLACE) — `final_score` always holds the ±100 composite;
     `calibrated_score` holds the ridge prediction (or NULL); `model_r2` holds the training R².
@@ -787,7 +794,7 @@ Enable WAL mode on connection.
 - sector_etf_score REAL (nullable) — the sector ETF composite score computed by `compute_sector_etf_score()` at the time of scoring. NULL when no sector ETF is mapped for the ticker, or on legacy rows. Used by the signal-classification tooltip to show the ETF score sub-line.
 - calibrator_payload TEXT (nullable) — JSON blob containing the per-feature ridge regression decomposition: `{intercept, prediction, training_samples, in_sample_r2, feature_count, contributions: [{name, raw, mean, std, z, weight, contribution}]}`. NULL on rows written before Migration 5, or when calibration is disabled / cold-start. Used by the signal-classification tooltip Step 2b to render the math chain explaining how the calibrated score was computed.
 - confidence_modifiers TEXT (nullable) — JSON dict of the 7 per-rule modifier values produced by `compute_confidence_modifiers()`: `{timeframe_agreement, volume_confirmation, indicator_consensus, earnings_proximity, vix_extreme, atr_expanding, missing_data}`. Each value is a float (positive = bonus, negative = penalty). NULL for rows written before Migration 6. Used by the dashboard `ConfidenceBreakdown` chip row.
-- confidence_base REAL (nullable) — calibrated-score-derived base value passed into `compute_full_confidence()`: `min(abs(calibrated_score), 8.0) * 10.0` when warm, or `abs(final_score) * 0.3` during cold start. Distinct from `abs(final_score)` — this is the actual base used in confidence computation. NULL for rows written before Migration 6. Used by the dashboard `ConfidenceBreakdown` chip row.
+- confidence_base REAL (nullable) — calibrated-score-derived base value passed into `compute_full_confidence()`: `min(abs(calibrated_score), 8.0) * 10.0` when warm, or `abs(final_score) * cold_start_base_multiplier` during cold start (config-driven, default 0.3, currently 0.65). Distinct from `abs(final_score)` — this is the actual base used in confidence computation. NULL for rows written before Migration 6. Used by the dashboard `ConfidenceBreakdown` chip row.
 - realized_trading_days INTEGER (nullable) — number of forward trading days found when the realized-return window was populated. May be less than `analytics.forward_days` for delisted tickers. NULL until `populate_realized_returns` runs after the window closes (Migration 7).
 - realized_ticker_return REAL (nullable) — `(close_forward - close_signal) / close_signal × 100`. Forward close is the last available OHLCV close within the window. NULL until populated.
 - benchmark_return REAL (nullable) — same formula for the benchmark (SPY) over the same realized_trading_days window. NULL when SPY data was absent at populate time, or until populated.

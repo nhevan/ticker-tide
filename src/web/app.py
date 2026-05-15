@@ -67,6 +67,44 @@ class LoginBody(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Positive-only modifier keys from confidence.py. Negative keys (penalties)
+# and threshold keys (vix_extreme_threshold, earnings_within_days) are
+# deliberately excluded — penalties cannot lift the ceiling and thresholds
+# are predicate inputs, not deltas. If a new positive modifier is added to
+# confidence.py, append its scorer.json key here so cold_start_max stays in
+# sync.
+_COLD_START_POSITIVE_MODIFIER_KEYS: tuple[str, ...] = (
+    "timeframe_agree",
+    "volume_confirms",
+    "indicator_consensus",
+)
+
+
+def _cold_start_multiplier(scorer_config: dict) -> float:
+    """Read the cold-start base multiplier with a 0.3 fallback."""
+    return float(
+        scorer_config.get("confidence", {}).get("cold_start_base_multiplier", 0.3)
+    )
+
+
+def _cold_start_max(scorer_config: dict) -> int:
+    """
+    Compute the theoretical maximum cold-start confidence as an integer percentage.
+
+    Formula: round(multiplier * 100 + sum of positive modifier deltas), where
+    the multiplier comes from confidence.cold_start_base_multiplier and the
+    positive deltas come from confidence_modifiers (only the keys named in
+    ``_COLD_START_POSITIVE_MODIFIER_KEYS``, clamped to non-negative to guard
+    against accidental misconfiguration).
+    """
+    multiplier = _cold_start_multiplier(scorer_config)
+    modifiers = scorer_config.get("confidence_modifiers", {})
+    positive_sum = sum(
+        max(0, float(modifiers.get(key, 0))) for key in _COLD_START_POSITIVE_MODIFIER_KEYS
+    )
+    return round(multiplier * 100 + positive_sum)
+
+
 def _run_llm_analysis(
     db_path: str,
     ticker: str,
@@ -703,6 +741,8 @@ def create_app(
             "signal_thresholds_raw": resolved_scorer_config.get(
                 "signal_thresholds_raw", {}
             ),
+            "cold_start_base_multiplier": _cold_start_multiplier(resolved_scorer_config),
+            "cold_start_max": _cold_start_max(resolved_scorer_config),
             "approximation_caveat": (
                 "Item-level contributions do not sum to the final composite score "
                 "due to clamping at ±100, sector adjustment, and timeframe merging."

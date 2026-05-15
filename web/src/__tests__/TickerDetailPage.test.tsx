@@ -59,7 +59,7 @@ vi.mock('@/lib/hooks/useVerdict', () => ({
 
 import { useSnapshot } from '@/lib/hooks/useSnapshot';
 import { useScoringRules } from '@/lib/hooks/useScoringRules';
-import { DirectionBreakdown } from '@/pages/TickerDetailPage';
+import { DirectionBreakdown, ConfidenceBreakdown } from '@/pages/TickerDetailPage';
 
 const mockSnapshot = {
   daily: {
@@ -317,5 +317,49 @@ describe('DirectionBreakdown', () => {
     expect(text).toContain('−11.0');
     expect(text).toContain('all rows');
     expect(text).toContain('30,974');
+  });
+});
+
+describe('ConfidenceBreakdown', () => {
+  it('uses configured multiplier from props', () => {
+    const { container } = render(
+      <ConfidenceBreakdown
+        compositeScore={50}
+        confidenceModifiers={{}}
+        coldStartMultiplier={0.65}
+        coldStartMax={90}
+      />,
+    );
+    const text = container.textContent ?? '';
+    // base = abs(50) * 0.65 = 32.5
+    expect(text).toContain('32.5');
+  });
+
+  it('falls back to 0.3 when multiplier undefined', () => {
+    const { container } = render(
+      <ConfidenceBreakdown
+        compositeScore={50}
+        confidenceModifiers={{}}
+        coldStartMultiplier={undefined}
+        coldStartMax={undefined}
+      />,
+    );
+    const text = container.textContent ?? '';
+    // base = abs(50) * 0.3 = 15.0
+    expect(text).toContain('15.0');
+  });
+
+  it('displays the theoretical maximum line', () => {
+    const { container } = render(
+      <ConfidenceBreakdown
+        compositeScore={50}
+        confidenceModifiers={{}}
+        coldStartMultiplier={0.65}
+        coldStartMax={90}
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('Theoretical maximum');
+    expect(text).toContain('90%');
   });
 });

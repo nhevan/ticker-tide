@@ -68,6 +68,21 @@ _TEST_SCORER_CONFIG = {
         "bullish": 2,
         "bearish": -2,
     },
+    "confidence_modifiers": {
+        "timeframe_agree": 10,
+        "timeframe_disagree": -15,
+        "volume_confirms": 10,
+        "volume_diverges": -10,
+        "indicator_consensus": 5,
+        "indicator_mixed": -10,
+        "earnings_within_days": 7,
+        "earnings_penalty": -15,
+        "vix_extreme_threshold": 30,
+        "vix_extreme_penalty": -10,
+        "atr_expanding_penalty": -5,
+        "missing_news_penalty": -5,
+        "missing_fundamentals_penalty": -3,
+    },
 }
 
 
@@ -526,4 +541,129 @@ class TestSignalThresholdsRawBlock:
                 data = tc.get("/api/scoring-rules").json()
                 assert "signal_thresholds_raw" in data
                 assert data["signal_thresholds_raw"] == {}
+
+
+_TEST_SCORER_CONFIG_WITH_CONFIDENCE_BLOCK = {
+    **_TEST_SCORER_CONFIG,
+    "confidence": {
+        "cold_start_base_multiplier": 0.65,
+    },
+}
+
+
+@pytest.fixture
+def client_with_confidence_block(db_path: str) -> "Generator[TestClient, None, None]":
+    """Create a TestClient with scorer_config that includes the confidence block."""
+    with patch.dict(
+        "os.environ",
+        {
+            "WEB_PASSWORD": "testpass",
+            "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+        },
+    ):
+        from src.web.app import create_app
+
+        app = create_app(
+            db_path=db_path,
+            config=_TEST_WEB_CONFIG,
+            scorer_config=_TEST_SCORER_CONFIG_WITH_CONFIDENCE_BLOCK,
+        )
+        with TestClient(app, raise_server_exceptions=True) as tc:
+            yield tc
+
+
+class TestColdStartCeiling:
+    """Tests for cold_start_max and cold_start_base_multiplier in GET /api/scoring-rules."""
+
+    def test_cold_start_base_multiplier_present(
+        self, client_with_confidence_block: TestClient
+    ) -> None:
+        """cold_start_base_multiplier is present in the response with value 0.65."""
+        client_with_confidence_block.post("/api/login", json={"password": "testpass"})
+        data = client_with_confidence_block.get("/api/scoring-rules").json()
+        assert "cold_start_base_multiplier" in data
+        assert data["cold_start_base_multiplier"] == 0.65
+
+    def test_cold_start_max_present_with_configured_value(
+        self, client_with_confidence_block: TestClient
+    ) -> None:
+        """cold_start_max is present. Computed as round(0.65 * 100 + 25) = 90."""
+        client_with_confidence_block.post("/api/login", json={"password": "testpass"})
+        data = client_with_confidence_block.get("/api/scoring-rules").json()
+        assert "cold_start_max" in data
+        # round(0.65 * 100 + 10 + 10 + 5) = round(65 + 25) = 90
+        assert data["cold_start_max"] == 90
+
+    def test_cold_start_max_fallback_when_config_absent(
+        self, db_path: str
+    ) -> None:
+        """When the confidence block is absent from config, default multiplier 0.3 is used.
+        cold_start_max = round(0.3 * 100 + 25) = 55."""
+        config_without_confidence = {
+            **_TEST_SCORER_CONFIG,
+            # confidence block intentionally absent
+        }
+        with patch.dict(
+            "os.environ",
+            {
+                "WEB_PASSWORD": "testpass",
+                "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+            },
+        ):
+            from src.web.app import create_app
+
+            app = create_app(
+                db_path=db_path,
+                config=_TEST_WEB_CONFIG,
+                scorer_config=config_without_confidence,
+            )
+            from fastapi.testclient import TestClient as TC
+            with TC(app, raise_server_exceptions=True) as tc:
+                tc.post("/api/login", json={"password": "testpass"})
+                data = tc.get("/api/scoring-rules").json()
+                assert "cold_start_max" in data
+                # round(0.3 * 100 + 25) = 55
+                assert data["cold_start_max"] == 55
+                assert data["cold_start_base_multiplier"] == 0.3
+
+    def test_cold_start_max_tracks_modifier_config(
+        self, db_path: str
+    ) -> None:
+        """cold_start_max must shift when confidence_modifiers values are tuned.
+
+        Guards against the previous regression where the positive-modifier
+        sum was hardcoded as 25 in the endpoint — tuning timeframe_agree etc.
+        would silently desync the displayed ceiling from reality. Now the sum
+        is derived from config, so the ceiling moves with it.
+        """
+        tuned_config = {
+            **_TEST_SCORER_CONFIG,
+            "confidence": {"cold_start_base_multiplier": 0.5},
+            "confidence_modifiers": {
+                **_TEST_SCORER_CONFIG["confidence_modifiers"],
+                "timeframe_agree": 20,    # was 10
+                "volume_confirms": 15,    # was 10
+                "indicator_consensus": 5, # unchanged
+            },
+        }
+        with patch.dict(
+            "os.environ",
+            {
+                "WEB_PASSWORD": "testpass",
+                "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+            },
+        ):
+            from src.web.app import create_app
+
+            app = create_app(
+                db_path=db_path,
+                config=_TEST_WEB_CONFIG,
+                scorer_config=tuned_config,
+            )
+            from fastapi.testclient import TestClient as TC
+            with TC(app, raise_server_exceptions=True) as tc:
+                tc.post("/api/login", json={"password": "testpass"})
+                data = tc.get("/api/scoring-rules").json()
+                # round(0.5 * 100 + 20 + 15 + 5) = round(50 + 40) = 90
+                assert data["cold_start_max"] == 90
 
