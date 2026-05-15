@@ -193,7 +193,14 @@ export function TickerDetailPage() {
             </div>
             <div className="mb-4 space-y-4">
               {crossSectionData && (
-                <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground tabular-nums">
+                <details className="group rounded-lg border" open>
+                  <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
+                    <h3 className="flex-1 text-sm font-semibold text-foreground m-0">
+                      Raw Data Input and Decision
+                    </h3>
+                    <span className="text-muted-foreground transition-transform group-open:rotate-90">›</span>
+                  </summary>
+                  <div className="border-t p-4 text-[11px] text-muted-foreground tabular-nums">
                   {crossSectionData.parts.map((part, idx) => {
                     const tone =
                       part.value > 0
@@ -228,7 +235,19 @@ export function TickerDetailPage() {
                     {Math.abs(crossSectionData.total).toFixed(1)}
                   </span>
                   <span className="ml-2 text-[10px] text-muted-foreground">(final blended)</span>
-                </div>
+
+                  <DirectionBreakdown
+                    compositeScore={snapshot.daily.composite_score ?? null}
+                    bullishThreshold={scoringRules?.signal_thresholds?.bullish ?? null}
+                    bearishThreshold={scoringRules?.signal_thresholds?.bearish ?? null}
+                  />
+
+                  <ConfidenceBreakdown
+                    compositeScore={snapshot.daily.composite_score ?? null}
+                    confidenceModifiers={snapshot.daily.confidence_modifiers ?? null}
+                  />
+                  </div>
+                </details>
               )}
               <MatrixTable
                 title="Daily — Indicator Agreement"
@@ -277,6 +296,175 @@ export function TickerDetailPage() {
           </p>
         )}
       </main>
+    </div>
+  );
+}
+
+const MODIFIER_LABELS: Record<string, string> = {
+  timeframe_agreement: 'Timeframe agreement',
+  volume_confirmation: 'Volume confirmation',
+  indicator_consensus: 'Indicator consensus',
+  earnings_proximity: 'Earnings proximity',
+  vix_extreme: 'VIX extreme',
+  atr_expanding: 'ATR expanding',
+  missing_data: 'Missing data',
+};
+
+function formatSigned(value: number, digits = 1): string {
+  const sign = value < 0 ? '−' : '+';
+  return `${sign}${Math.abs(value).toFixed(digits)}`;
+}
+
+function toneFor(value: number): string {
+  if (value > 0) return 'text-[hsl(var(--up))]';
+  if (value < 0) return 'text-[hsl(var(--down))]';
+  return 'text-muted-foreground';
+}
+
+function DirectionBreakdown(props: {
+  compositeScore: number | null;
+  bullishThreshold: number | null;
+  bearishThreshold: number | null;
+}) {
+  const { compositeScore, bullishThreshold, bearishThreshold } = props;
+
+  if (
+    compositeScore === null ||
+    compositeScore === undefined ||
+    !Number.isFinite(compositeScore) ||
+    bullishThreshold === null ||
+    bearishThreshold === null
+  ) {
+    return null;
+  }
+
+  const tone = toneFor(compositeScore);
+  const rawSignal =
+    compositeScore >= bullishThreshold
+      ? 'BULLISH'
+      : compositeScore <= bearishThreshold
+        ? 'BEARISH'
+        : 'NEUTRAL';
+  const comparator =
+    compositeScore >= bullishThreshold ? '≥' : compositeScore <= bearishThreshold ? '≤' : 'in';
+  const threshold =
+    compositeScore >= bullishThreshold
+      ? formatSigned(bullishThreshold)
+      : compositeScore <= bearishThreshold
+        ? formatSigned(bearishThreshold)
+        : `[${formatSigned(bearishThreshold)}, ${formatSigned(bullishThreshold)}]`;
+
+  return (
+    <div className="mt-4 pt-3 border-t border-border/60">
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
+        Direction decision
+      </div>
+      <div className="text-[11px] leading-relaxed">
+        <div>
+          <span className="text-muted-foreground">Raw composite score</span>
+          <span className="mx-1.5">=</span>
+          <span className={`${tone} font-semibold`}>{formatSigned(compositeScore)}</span>
+        </div>
+        <div className="mt-0.5">
+          <span className="text-muted-foreground">Thresholds</span>
+          <span className="mx-1.5">·</span>
+          <span className="text-[hsl(var(--up))] font-semibold">{formatSigned(bullishThreshold)}</span>
+          <span className="mx-1 text-muted-foreground">bullish</span>
+          <span className="mx-1.5 text-muted-foreground">/</span>
+          <span className="text-[hsl(var(--down))] font-semibold">{formatSigned(bearishThreshold)}</span>
+          <span className="mx-1 text-muted-foreground">bearish</span>
+        </div>
+        <div className="mt-1">
+          <span className={`${tone} font-semibold`}>{formatSigned(compositeScore)}</span>
+          <span className="mx-1.5">{comparator}</span>
+          <span className="font-semibold">{threshold}</span>
+          <span className="mx-2 text-muted-foreground">→</span>
+          <span className="text-muted-foreground">Raw-data signal:</span>
+          <span className={`ml-1 ${tone} font-semibold uppercase`}>{rawSignal}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfidenceBreakdown(props: {
+  compositeScore: number | null;
+  confidenceModifiers: Record<string, number> | null;
+}) {
+  const { compositeScore, confidenceModifiers } = props;
+
+  if (
+    compositeScore === null ||
+    compositeScore === undefined ||
+    !Number.isFinite(compositeScore)
+  ) {
+    return null;
+  }
+
+  const base = Math.abs(compositeScore) * 0.3;
+  const modifierEntries = Object.entries(confidenceModifiers ?? {}).filter(
+    ([, value]) => Number.isFinite(value) && value !== 0,
+  );
+  const modifierSum = modifierEntries.reduce((acc, [, value]) => acc + value, 0);
+  const preClamp = base + modifierSum;
+  const rawConfidence = Math.max(0, Math.min(100, preClamp));
+
+  return (
+    <div className="mt-4 pt-3 border-t border-border/60">
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
+        Confidence decision
+      </div>
+      <div className="text-[11px] leading-relaxed">
+        <div>
+          <span className="text-muted-foreground">Cold-start base</span>
+          <span className="mx-1.5">=</span>
+          <span className="text-muted-foreground">
+            |{formatSigned(compositeScore)}| × 0.3
+          </span>
+          <span className="mx-1.5">=</span>
+          <span className="font-semibold">{base.toFixed(1)}</span>
+        </div>
+
+        {modifierEntries.length === 0 ? (
+          <div className="mt-1 text-muted-foreground">No modifiers applied.</div>
+        ) : (
+          <div className="mt-1.5">
+            <div className="mb-0.5 text-muted-foreground">Modifiers</div>
+            <ul className="ml-3 space-y-0.5">
+              {modifierEntries.map(([key, value]) => (
+                <li key={key} className="flex items-baseline gap-2">
+                  <span className="text-muted-foreground">
+                    {MODIFIER_LABELS[key] ?? key}
+                  </span>
+                  <span className={`${toneFor(value)} font-semibold`}>
+                    {formatSigned(value)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="mt-1.5">
+          <span className="text-muted-foreground">Total</span>
+          <span className="mx-1.5">=</span>
+          <span className="font-semibold">{base.toFixed(1)}</span>
+          <span className="mx-1">+</span>
+          <span className={`${toneFor(modifierSum)} font-semibold`}>
+            {formatSigned(modifierSum)}
+          </span>
+          <span className="mx-1.5">=</span>
+          <span className="font-semibold">{preClamp.toFixed(1)}</span>
+          <span className="mx-2 text-muted-foreground">→ clamp[0, 100] →</span>
+          <span className="text-muted-foreground">Raw-data confidence:</span>
+          <span className="ml-1 font-semibold">{Math.round(rawConfidence)}%</span>
+        </div>
+
+        <div className="mt-2 text-[10px] text-muted-foreground italic">
+          What raw data alone would decide. The live verdict may differ when
+          the calibrator is active.
+        </div>
+      </div>
     </div>
   );
 }
