@@ -66,6 +66,12 @@
     "bullish": 2,
     "bearish": -2
   },
+  "signal_thresholds_raw": {
+    "all":      { "bullish": 39, "bearish": -11, "n": 30974 },
+    "ranging":  { "bullish": 23, "bearish": -4,  "n": 9326 },
+    "trending": { "bullish": 59, "bearish": -20, "n": 18964 },
+    "volatile": { "bullish": 27, "bearish": -1,  "n": 2684 }
+  },
   "confidence_modifiers": {
     "timeframe_agree": 10,
     "timeframe_disagree": -15,

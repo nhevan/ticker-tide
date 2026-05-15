@@ -1661,6 +1661,7 @@ Process-static endpoint. Returns:
 - `score_expansion_factor` — from `config/scorer.json`.
 - `timeframe_weights` — `timeframe_weights` block from `config/scorer.json` (trending/ranging/volatile × daily/weekly/monthly floats). Used by `computeTimeframeHeaderContributions` on the frontend to compute redistributed per-timeframe header weights.
 - `signal_thresholds` — `{bullish, bearish}` from `config/scorer.json signal_thresholds`. Used by `SignalClassificationTooltip` to classify the effective score in Step 3. Defaults to `{bullish: 30, bearish: -30}` if the key is absent from the config.
+- `signal_thresholds_raw` — regime-keyed `{bullish, bearish}` map from `config/scorer.json signal_thresholds_raw`. Used exclusively by the `DirectionBreakdown` component in the "Raw Data Input and Decision" section of the Ticker Detail page to classify the raw `final_score` (±100 scale). Keys: `all`, `ranging`, `trending`, `volatile`. The `"all"` entry is the cross-regime fallback when `snapshot.daily.regime` is null or not in the map. Returns `{}` when the key is absent from the config; the component returns `null` (no display) in that case. Does not feed any backend computation — the live scorer continues to use `signal_thresholds` (±2 calibrated scale).
 - `approximation_caveat` — fixed string explaining the decomposition limitation.
 
 Requires authentication. Served from `create_app()` closure; value is constant for the process lifetime. After editing `config/scorer.json`, restart the web service.

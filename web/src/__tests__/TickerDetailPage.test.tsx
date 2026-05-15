@@ -59,6 +59,7 @@ vi.mock('@/lib/hooks/useVerdict', () => ({
 
 import { useSnapshot } from '@/lib/hooks/useSnapshot';
 import { useScoringRules } from '@/lib/hooks/useScoringRules';
+import { DirectionBreakdown } from '@/pages/TickerDetailPage';
 
 const mockSnapshot = {
   daily: {
@@ -255,5 +256,66 @@ describe('TickerDetailPage', () => {
       // The banner should NOT use bare = (it uses ≈)
       // We assert ≈ is present — the prototype used = but the real implementation uses ≈
     });
+  });
+});
+
+const RAW_THRESHOLDS = {
+  all:      { bullish: 39, bearish: -11, n: 30974 },
+  ranging:  { bullish: 23, bearish: -4,  n: 9326 },
+  trending: { bullish: 59, bearish: -20, n: 18964 },
+  volatile: { bullish: 27, bearish: -1,  n: 2684 },
+};
+
+describe('DirectionBreakdown', () => {
+  it('F1: renders trending thresholds and caption when regime="trending"', () => {
+    const { container } = render(
+      <DirectionBreakdown
+        compositeScore={65}
+        regime="trending"
+        rawThresholds={RAW_THRESHOLDS}
+      />,
+    );
+    const text = container.textContent ?? '';
+    // Bullish threshold for trending is +59.0
+    expect(text).toContain('+59.0');
+    // Bearish threshold for trending is −20.0
+    expect(text).toContain('−20.0');
+    // Caption must contain regime name and sample size
+    expect(text).toContain('trending');
+    expect(text).toContain('18,964');
+  });
+
+  it('F2: falls back to "all" thresholds and caption when regime is unknown', () => {
+    const { container } = render(
+      <DirectionBreakdown
+        compositeScore={10}
+        regime="unknown_regime_xyz"
+        rawThresholds={RAW_THRESHOLDS}
+      />,
+    );
+    const text = container.textContent ?? '';
+    // "all" bullish threshold is +39.0
+    expect(text).toContain('+39.0');
+    // "all" bearish threshold is −11.0
+    expect(text).toContain('−11.0');
+    // Caption must indicate all rows and n=30,974
+    expect(text).toContain('all rows');
+    expect(text).toContain('30,974');
+  });
+
+  it('F3: falls back to "all" thresholds and caption when regime is null', () => {
+    const { container } = render(
+      <DirectionBreakdown
+        compositeScore={10}
+        regime={null}
+        rawThresholds={RAW_THRESHOLDS}
+      />,
+    );
+    const text = container.textContent ?? '';
+    // Same "all" fallback as F2
+    expect(text).toContain('+39.0');
+    expect(text).toContain('−11.0');
+    expect(text).toContain('all rows');
+    expect(text).toContain('30,974');
   });
 });

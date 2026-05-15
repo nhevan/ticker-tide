@@ -290,6 +290,27 @@ renormalized when monthly data is absent (e.g., during pipeline cold-start).
 | `signal_thresholds.bullish` | int | `20` | `final_score ≥` this → BULLISH |
 | `signal_thresholds.bearish` | int | `-20` | `final_score ≤` this → BEARISH |
 
+### Signal thresholds (raw — dashboard display only)
+
+**Dashboard-display only — changing this key does NOT require a scorer re-run. Refresh quarterly or after material distribution shift.**
+
+`signal_thresholds_raw` provides regime-keyed asymmetric thresholds used exclusively by the "Raw Data Input and Decision" section in the Ticker Detail dashboard. These values are derived from the p25/p75 of `final_score` per regime across the full `scores_daily` dataset. They are served via `/api/scoring-rules` and consumed by the `DirectionBreakdown` frontend component. The live scorer continues to use `signal_thresholds` (±2 on the calibrated scale).
+
+Schema: `regime → { bullish: int, bearish: int, n: int }`
+
+Each entry carries the per-regime row count `n` it was calibrated from. The dashboard displays `n` alongside the thresholds in the caption, so when you recalibrate the thresholds you MUST also update `n` in the same entry — otherwise the UI will misreport the dataset size.
+
+| Key | Type | Description |
+|---|---|---|
+| `signal_thresholds_raw.all.bullish` | int | Cross-regime bullish threshold (fallback when snapshot regime is null/unknown) |
+| `signal_thresholds_raw.all.bearish` | int | Cross-regime bearish threshold (fallback) |
+| `signal_thresholds_raw.all.n` | int | Row count used to calibrate the `all` entry |
+| `signal_thresholds_raw.<regime>.bullish` | int | Bullish threshold for the given regime |
+| `signal_thresholds_raw.<regime>.bearish` | int | Bearish threshold for the given regime |
+| `signal_thresholds_raw.<regime>.n` | int | Row count used to calibrate the given regime entry |
+
+Current values (calibrated from n=30,974 rows): `all: {39, −11, 30974}`, `ranging: {23, −4, 9326}`, `trending: {59, −20, 18964}`, `volatile: {27, −1, 2684}`.
+
 ### Confidence modifiers
 
 Applied to the base confidence value (`|final_score|`). Final confidence is clamped to [0, 100].

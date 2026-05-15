@@ -421,3 +421,109 @@ class TestSignalThresholdsBlock:
                 assert "bullish" in thresholds
                 assert "bearish" in thresholds
 
+
+_TEST_SCORER_CONFIG_WITH_RAW_THRESHOLDS = {
+    **_TEST_SCORER_CONFIG,
+    "signal_thresholds_raw": {
+        "all":      {"bullish": 39, "bearish": -11, "n": 30974},
+        "ranging":  {"bullish": 23, "bearish": -4,  "n": 9326},
+        "trending": {"bullish": 59, "bearish": -20, "n": 18964},
+        "volatile": {"bullish": 27, "bearish": -1,  "n": 2684},
+    },
+}
+
+
+@pytest.fixture
+def client_with_raw_thresholds(db_path: str) -> "Generator[TestClient, None, None]":
+    """Create a TestClient with scorer_config that includes signal_thresholds_raw."""
+    with patch.dict(
+        "os.environ",
+        {
+            "WEB_PASSWORD": "testpass",
+            "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+        },
+    ):
+        from src.web.app import create_app
+
+        app = create_app(
+            db_path=db_path,
+            config=_TEST_WEB_CONFIG,
+            scorer_config=_TEST_SCORER_CONFIG_WITH_RAW_THRESHOLDS,
+        )
+        with TestClient(app, raise_server_exceptions=True) as tc:
+            yield tc
+
+
+class TestSignalThresholdsRawBlock:
+    """Tests for the signal_thresholds_raw block in GET /api/scoring-rules.
+
+    T1: signal_thresholds_raw is present with all four regime keys.
+    T2: Per-regime exact-value assertions.
+    T3: Fallback — when the key is absent from config, response returns {} and does NOT raise.
+    """
+
+    def test_t1_signal_thresholds_raw_key_present_with_all_regime_keys(
+        self, client_with_raw_thresholds: TestClient
+    ) -> None:
+        """T1: signal_thresholds_raw is present in the response with all four regime keys."""
+        client_with_raw_thresholds.post("/api/login", json={"password": "testpass"})
+        data = client_with_raw_thresholds.get("/api/scoring-rules").json()
+        assert "signal_thresholds_raw" in data
+        raw = data["signal_thresholds_raw"]
+        for regime in ("all", "ranging", "trending", "volatile"):
+            assert regime in raw, f"Expected regime key '{regime}' in signal_thresholds_raw"
+
+    def test_t2_per_regime_exact_values(
+        self, client_with_raw_thresholds: TestClient
+    ) -> None:
+        """T2: Per-regime exact-value assertions for all four regimes and both sides."""
+        client_with_raw_thresholds.post("/api/login", json={"password": "testpass"})
+        data = client_with_raw_thresholds.get("/api/scoring-rules").json()
+        raw = data["signal_thresholds_raw"]
+        # trending
+        assert raw["trending"]["bullish"] == 59
+        assert raw["trending"]["bearish"] == -20
+        assert raw["trending"]["n"] == 18964
+        # ranging
+        assert raw["ranging"]["bullish"] == 23
+        assert raw["ranging"]["bearish"] == -4
+        assert raw["ranging"]["n"] == 9326
+        # volatile
+        assert raw["volatile"]["bullish"] == 27
+        assert raw["volatile"]["bearish"] == -1
+        assert raw["volatile"]["n"] == 2684
+        # all (cross-regime fallback)
+        assert raw["all"]["bullish"] == 39
+        assert raw["all"]["bearish"] == -11
+        assert raw["all"]["n"] == 30974
+
+    def test_t3_fallback_when_signal_thresholds_raw_absent_from_config(
+        self, db_path: str
+    ) -> None:
+        """T3: When signal_thresholds_raw is absent from the scorer config, the response
+        returns signal_thresholds_raw: {} and does NOT raise."""
+        config_without_raw_thresholds = {
+            **_TEST_SCORER_CONFIG,
+            # signal_thresholds_raw intentionally absent
+        }
+        with patch.dict(
+            "os.environ",
+            {
+                "WEB_PASSWORD": "testpass",
+                "WEB_SECRET_KEY": "test-secret-key-for-sessions-32b",
+            },
+        ):
+            from src.web.app import create_app
+
+            app = create_app(
+                db_path=db_path,
+                config=_TEST_WEB_CONFIG,
+                scorer_config=config_without_raw_thresholds,
+            )
+            from fastapi.testclient import TestClient as TC
+            with TC(app, raise_server_exceptions=True) as tc:
+                tc.post("/api/login", json={"password": "testpass"})
+                data = tc.get("/api/scoring-rules").json()
+                assert "signal_thresholds_raw" in data
+                assert data["signal_thresholds_raw"] == {}
+

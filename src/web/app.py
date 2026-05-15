@@ -700,6 +700,9 @@ def create_app(
             "signal_thresholds": resolved_scorer_config.get(
                 "signal_thresholds", {"bullish": 30, "bearish": -30}
             ),
+            "signal_thresholds_raw": resolved_scorer_config.get(
+                "signal_thresholds_raw", {}
+            ),
             "approximation_caveat": (
                 "Item-level contributions do not sum to the final composite score "
                 "due to clamping at ±100, sector adjustment, and timeframe merging."

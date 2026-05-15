@@ -208,6 +208,14 @@ export interface ScoringRules {
    * effective >= bullish → BULLISH; effective <= bearish → BEARISH; else NEUTRAL.
    */
   signal_thresholds: { bullish: number; bearish: number };
+  /**
+   * Regime-keyed asymmetric thresholds for the "Raw Data Input and Decision"
+   * dashboard section only. Derived from p25/p75 of final_score per regime
+   * (full dataset, n=30,974). The "all" key is the cross-regime fallback when
+   * snapshot regime is null/unknown. Empty object when the scorer config does
+   * not define the key. Live scorer continues to use signal_thresholds (±2).
+   */
+  signal_thresholds_raw?: Record<string, { bullish: number; bearish: number; n: number }>;
   approximation_caveat: string;
 }
 

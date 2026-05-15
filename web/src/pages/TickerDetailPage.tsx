@@ -238,8 +238,8 @@ export function TickerDetailPage() {
 
                   <DirectionBreakdown
                     compositeScore={snapshot.daily.composite_score ?? null}
-                    bullishThreshold={scoringRules?.signal_thresholds?.bullish ?? null}
-                    bearishThreshold={scoringRules?.signal_thresholds?.bearish ?? null}
+                    regime={snapshot.daily.regime ?? null}
+                    rawThresholds={scoringRules?.signal_thresholds_raw}
                   />
 
                   <ConfidenceBreakdown
@@ -321,22 +321,43 @@ function toneFor(value: number): string {
   return 'text-muted-foreground';
 }
 
-function DirectionBreakdown(props: {
+// exported for tests
+export function DirectionBreakdown(props: {
   compositeScore: number | null;
-  bullishThreshold: number | null;
-  bearishThreshold: number | null;
+  regime: string | null | undefined;
+  rawThresholds: Record<string, { bullish: number; bearish: number; n: number }> | undefined;
 }) {
-  const { compositeScore, bullishThreshold, bearishThreshold } = props;
+  const { compositeScore, regime, rawThresholds } = props;
 
-  if (
-    compositeScore === null ||
-    compositeScore === undefined ||
-    !Number.isFinite(compositeScore) ||
-    bullishThreshold === null ||
-    bearishThreshold === null
-  ) {
+  if (!Number.isFinite(compositeScore) || compositeScore === null) {
     return null;
   }
+
+  // Priority chain:
+  // 1. regime-keyed entry when regime is known and the key exists
+  // 2. "all" cross-regime fallback
+  // 3. no display (return null)
+  let resolvedEntry: { bullish: number; bearish: number; n: number } | null = null;
+  let resolvedKey: string | null = null;
+
+  if (regime != null && rawThresholds?.[regime] != null) {
+    resolvedEntry = rawThresholds[regime];
+    resolvedKey = regime;
+  } else if (rawThresholds?.["all"] != null) {
+    resolvedEntry = rawThresholds["all"];
+    resolvedKey = "all";
+  }
+
+  if (resolvedEntry === null || resolvedKey === null) {
+    return null;
+  }
+
+  const { bullish: bullishThreshold, bearish: bearishThreshold, n: sampleSize } = resolvedEntry;
+
+  const caption =
+    resolvedKey === "all"
+      ? `Regime IQR thresholds — approx. p25/p75 of final_score (all rows, n=${sampleSize.toLocaleString()})`
+      : `Regime IQR thresholds — approx. p25/p75 of final_score (${resolvedKey}, n=${sampleSize.toLocaleString()})`;
 
   const tone = toneFor(compositeScore);
   const rawSignal =
@@ -381,6 +402,9 @@ function DirectionBreakdown(props: {
           <span className="mx-2 text-muted-foreground">→</span>
           <span className="text-muted-foreground">Raw-data signal:</span>
           <span className={`ml-1 ${tone} font-semibold uppercase`}>{rawSignal}</span>
+        </div>
+        <div className="mt-1 text-[10px] text-muted-foreground italic">
+          {caption}
         </div>
       </div>
     </div>
