@@ -377,36 +377,79 @@ export function DirectionBreakdown(props: {
         ? formatSigned(bearishThreshold)
         : `[${formatSigned(bearishThreshold)}, ${formatSigned(bullishThreshold)}]`;
 
+  // Per-regime threshold rows displayed in the right-hand table. "all" sits
+  // last so it visually reads as the cross-regime fallback.
+  const regimeOrder = ['ranging', 'trending', 'volatile', 'all'];
+  const regimeEntries = regimeOrder
+    .map((key) => ({ key, entry: rawThresholds?.[key] }))
+    .filter((row): row is { key: string; entry: { bullish: number; bearish: number; n: number } } => row.entry != null);
+
   return (
     <div className="mt-4 pt-3 border-t border-border/60">
       <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
         Direction decision
       </div>
-      <div className="text-[11px] leading-relaxed">
-        <div>
-          <span className="text-muted-foreground">Raw composite score</span>
-          <span className="mx-1.5">=</span>
-          <span className={`${tone} font-semibold`}>{formatSigned(compositeScore)}</span>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        {/* Left: math chain */}
+        <div className="flex-1 text-[11px] leading-relaxed">
+          <div>
+            <span className="text-muted-foreground">Raw composite score</span>
+            <span className="mx-1.5">=</span>
+            <span className={`${tone} font-semibold`}>{formatSigned(compositeScore)}</span>
+          </div>
+          <div className="mt-0.5">
+            <span className="text-muted-foreground">Thresholds</span>
+            <span className="mx-1.5">·</span>
+            <span className="text-[hsl(var(--up))] font-semibold">{formatSigned(bullishThreshold)}</span>
+            <span className="mx-1 text-muted-foreground">bullish</span>
+            <span className="mx-1.5 text-muted-foreground">/</span>
+            <span className="text-[hsl(var(--down))] font-semibold">{formatSigned(bearishThreshold)}</span>
+            <span className="mx-1 text-muted-foreground">bearish</span>
+          </div>
+          <div className="mt-1">
+            <span className={`${tone} font-semibold`}>{formatSigned(compositeScore)}</span>
+            <span className="mx-1.5">{comparator}</span>
+            <span className="font-semibold">{threshold}</span>
+            <span className="mx-2 text-muted-foreground">→</span>
+            <span className="text-muted-foreground">Raw-data signal:</span>
+            <span className={`ml-1 ${tone} font-semibold uppercase`}>{rawSignal}</span>
+          </div>
+          <div className="mt-1 text-[10px] text-muted-foreground italic">
+            {caption}
+          </div>
         </div>
-        <div className="mt-0.5">
-          <span className="text-muted-foreground">Thresholds</span>
-          <span className="mx-1.5">·</span>
-          <span className="text-[hsl(var(--up))] font-semibold">{formatSigned(bullishThreshold)}</span>
-          <span className="mx-1 text-muted-foreground">bullish</span>
-          <span className="mx-1.5 text-muted-foreground">/</span>
-          <span className="text-[hsl(var(--down))] font-semibold">{formatSigned(bearishThreshold)}</span>
-          <span className="mx-1 text-muted-foreground">bearish</span>
-        </div>
-        <div className="mt-1">
-          <span className={`${tone} font-semibold`}>{formatSigned(compositeScore)}</span>
-          <span className="mx-1.5">{comparator}</span>
-          <span className="font-semibold">{threshold}</span>
-          <span className="mx-2 text-muted-foreground">→</span>
-          <span className="text-muted-foreground">Raw-data signal:</span>
-          <span className={`ml-1 ${tone} font-semibold uppercase`}>{rawSignal}</span>
-        </div>
-        <div className="mt-1 text-[10px] text-muted-foreground italic">
-          {caption}
+
+        {/* Right: regime threshold table — active regime highlighted with muted bg + ▸ marker */}
+        <div className="md:w-[260px] md:shrink-0">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Thresholds by regime
+          </div>
+          <div className="overflow-hidden rounded-md border border-border/60 text-[10px] tabular-nums">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 bg-muted/40 px-2 py-1 font-semibold text-muted-foreground">
+              <span>regime</span>
+              <span className="text-right">bullish</span>
+              <span className="text-right">bearish</span>
+            </div>
+            {regimeEntries.map(({ key, entry }) => {
+              const active = key === resolvedKey;
+              return (
+                <div
+                  key={key}
+                  className={`grid grid-cols-[1fr_auto_auto] gap-x-3 px-2 py-1 ${
+                    active ? 'bg-muted/60 font-semibold text-foreground' : 'text-muted-foreground'
+                  }`}
+                >
+                  <span>
+                    {active && <span className="mr-1 text-[hsl(var(--up))]">▸</span>}
+                    {key}
+                    <span className="ml-1 text-[9px] opacity-60">n={entry.n.toLocaleString()}</span>
+                  </span>
+                  <span className="text-right text-[hsl(var(--up))]">{formatSigned(entry.bullish)}</span>
+                  <span className="text-right text-[hsl(var(--down))]">{formatSigned(entry.bearish)}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
