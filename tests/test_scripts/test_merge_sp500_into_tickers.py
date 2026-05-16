@@ -162,7 +162,17 @@ def test_fetch_parses_wikipedia_fixture(monkeypatch: pytest.MonkeyPatch) -> None
         "Founded": [""] * 6,
     })
 
-    monkeypatch.setattr("pandas.read_html", lambda url, **kwargs: [fixture_df])
+    class _FakeResponse:
+        text = "<html><body>stub</body></html>"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "scripts.merge_sp500_into_tickers.httpx.get",
+        lambda url, **kwargs: _FakeResponse(),
+    )
+    monkeypatch.setattr("pandas.read_html", lambda html, **kwargs: [fixture_df])
 
     result = fetch_sp500_constituents("http://fake-url")
 

@@ -27,9 +27,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Wikipedia returns 403 to bare urllib requests; supply a real User-Agent.
+_HTTP_USER_AGENT = "ticker-tide/1.0 (https://github.com/; ops contact via repo)"
 
 # Operator-script constant. Overridable via --url; the Wikipedia page is the
 # de-facto free source for S&P 500 constituents and is not expected to change.
@@ -94,7 +98,14 @@ def fetch_sp500_constituents(url: str) -> list[dict[str, str]]:
     """
     logger.info(f"phase=fetch url={url} — fetching S&P 500 constituents")
     try:
-        tables = pd.read_html(url)
+        response = httpx.get(
+            url,
+            headers={"User-Agent": _HTTP_USER_AGENT},
+            timeout=30.0,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+        tables = pd.read_html(response.text)
     except Exception as exc:
         raise ValueError(f"Failed to fetch or parse HTML from url={url!r}: {exc}") from exc
 
