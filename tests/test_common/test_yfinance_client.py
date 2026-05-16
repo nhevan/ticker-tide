@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from src.common.yfinance_client import (
+    _to_yfinance,
     fetch_earnings_dates,
     fetch_fundamentals,
     fetch_fundamentals_history,
@@ -481,3 +482,22 @@ def test_fetch_fundamentals_history_returns_empty_on_exception() -> None:
         result = fetch_fundamentals_history("AAPL")
 
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _to_yfinance — dot-form to dash-form shim
+# ---------------------------------------------------------------------------
+
+
+def test_to_yfinance_dot_to_dash() -> None:
+    """
+    _to_yfinance should convert dot-form symbols to yfinance's required dash-form.
+
+    Polygon (primary OHLCV source) requires dot-form (e.g. 'BRK.B'); yfinance
+    returns empty data for dot-form and requires dash-form (e.g. 'BRK-B').
+    Symbols without dots pass through unchanged. Special symbols like '^VIX'
+    are also unaffected (no dot present).
+    """
+    assert _to_yfinance("BRK.B") == "BRK-B"
+    assert _to_yfinance("AAPL") == "AAPL"
+    assert _to_yfinance("^VIX") == "^VIX"

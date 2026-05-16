@@ -18,6 +18,23 @@ import yfinance
 logger = logging.getLogger(__name__)
 
 
+def _to_yfinance(symbol: str) -> str:
+    """Convert config-canonical dot-form to yfinance's dash-form.
+
+    yfinance treats dot-form (e.g. 'BRK.B') as a different/delisted ticker
+    and returns empty data. The pipeline stores dot-form because Polygon
+    (primary OHLCV source) requires it. Apply this shim at every yfinance
+    call boundary.
+
+    Args:
+        symbol: Ticker symbol in Polygon dot-form (e.g. 'BRK.B', 'AAPL', '^VIX').
+
+    Returns:
+        str: Symbol in yfinance dash-form (e.g. 'BRK-B', 'AAPL', '^VIX').
+    """
+    return symbol.replace(".", "-")
+
+
 def _safe_float(value: Any) -> float | None:
     """
     Convert a value to float, returning None if it is NaN, None, or unconvertible.
@@ -63,7 +80,7 @@ def fetch_fundamentals(ticker: str) -> dict:
             Any unavailable field is None. Returns {} on any exception.
     """
     try:
-        yf_ticker = yfinance.Ticker(ticker)
+        yf_ticker = yfinance.Ticker(_to_yfinance(ticker))
         result: dict = {}
 
         # --- Income statement ---
@@ -241,7 +258,7 @@ def fetch_fundamentals_history(ticker: str, lookback_years: int = 5) -> list[dic
             Any unavailable field is None. Returns [] on any exception.
     """
     try:
-        yf_ticker = yfinance.Ticker(ticker)
+        yf_ticker = yfinance.Ticker(_to_yfinance(ticker))
         income_stmt = yf_ticker.quarterly_income_stmt
 
         if income_stmt is None or income_stmt.empty:
@@ -341,7 +358,7 @@ def fetch_vix_data(from_date: str, to_date: str) -> pd.DataFrame:
     empty_df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
 
     try:
-        raw_df = yfinance.download("^VIX", start=from_date, end=to_date, auto_adjust=True)
+        raw_df = yfinance.download(_to_yfinance("^VIX"), start=from_date, end=to_date, auto_adjust=True)
 
         if raw_df is None or raw_df.empty:
             return empty_df
@@ -390,7 +407,7 @@ def fetch_ticker_info(ticker: str) -> dict:
             Any unavailable field is None. Returns {} on any exception.
     """
     try:
-        yf_ticker = yfinance.Ticker(ticker)
+        yf_ticker = yfinance.Ticker(_to_yfinance(ticker))
         info = yf_ticker.info or {}
 
         result = {
@@ -435,7 +452,7 @@ def fetch_earnings_dates(ticker: str) -> list[dict]:
             NaN values are converted to None. Returns [] on any exception.
     """
     try:
-        yf_ticker = yfinance.Ticker(ticker)
+        yf_ticker = yfinance.Ticker(_to_yfinance(ticker))
         earnings_df = yf_ticker.get_earnings_dates(limit=40)
 
         if earnings_df is None or earnings_df.empty:

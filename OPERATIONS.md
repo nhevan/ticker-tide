@@ -53,6 +53,67 @@ tail -50 /home/ec2-user/ticker-tide/logs/daily_$(date +%Y%m%d).log
 
 ---
 
+## Merging S&P 500 into tickers
+
+The script `scripts/merge_sp500_into_tickers.py` fetches the current S&P 500
+constituent list from Wikipedia and appends any tickers not already present in
+`config/tickers.json`. It is a one-off operator tool — **not automated by cron**.
+Run it manually whenever you want to expand the tracked universe.
+
+Existing entries are preserved verbatim. New entries receive `active=true` and
+the current date as `added`. Symbols are stored in Polygon dot-form (e.g. `BRK.B`);
+the yfinance boundary shim in `src/common/yfinance_client.py` converts to dash-form
+automatically at fetch time.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success or no-op (nothing new to add) |
+| 2 | Unmapped GICS sector — config file **not** written; fix the sector mapping table |
+| 3 | Fetch/parse failure (network error, HTML structure changed) — config file **not** written |
+
+### Command sequence
+
+```bash
+# 1. Preview what would be added (no file changes)
+python scripts/merge_sp500_into_tickers.py --dry-run
+
+# 2. Write changes
+python scripts/merge_sp500_into_tickers.py
+
+# 3. Validate the resulting JSON is parseable
+python -m json.tool config/tickers.json > /dev/null
+
+# 4. Eyeball the additions
+git diff config/tickers.json
+
+# 5. Commit and push
+git add config/tickers.json && git commit -m "feat(tickers): add S&P 500 constituents" && git push
+```
+
+### Then on production EC2
+
+After deploying the updated config, run the full backfill chain for the new tickers:
+
+```bash
+python scripts/run_backfill.py --force
+python scripts/run_calculator.py --historical --force
+python scripts/run_scorer.py --historical --force
+python scripts/verify_pipeline.py
+```
+
+### Rename-collision detection
+
+The script checks each fetched symbol against the `former_symbol` field of
+existing entries. If a match is found (e.g. `FB` matching `META`'s `former_symbol`),
+the candidate is added to the **manual review** list in the report and is **not**
+appended automatically. However, this detection only works for entries that already
+have a `former_symbol` field set. Recommend cross-checking the `new_appended` list
+manually against any company name changes in the past 18 months before committing.
+
+---
+
 ## Telegram Bot Service
 
 The interactive bot (`/detail`, `/scatter`, `/tickers`, `/help`) runs as a systemd service and is managed by `deploy.sh` — no manual startup needed.
