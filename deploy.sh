@@ -199,7 +199,7 @@ echo -e "${GREEN}✅ Database initialized${RESET}"
 echo ""
 echo -e "${BOLD}🧪 Running tests...${RESET}"
 set +e
-TEST_OUTPUT="$(python -m pytest tests/ -v --tb=short 2>&1)"
+TEST_OUTPUT="$(python -m pytest tests/ -v --tb=short --durations=20 --timeout=60 2>&1)"
 TEST_EXIT_CODE=$?
 set -e
 
