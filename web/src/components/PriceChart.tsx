@@ -23,8 +23,8 @@ import type { PriceBar, PriceRange } from '@/lib/api/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorBanner } from '@/components/ErrorBanner';
 
-// Mirrors config/web.json["price_chart"]["range_days"]. UI default, not a
-// scoring threshold — kept as a named constant rather than fetched from config.
+// UI default for the visible window on first render. Not a scoring threshold —
+// kept as a named constant rather than fetched from config.
 const DEFAULT_RANGE: PriceRange = '6M';
 
 const RANGE_OPTIONS: PriceRange[] = ['1M', '3M', '6M', '1Y', 'ALL'];
@@ -34,6 +34,17 @@ const RANGE_LABELS: Record<PriceRange, string> = {
   '6M': '6M',
   '1Y': '1Y',
   ALL: 'All',
+};
+
+// Calendar-day windows for each preset. Distinct from the backend
+// `price_chart.range_days` block, which counts trading days for fetch limits.
+// The chart always receives the full ALL fetch; these values only drive the
+// visible time window via timeScale().setVisibleRange().
+const RANGE_CALENDAR_DAYS: Record<Exclude<PriceRange, 'ALL'>, number> = {
+  '1M': 30,
+  '3M': 90,
+  '6M': 180,
+  '1Y': 365,
 };
 
 const CHART_HEIGHT_PX = 240;
@@ -81,15 +92,44 @@ function toSeriesData(bars: PriceBar[]): {
   return { candles, volumes };
 }
 
+/**
+ * Apply the visible time window for a preset to the chart.
+ *
+ * Anchors `to` at the last bar's date (string `YYYY-MM-DD`) — not `Date.now()`
+ * — so the window stays correct when the latest bar is in the past (weekends,
+ * holidays, stale data). For `ALL`, fits all loaded content.
+ */
+function applyVisibleWindow(
+  chart: IChartApi,
+  rangeKey: PriceRange,
+  lastBarDate: string,
+): void {
+  if (rangeKey === 'ALL') {
+    chart.timeScale().fitContent();
+    return;
+  }
+  const calendarDays = RANGE_CALENDAR_DAYS[rangeKey];
+  const toDate = new Date(`${lastBarDate}T00:00:00Z`);
+  const fromDate = new Date(toDate.getTime() - calendarDays * 24 * 60 * 60 * 1000);
+  const fromString = fromDate.toISOString().slice(0, 10);
+  chart.timeScale().setVisibleRange({
+    from: fromString as Time,
+    to: lastBarDate as Time,
+  });
+}
+
 export function PriceChart({ ticker }: PriceChartProps) {
   const [range, setRange] = useState<PriceRange>(DEFAULT_RANGE);
-  const { data, isLoading, error } = usePriceChart(ticker, range);
+  const { data, isLoading, error } = usePriceChart(ticker);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  // Tracks which range we have already applied a visible window for, so React
+  // Query background refetches do not snap the user's pan/zoom back to default.
+  const lastAppliedRangeRef = useRef<PriceRange | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -155,6 +195,12 @@ export function PriceChart({ ticker }: PriceChartProps) {
     };
   }, []);
 
+  // Reset the applied-window tracker when the ticker changes, so the next data
+  // load re-applies the current preset for the new ticker's bars.
+  useEffect(() => {
+    lastAppliedRangeRef.current = null;
+  }, [ticker]);
+
   useEffect(() => {
     const bars = data?.bars;
     const candle = candleSeriesRef.current;
@@ -169,8 +215,12 @@ export function PriceChart({ ticker }: PriceChartProps) {
     const { candles, volumes } = toSeriesData(bars);
     candle.setData(candles);
     volume.setData(volumes);
-    chart.timeScale().fitContent();
-  }, [data]);
+    if (lastAppliedRangeRef.current !== range) {
+      const lastBarDate = bars[bars.length - 1].date;
+      applyVisibleWindow(chart, range, lastBarDate);
+      lastAppliedRangeRef.current = range;
+    }
+  }, [data, range]);
 
   const errorMessage =
     error instanceof Error ? error.message : error ? String(error) : null;

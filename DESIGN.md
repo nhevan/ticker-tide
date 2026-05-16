@@ -2048,9 +2048,10 @@ When `open == close` exactly, `lightweight-charts` renders the candle as green (
 
 - **Library:** `lightweight-charts ^5.0.0` (purpose-built TradingView candlestick; chosen over Recharts custom shapes for native candlestick support and canvas rendering performance).
 - **Component:** `web/src/components/PriceChart.tsx` — mounts a `lightweight-charts` chart instance in a `useEffect`, creates a candlestick series and a histogram volume series (~80/20 pane split), destroys on unmount. TradingView-default green/red coloring. Range pills (`1M`, `3M`, `6M`, `1Y`, `All`) render top-right; default is `6M` (hardcoded as `DEFAULT_RANGE = "6M"` in the component — not read from config, see §17.7).
-- **Hook:** `web/src/lib/hooks/usePriceChart.ts` — wraps `fetchPriceChart` with React Query.
+- **Range model:** the component always fetches the full `ALL` range from the backend and uses the chart's visible time window (`timeScale().setVisibleRange()`) to render the user-selected preset. Preset switches are instant (no refetch) and pinch/scroll zoom-out works naturally because the underlying bar set always covers the full history. The visible window for a preset is computed in **calendar days** (`1M=30, 3M=90, 6M=180, 1Y=365`), anchored at the date of the last bar in the loaded series — distinct from the backend `price_chart.range_days` block, which counts **trading days** for fetch limits. `lastAppliedRangeRef` guards against React Query background refetches snapping the user's pan/zoom back to default; it is reset when the ticker prop changes.
+- **Hook:** `web/src/lib/hooks/usePriceChart.ts` — wraps `fetchPriceChart` with React Query. Always fetches `ALL`; no range parameter.
 - **Types:** `PriceRange`, `PriceBar`, `PriceChartPayload` in `web/src/lib/api/types.ts`.
-- **API call:** `fetchPriceChart(ticker, range)` in `web/src/lib/api/endpoints.ts`.
+- **API call:** `fetchPriceChart(ticker, range)` in `web/src/lib/api/endpoints.ts`. Callers pass `'ALL'`.
 - **Chart dimensions:** fixed 240px height; volume sub-pane ~80/20 split.
 - **Frontend tests:** deferred per project policy for pure UI components.
 
