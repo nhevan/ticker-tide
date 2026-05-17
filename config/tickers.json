@@ -5,21 +5,21 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AAPL",
       "sector": "Technology",
       "sector_etf": "XLK",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ABBV",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ABNB",
@@ -33,14 +33,14 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ACGL",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ACN",
@@ -68,14 +68,14 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ADP",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ADSK",
@@ -89,14 +89,14 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AEP",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AES",
@@ -110,21 +110,21 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AIG",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AIZ",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AJG",
@@ -159,14 +159,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ALLE",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AMAT",
@@ -194,35 +194,35 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AMGN",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AMP",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AMT",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AMZN",
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ANET",
@@ -236,14 +236,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AOS",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "APA",
@@ -257,7 +257,7 @@
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "APH",
@@ -320,14 +320,14 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AVB",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AVGO",
@@ -341,14 +341,14 @@
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AWK",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AXON",
@@ -362,14 +362,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "AZO",
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BA",
@@ -390,14 +390,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BALL",
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BAX",
@@ -425,7 +425,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BF.B",
@@ -439,7 +439,7 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BIIB",
@@ -453,7 +453,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BKNG",
@@ -481,14 +481,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BMY",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BR",
@@ -502,7 +502,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "BRO",
@@ -530,7 +530,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "C",
@@ -551,7 +551,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CARR",
@@ -565,7 +565,7 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CAT",
@@ -579,14 +579,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CBOE",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CBRE",
@@ -642,14 +642,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CHD",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CHRW",
@@ -670,7 +670,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CIEN",
@@ -684,14 +684,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CL",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CLX",
@@ -712,7 +712,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CMG",
@@ -733,7 +733,7 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CNC",
@@ -747,7 +747,7 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "COF",
@@ -775,7 +775,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "COP",
@@ -796,7 +796,7 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CPAY",
@@ -817,14 +817,14 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CPT",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CRH",
@@ -873,14 +873,14 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CTAS",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CTSH",
@@ -894,7 +894,7 @@
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "CVNA",
@@ -915,14 +915,14 @@
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "D",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DAL",
@@ -985,7 +985,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DHI",
@@ -999,21 +999,21 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DIS",
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DLR",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DLTR",
@@ -1034,7 +1034,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DOW",
@@ -1048,28 +1048,28 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DRI",
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DTE",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DUK",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "DVA",
@@ -1097,7 +1097,7 @@
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EBAY",
@@ -1111,14 +1111,14 @@
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ED",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EFX",
@@ -1132,14 +1132,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EIX",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EL",
@@ -1181,7 +1181,7 @@
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EPAM",
@@ -1195,42 +1195,42 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EQR",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EQT",
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ERIE",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ES",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ESS",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ETN",
@@ -1244,28 +1244,28 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EVRG",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EW",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EXC",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "EXE",
@@ -1293,7 +1293,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "F",
@@ -1314,7 +1314,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "FCX",
@@ -1342,7 +1342,7 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "FFIV",
@@ -1377,7 +1377,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "FIX",
@@ -1391,21 +1391,21 @@
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "FOXA",
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "FRT",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "FSLR",
@@ -1426,14 +1426,14 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "GD",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "GDDY",
@@ -1475,21 +1475,21 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "GIS",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "GL",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "GLW",
@@ -1524,14 +1524,14 @@
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "GOOGL",
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "GPC",
@@ -1566,7 +1566,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HAL",
@@ -1587,28 +1587,28 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HCA",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HD",
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HIG",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HII",
@@ -1629,14 +1629,14 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HON",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HOOD",
@@ -1664,28 +1664,28 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HSIC",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HST",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HSY",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "HUBB",
@@ -1727,21 +1727,21 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "IDXX",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "IEX",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "IFF",
@@ -1755,7 +1755,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "INTC",
@@ -1776,7 +1776,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "IONQ",
@@ -1818,7 +1818,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "IT",
@@ -1832,7 +1832,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "IVZ",
@@ -1867,42 +1867,42 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "JKHY",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "JNJ",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "JPM",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KDP",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KEY",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KEYS",
@@ -1916,14 +1916,14 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KIM",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KKR",
@@ -1944,42 +1944,42 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KMI",
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KO",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KR",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "KVUE",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "L",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "LDOS",
@@ -2000,14 +2000,14 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "LHX",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "LII",
@@ -2021,7 +2021,7 @@
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "LITE",
@@ -2042,21 +2042,21 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "LNT",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "LOW",
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "LRCX",
@@ -2105,21 +2105,21 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MAA",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MAR",
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MARA",
@@ -2140,7 +2140,7 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MCHP",
@@ -2168,21 +2168,21 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MDT",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MET",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "META",
@@ -2212,28 +2212,28 @@
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MMM",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MNST",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MO",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MOS",
@@ -2261,7 +2261,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MRNA",
@@ -2275,21 +2275,21 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MS",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MSCI",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MSFT",
@@ -2303,7 +2303,7 @@
       "sector": "Technology",
       "sector_etf": "XLK",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MSTR",
@@ -2317,7 +2317,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "MTD",
@@ -2345,21 +2345,21 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NDSN",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NEE",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NEM",
@@ -2380,7 +2380,7 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NKE",
@@ -2394,7 +2394,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NOW",
@@ -2415,7 +2415,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NTAP",
@@ -2429,14 +2429,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NUE",
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NVDA",
@@ -2457,21 +2457,21 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NWS",
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NWSA",
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "NXPI",
@@ -2485,7 +2485,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ODFL",
@@ -2499,7 +2499,7 @@
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "OMC",
@@ -2527,14 +2527,14 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "OTIS",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "OXY",
@@ -2555,70 +2555,70 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PCAR",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PCG",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PEG",
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PEP",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PFE",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PFG",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PG",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PGR",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PH",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PHM",
@@ -2632,14 +2632,14 @@
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PLD",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PLTR",
@@ -2660,7 +2660,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PNR",
@@ -2674,7 +2674,7 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PODD",
@@ -2702,21 +2702,21 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PRU",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PSA",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "PSKY",
@@ -2779,21 +2779,21 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "REGN",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "RF",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "RIOT",
@@ -2807,7 +2807,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "RKLB",
@@ -2828,7 +2828,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ROK",
@@ -2842,7 +2842,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ROP",
@@ -2856,21 +2856,21 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "RSG",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "RTX",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "RVTY",
@@ -2898,28 +2898,28 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SCHW",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SHW",
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SJM",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SLB",
@@ -2940,7 +2940,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SNAP",
@@ -2975,7 +2975,7 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SOFI",
@@ -2989,14 +2989,14 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SPG",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SPGI",
@@ -3010,14 +3010,14 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "STE",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "STLD",
@@ -3031,7 +3031,7 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "STX",
@@ -3080,7 +3080,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "SYY",
@@ -3094,14 +3094,14 @@
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TAP",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TDG",
@@ -3115,7 +3115,7 @@
       "sector": "Technology",
       "sector_etf": "XLK",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TECH",
@@ -3143,21 +3143,21 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TGT",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TJX",
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TKO",
@@ -3171,14 +3171,14 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TMUS",
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TPL",
@@ -3199,7 +3199,7 @@
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TRMB",
@@ -3213,14 +3213,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TRV",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TSCO",
@@ -3248,7 +3248,7 @@
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TT",
@@ -3283,7 +3283,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "TYL",
@@ -3311,7 +3311,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "UHS",
@@ -3339,7 +3339,7 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "UPS",
@@ -3360,14 +3360,14 @@
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "V",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "VEEV",
@@ -3381,7 +3381,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "VLO",
@@ -3395,14 +3395,14 @@
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "VMC",
       "sector": "Materials",
       "sector_etf": "XLB",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "VRSK",
@@ -3416,7 +3416,7 @@
       "sector": "Technology",
       "sector_etf": "XLK",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "VRT",
@@ -3430,7 +3430,7 @@
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "VST",
@@ -3444,7 +3444,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "VTRS",
@@ -3458,14 +3458,14 @@
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WAB",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WAT",
@@ -3479,7 +3479,7 @@
       "sector": "Communication Services",
       "sector_etf": "XLC",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WDAY",
@@ -3500,49 +3500,49 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WELL",
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WFC",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WM",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WMB",
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WMT",
       "sector": "Consumer Staples",
       "sector_etf": "XLP",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WRB",
       "sector": "Financials",
       "sector_etf": "XLF",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WSM",
@@ -3570,7 +3570,7 @@
       "sector": "Real Estate",
       "sector_etf": "XLRE",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "WYNN",
@@ -3584,21 +3584,21 @@
       "sector": "Utilities",
       "sector_etf": "XLU",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "XOM",
       "sector": "Energy",
       "sector_etf": "XLE",
       "added": "2026-03-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "XYL",
       "sector": "Industrials",
       "sector_etf": "XLI",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "XYZ",
@@ -3612,14 +3612,14 @@
       "sector": "Consumer Discretionary",
       "sector_etf": "XLY",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ZBH",
       "sector": "Healthcare",
       "sector_etf": "XLV",
       "added": "2026-05-16",
-      "active": true
+      "active": false
     },
     {
       "symbol": "ZBRA",
