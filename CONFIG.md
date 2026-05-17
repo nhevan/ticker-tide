@@ -56,6 +56,27 @@ Array of SPDR sector ETF symbols. Must include every ETF referenced in `tickers[
 
 ---
 
+## config/universe_selection.json
+
+Controls `scripts/select_volatile_universe.py`. All keys are read at script startup;
+CLI flags (`--target`, `--liquidity-floor`, `--window-trading-days`, `--min-history`)
+override these values for one-off runs without modifying the file.
+
+Changing any of these values requires re-running the script and then rebuilding
+indicator profiles with `python scripts/run_scorer.py --historical --force` (the
+scorer phase must be re-run because the active ticker set determines which tickers
+are included in profile histograms).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `target_count` | int | `275` | Desired number of active stocks. Index entries (`sector == "Index"`) are always active and are additional to this count. |
+| `liquidity_floor_usd` | number | `100000000` | Minimum 90-day average dollar volume in USD. Tickers with lower ADV are excluded regardless of their vol rank. |
+| `window_trading_days` | int | `90` | Number of trading days used to compute vol and ADV. The last `window_trading_days + 1` daily bars are used (N+1 closes → N log returns). |
+| `window_calendar_days` | int | `130` | Calendar-day lookback in the SQL `WHERE date >= lower_bound` clause. Should be approximately 1.45 × `window_trading_days` (e.g. 90 × 1.45 ≈ 130). This field documents the SQL window; `window_trading_days` governs the actual number of bars used per ticker. |
+| `min_history_returns` | int | `60` | Minimum number of log returns a ticker must have within the window to be eligible. Below this threshold, `vol` is `None` and the ticker is excluded from selection entirely. |
+
+---
+
 ## config/backfiller.json
 
 Controls the one-time historical data load (`scripts/run_backfill.py`).

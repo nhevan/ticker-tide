@@ -1,0 +1,7 @@
+{
+  "target_count": 275,
+  "liquidity_floor_usd": 100000000,
+  "window_trading_days": 90,
+  "window_calendar_days": 130,
+  "min_history_returns": 60
+}

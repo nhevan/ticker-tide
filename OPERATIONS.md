@@ -114,6 +114,63 @@ manually against any company name changes in the past 18 months before committin
 
 ---
 
+## Recomputing the active universe
+
+The script `scripts/select_volatile_universe.py` ranks all non-Index tickers by
+90-trading-day annualised realised volatility, applies a $100M/day average dollar
+volume floor, selects the top 275 by vol, and toggles `active` flags in
+`config/tickers.json`. Index entries (`sector == "Index"`) always remain active
+and are not counted toward the 275 target. Backfilled history for deactivated
+tickers is preserved untouched in the database.
+
+**Purpose:** Keep the daily pipeline manageable (~275 stocks × pipeline phases)
+while tracking the most volatile — and therefore most signal-rich — names in the
+S&P 500 universe.
+
+**Recommended cadence:** Quarterly.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success or no-op (bytes-equal) |
+| 2 | Unrecoverable internal error (e.g. DB unreadable) — config file **not** written |
+| 3 | Fewer than target_count candidates eligible — partial result still written; check filtered counts in the report |
+
+### Command sequence
+
+```bash
+# 1. Preview the selection report (no file changes)
+python scripts/select_volatile_universe.py --dry-run
+
+# 2. Write changes
+python scripts/select_volatile_universe.py
+
+# 3. Eyeball the active-flag flips
+git diff config/tickers.json
+
+# 4. Commit and push
+git add config/tickers.json && git commit -m "feat(tickers): re-rank active universe by 90d vol" && git push
+
+# On prod EC2 after pull — rebuild indicator profiles against the new universe:
+python scripts/run_scorer.py --historical --force
+
+# Confirm signal distribution is healthy:
+python scripts/verify_pipeline.py
+```
+
+### Notes
+
+- The Telegram bot's `/tickers` command immediately reflects the new universe after
+  deploy — it reads `active` at runtime from `config/tickers.json`.
+- Config defaults live in `config/universe_selection.json`. CLI flags (`--target`,
+  `--liquidity-floor`, `--window-trading-days`, `--min-history`, `--as-of`) override
+  config values for one-off experiments without touching the file.
+- The `--as-of` flag enables replay: the script queries only rows `<= as_of` date,
+  so you can reproduce the selection state as of any historical date.
+
+---
+
 ## Telegram Bot Service
 
 The interactive bot (`/detail`, `/scatter`, `/tickers`, `/help`) runs as a systemd service and is managed by `deploy.sh` — no manual startup needed.
