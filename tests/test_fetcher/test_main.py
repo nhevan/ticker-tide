@@ -5,6 +5,7 @@ All tests are written first (TDD). All external API calls and sub-modules are mo
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -28,6 +29,68 @@ def _make_notifier_config() -> dict:
         },
         "sentiment_enrichment": {"enabled": False},
     }
+
+
+def _empty_fetch_result() -> dict:
+    """Return an empty sub-module result so aggregation arithmetic doesn't matter."""
+    return {"tickers_processed": 0, "tickers_failed": 0}
+
+
+def _patch_fetch_externals(stack: contextlib.ExitStack) -> dict:
+    """
+    Patch get_active_tickers, the Polygon/Finnhub clients, the 7 fetch sub-modules,
+    and the misc helpers that run_daily_fetch dispatches into.
+
+    Tests that exercise run_daily_fetch end-to-end must apply these patches —
+    without them, get_active_tickers reads the real config/tickers.json and the
+    sub-modules attempt real API calls with retries/backoff, ballooning runtime.
+
+    Args:
+        stack: Caller's ExitStack. Patches are added to it; caller controls teardown.
+
+    Returns:
+        Dict mapping patch target string to its Mock, for tests that need to
+        adjust return_value or assert on calls.
+    """
+    mock_polygon = MagicMock()
+    mock_polygon.__enter__ = MagicMock(return_value=mock_polygon)
+    mock_polygon.__exit__ = MagicMock(return_value=False)
+
+    targets_with_empty_result = [
+        "src.fetcher.main.backfill_all_tickers",
+        "src.fetcher.main.backfill_all_macro",
+        "src.fetcher.main.backfill_all_fundamentals",
+        "src.fetcher.main.backfill_all_corporate_actions",
+        "src.fetcher.main.backfill_all_news",
+        "src.fetcher.main.backfill_all_filings",
+    ]
+
+    mocks: dict = {}
+    for target in targets_with_empty_result:
+        mocks[target] = stack.enter_context(patch(target, return_value=_empty_fetch_result()))
+
+    mocks["src.fetcher.main.run_periodic_earnings"] = stack.enter_context(
+        patch("src.fetcher.main.run_periodic_earnings", return_value=None)
+    )
+    mocks["src.fetcher.main.get_active_tickers"] = stack.enter_context(
+        patch("src.fetcher.main.get_active_tickers", return_value=[{"symbol": "AAPL"}])
+    )
+    mocks["src.fetcher.main.get_sector_etfs"] = stack.enter_context(
+        patch("src.fetcher.main.get_sector_etfs", return_value=[])
+    )
+    mocks["src.fetcher.main.get_market_benchmarks"] = stack.enter_context(
+        patch("src.fetcher.main.get_market_benchmarks", return_value={})
+    )
+    mocks["src.fetcher.main.PolygonClient"] = stack.enter_context(
+        patch("src.fetcher.main.PolygonClient", return_value=mock_polygon)
+    )
+    mocks["src.fetcher.main.FinnhubClient"] = stack.enter_context(
+        patch("src.fetcher.main.FinnhubClient", return_value=MagicMock())
+    )
+    mocks["src.fetcher.main.log_alert"] = stack.enter_context(
+        patch("src.fetcher.main.log_alert")
+    )
+    return mocks
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +119,18 @@ class TestRunDailyFetchTargetDate:
         """
         target_date = "2026-03-20"
 
-        with patch("src.fetcher.main.load_config", side_effect=self._make_load_config(str(tmp_path / "test.db"))), \
-             patch("src.fetcher.main.load_env"), \
-             patch("src.fetcher.main.get_connection", return_value=MagicMock()), \
-             patch("src.fetcher.main.get_pipeline_event_status", return_value=None) as mock_event_status, \
-             patch("src.fetcher.main.write_pipeline_event"), \
-             patch("src.fetcher.main.get_telegram_config", return_value={"bot_token": "x", "admin_chat_id": "1"}):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch("src.fetcher.main.load_config",
+                                      side_effect=self._make_load_config(str(tmp_path / "test.db"))))
+            stack.enter_context(patch("src.fetcher.main.load_env"))
+            stack.enter_context(patch("src.fetcher.main.get_connection", return_value=MagicMock()))
+            mock_event_status = stack.enter_context(
+                patch("src.fetcher.main.get_pipeline_event_status", return_value=None)
+            )
+            stack.enter_context(patch("src.fetcher.main.write_pipeline_event"))
+            stack.enter_context(patch("src.fetcher.main.get_telegram_config",
+                                      return_value={"bot_token": "x", "admin_chat_id": "1"}))
+            _patch_fetch_externals(stack)
 
             run_daily_fetch(target_date=target_date)
 
@@ -101,12 +170,18 @@ class TestRunDailyFetchTargetDate:
         """
         utc_today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
-        with patch("src.fetcher.main.load_config", side_effect=self._make_load_config(str(tmp_path / "test.db"))), \
-             patch("src.fetcher.main.load_env"), \
-             patch("src.fetcher.main.get_connection", return_value=MagicMock()), \
-             patch("src.fetcher.main.get_pipeline_event_status", return_value=None) as mock_event_status, \
-             patch("src.fetcher.main.write_pipeline_event"), \
-             patch("src.fetcher.main.get_telegram_config", return_value={"bot_token": "x", "admin_chat_id": "1"}):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch("src.fetcher.main.load_config",
+                                      side_effect=self._make_load_config(str(tmp_path / "test.db"))))
+            stack.enter_context(patch("src.fetcher.main.load_env"))
+            stack.enter_context(patch("src.fetcher.main.get_connection", return_value=MagicMock()))
+            mock_event_status = stack.enter_context(
+                patch("src.fetcher.main.get_pipeline_event_status", return_value=None)
+            )
+            stack.enter_context(patch("src.fetcher.main.write_pipeline_event"))
+            stack.enter_context(patch("src.fetcher.main.get_telegram_config",
+                                      return_value={"bot_token": "x", "admin_chat_id": "1"}))
+            _patch_fetch_externals(stack)
 
             run_daily_fetch()  # no target_date
 
@@ -121,12 +196,16 @@ class TestRunDailyFetchTargetDate:
         run_daily_fetch should return a dict with skipped, tickers_processed,
         tickers_failed, and duration_seconds keys.
         """
-        with patch("src.fetcher.main.load_config", side_effect=self._make_load_config(str(tmp_path / "test.db"))), \
-             patch("src.fetcher.main.load_env"), \
-             patch("src.fetcher.main.get_connection", return_value=MagicMock()), \
-             patch("src.fetcher.main.get_pipeline_event_status", return_value=None), \
-             patch("src.fetcher.main.write_pipeline_event"), \
-             patch("src.fetcher.main.get_telegram_config", return_value={"bot_token": "x", "admin_chat_id": "1"}):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch("src.fetcher.main.load_config",
+                                      side_effect=self._make_load_config(str(tmp_path / "test.db"))))
+            stack.enter_context(patch("src.fetcher.main.load_env"))
+            stack.enter_context(patch("src.fetcher.main.get_connection", return_value=MagicMock()))
+            stack.enter_context(patch("src.fetcher.main.get_pipeline_event_status", return_value=None))
+            stack.enter_context(patch("src.fetcher.main.write_pipeline_event"))
+            stack.enter_context(patch("src.fetcher.main.get_telegram_config",
+                                      return_value={"bot_token": "x", "admin_chat_id": "1"}))
+            _patch_fetch_externals(stack)
 
             result = run_daily_fetch(target_date="2026-03-20")
 
